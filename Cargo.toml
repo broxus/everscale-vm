@@ -1,0 +1,24 @@
+[package]
+name = "everscale-vm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+num-bigint = "0.4"
+thiserror = "1.0"
+
+everscale-types = { version = "0.1.0-rc.5", default-features = false, features = [
+    "sync",
+    "models",
+] }
+
+[dev-dependencies]
+everscale-types = { version = "0.1.0-rc.5", default-features = false, features = [
+    "sync",
+    "models",
+    "base64",
+] }
+
+[patch."crates-io"]
+everscale-types = { path = "../everscale-types" }
