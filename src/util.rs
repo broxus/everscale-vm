@@ -56,7 +56,6 @@ impl PartialEq<CellSlice<'_>> for OwnedCellSlice {
 pub fn store_int_to_builder(
     int: &BigInt,
     bits: u16,
-    signed: bool,
     builder: &mut CellBuilder,
 ) -> Result<(), Error> {
     let value = int.magnitude();
