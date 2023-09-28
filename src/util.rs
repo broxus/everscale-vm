@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
 use num_bigint::{BigInt, BigUint, Sign};
-use num_traits::{One, ToPrimitive, Zero};
+use num_traits::{One, Zero};
 
 #[derive(Clone)]
 #[repr(transparent)]
