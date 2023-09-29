@@ -1,11 +1,12 @@
 use std::sync::OnceLock;
 
+use everscale_types::dict::DictKey;
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{One, Zero};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct OwnedCellSlice(CellSliceParts);
 
@@ -50,6 +51,42 @@ impl PartialEq<CellSlice<'_>> for OwnedCellSlice {
             }
         }
         false
+    }
+}
+
+#[repr(transparent)]
+pub struct Uint4(pub usize);
+
+impl DictKey for Uint4 {
+    const BITS: u16 = 4;
+
+    #[inline]
+    fn from_raw_data(raw_data: &[u8; 128]) -> Option<Self> {
+        Some(Self((raw_data[0] & 0xf) as usize))
+    }
+}
+
+impl Store for Uint4 {
+    fn store_into(&self, builder: &mut CellBuilder, _: &mut dyn CellContext) -> Result<(), Error> {
+        if self.0 > 0xf {
+            return Err(Error::IntOverflow);
+        }
+        builder.store_small_uint(self.0 as _, 4)
+    }
+}
+
+impl Load<'_> for Uint4 {
+    #[inline]
+    fn load_from(slice: &mut CellSlice<'_>) -> Result<Self, Error> {
+        Ok(Self(ok!(slice.load_small_uint(4)) as usize))
+    }
+}
+
+pub fn ensure_empty_slice(slice: &CellSlice) -> Result<(), Error> {
+    if slice.is_data_empty() && slice.is_refs_empty() {
+        Ok(())
+    } else {
+        Err(Error::InvalidData)
     }
 }
 

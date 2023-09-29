@@ -5,10 +5,10 @@ use everscale_types::error::Error;
 use everscale_types::prelude::*;
 use num_bigint::BigInt;
 
-use crate::cont::RcCont;
-use crate::util::{store_int_to_builder, OwnedCellSlice};
+use crate::cont::{load_cont, RcCont};
+use crate::util::{ensure_empty_slice, store_int_to_builder, OwnedCellSlice};
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Stack {
     pub items: Vec<RcStackValue>,
 }
@@ -26,6 +26,13 @@ impl Stack {
             static NAN: RcStackValue = Rc::new(NaN);
         }
         NAN.with(Rc::clone)
+    }
+
+    pub fn make_empty_tuple() -> RcStackValue {
+        thread_local! {
+            static EMPTY_TUPLE: RcStackValue = Rc::new(Vec::new());
+        }
+        EMPTY_TUPLE.with(Rc::clone)
     }
 }
 
@@ -58,6 +65,39 @@ impl Store for Stack {
     }
 }
 
+pub fn load_stack(slice: &mut CellSlice, context: &mut dyn CellContext) -> Result<Stack, Error> {
+    let depth = ok!(slice.load_uint(24)) as usize;
+    if depth == 0 {
+        return Ok(Stack::default());
+    }
+
+    let mut result = Stack {
+        items: Vec::with_capacity(std::cmp::min(depth, 128)),
+    };
+
+    let mut rest = ok!(slice.load_reference());
+    result.items.push(ok!(load_stack_value(slice, context)));
+
+    if depth > 1 {
+        for _ in 0..depth - 2 {
+            let slice = &mut ok!(context
+                .load_dyn_cell(rest, LoadMode::Full)
+                .and_then(CellSlice::new));
+            rest = ok!(slice.load_reference());
+            result.items.push(ok!(load_stack_value(slice, context)));
+            ok!(ensure_empty_slice(slice));
+        }
+
+        ok!(ensure_empty_slice(&mut ok!(context
+            .load_dyn_cell(rest, LoadMode::Full)
+            .and_then(CellSlice::new))));
+
+        result.items.reverse();
+    }
+
+    Ok(result)
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum StackValueType {
     Null,
@@ -70,7 +110,7 @@ pub enum StackValueType {
     Tuple,
 }
 
-pub trait StackValue {
+pub trait StackValue: std::fmt::Debug {
     fn ty(&self) -> StackValueType;
 
     fn store_as_stack_value(
@@ -157,6 +197,7 @@ pub fn load_stack_value(
             ok!(builder.store_slice(cell));
             Rc::new(builder)
         }
+        6 => Rc::new(ok!(load_cont(slice, context))),
         7 => {
             let len = ok!(slice.load_u16()) as usize;
             let mut tuple = Vec::with_capacity(std::cmp::min(len, 128));
@@ -172,7 +213,7 @@ pub fn load_stack_value(
                         .and_then(CellSlice::new));
                     head = ok!(slice.load_reference());
                     tail = ok!(slice.load_reference());
-                    ok!(ensure_empty(slice));
+                    ok!(ensure_empty_slice(slice));
                     tuple.push(ok!(load_stack_value_from_cell(tail, context)));
                 }
 
@@ -199,16 +240,8 @@ fn load_stack_value_from_cell(
         .load_dyn_cell(cell, LoadMode::Full)
         .and_then(CellSlice::new));
     let res = ok!(load_stack_value(slice, context));
-    ok!(ensure_empty(slice));
+    ok!(ensure_empty_slice(slice));
     Ok(res)
-}
-
-fn ensure_empty(slice: &CellSlice) -> Result<(), Error> {
-    if slice.is_data_empty() && slice.is_refs_empty() {
-        Ok(())
-    } else {
-        Err(Error::InvalidData)
-    }
 }
 
 impl StackValue for () {
