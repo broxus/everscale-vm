@@ -1,12 +1,15 @@
 use std::rc::Rc;
 
+use anyhow::Result;
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
 
+use crate::error::VmException;
 use crate::stack::{
     load_slice_as_stack_value, load_stack, load_stack_value, store_slice_as_stack_value,
     RcStackValue, Stack, StackValue,
 };
+use crate::state::VmState;
 use crate::util::{ensure_empty_slice, OwnedCellSlice, Uint4};
 
 #[derive(Debug)]
@@ -59,8 +62,8 @@ fn load_control_data(
 
 #[derive(Default, Debug)]
 pub struct ControlRegs {
-    pub c: [Option<RcCont>; Self::CONT_REG_COUNT],
-    pub d: [Option<Cell>; Self::DATA_REG_COUNT],
+    pub c: [Option<RcCont>; 4],
+    pub d: [Option<Cell>; 2],
     pub c7: Option<Rc<Vec<RcStackValue>>>,
 }
 
@@ -83,7 +86,7 @@ impl ControlRegs {
             }
         } else if i == 7 {
             // TODO: add `as_tuple_ref` to `StackValue`?
-            if let Some(tuple) = value.into_tuple() {
+            if let Ok(tuple) = value.into_tuple() {
                 self.c7 = Some(tuple);
                 return true;
             }
@@ -177,7 +180,13 @@ fn load_control_regs(
     Ok(result)
 }
 
-pub trait Cont: Store + std::fmt::Debug {}
+pub trait Cont: Store + std::fmt::Debug {
+    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32>;
+
+    fn get_control_data(&self) -> Option<&ControlData> {
+        None
+    }
+}
 
 pub type RcCont = Rc<dyn Cont>;
 
@@ -236,7 +245,11 @@ impl QuitCont {
     const TAG: u8 = 0b1000;
 }
 
-impl Cont for QuitCont {}
+impl Cont for QuitCont {
+    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+        Ok(!self.exit_code)
+    }
+}
 
 impl Store for QuitCont {
     fn store_into(&self, builder: &mut CellBuilder, _: &mut dyn CellContext) -> Result<(), Error> {
@@ -267,7 +280,15 @@ impl ExcQuitCont {
     const TAG: u8 = 0b1001;
 }
 
-impl Cont for ExcQuitCont {}
+impl Cont for ExcQuitCont {
+    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+        let n = state
+            .stack
+            .pop_smallint_range(0, 0xffff)
+            .unwrap_or_else(|e| VmException::from(e) as u32);
+        Ok(!(n as i32))
+    }
+}
 
 impl Store for ExcQuitCont {
     fn store_into(&self, builder: &mut CellBuilder, _: &mut dyn CellContext) -> Result<(), Error> {
@@ -299,7 +320,15 @@ impl PushIntCont {
     const TAG: u8 = 0b1111;
 }
 
-impl Cont for PushIntCont {}
+impl Cont for PushIntCont {
+    fn jump(mut self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+        ok!(state.stack.push_int(self.value));
+        state.jump(match Rc::try_unwrap(self) {
+            Ok(this) => this.next,
+            Err(this) => this.next.clone(),
+        })
+    }
+}
 
 impl Store for PushIntCont {
     fn store_into(
@@ -341,7 +370,17 @@ impl RepeatCont {
     const MAX_COUNT: u64 = 0x8000000000000000;
 }
 
-impl Cont for RepeatCont {}
+impl Cont for RepeatCont {
+    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+        match Rc::try_unwrap(self) {
+            Ok(this) => {
+                if this.count <= 0 {
+                    return state.jump(this.after);
+                }
+            }
+        }
+    }
+}
 
 impl Store for RepeatCont {
     fn store_into(
@@ -509,7 +548,20 @@ impl ArgContExt {
     const TAG: u8 = 0b01;
 }
 
-impl Cont for ArgContExt {}
+impl Cont for ArgContExt {
+    fn jump(mut self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+        // TODO: set control regs and codepage
+        let ext = match Rc::try_unwrap(self) {
+            Ok(this) => this.ext,
+            Err(this) => this.ext.clone(),
+        };
+        ext.jump(state)
+    }
+
+    fn get_control_data(&self) -> Option<&ControlData> {
+        Some(&self.data)
+    }
+}
 
 impl Store for ArgContExt {
     fn store_into(
@@ -548,7 +600,16 @@ impl OrdCont {
     const TAG: u8 = 0b00;
 }
 
-impl Cont for OrdCont {}
+impl Cont for OrdCont {
+    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+        // TODO: adjust control regs
+        Ok(0)
+    }
+
+    fn get_control_data(&self) -> Option<&ControlData> {
+        Some(&self.data)
+    }
+}
 
 impl Store for OrdCont {
     fn store_into(

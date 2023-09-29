@@ -1,11 +1,14 @@
 use std::rc::Rc;
 
+use anyhow::Result;
 use everscale_types::cell::LoadMode;
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
 use num_bigint::BigInt;
+use num_traits::{One, ToPrimitive, Zero};
 
 use crate::cont::{load_cont, RcCont};
+use crate::error::VmError;
 use crate::util::{ensure_empty_slice, store_int_to_builder, OwnedCellSlice};
 
 #[derive(Debug, Default)]
@@ -14,6 +17,8 @@ pub struct Stack {
 }
 
 impl Stack {
+    const MAX_DEPTH: usize = 0xffffff;
+
     pub fn make_null() -> RcStackValue {
         thread_local! {
             static NULL: RcStackValue = Rc::new(());
@@ -34,6 +39,65 @@ impl Stack {
         }
         EMPTY_TUPLE.with(Rc::clone)
     }
+
+    pub fn push<T: StackValue + 'static>(&mut self, item: T) -> Result<()> {
+        self.push_raw(Rc::new(item))
+    }
+
+    pub fn push_raw(&mut self, item: Rc<dyn StackValue>) -> Result<()> {
+        anyhow::ensure!(
+            self.items.len() < Self::MAX_DEPTH,
+            VmError::StackUnderflow(Self::MAX_DEPTH)
+        );
+        self.items.push(item);
+        Ok(())
+    }
+
+    pub fn push_null(&mut self) -> Result<()> {
+        self.push_raw(Self::make_null())
+    }
+
+    pub fn push_bool(&mut self, value: bool) -> Result<()> {
+        // TODO: replace with thread-local?
+        self.push(if value {
+            -BigInt::one()
+        } else {
+            BigInt::zero()
+        })
+    }
+
+    pub fn push_int<T: Into<BigInt>>(&mut self, value: T) -> Result<()> {
+        self.push(value.into())
+    }
+
+    pub fn pop(&mut self) -> Result<Rc<dyn StackValue>> {
+        self.items
+            .pop()
+            .ok_or(VmError::StackUnderflow(0))
+            .map_err(From::from)
+    }
+
+    pub fn pop_bool(&mut self) -> Result<bool> {
+        Ok(!self.pop_int()?.is_zero())
+    }
+
+    pub fn pop_int(&mut self) -> Result<Rc<BigInt>> {
+        self.pop()?.into_int()
+    }
+
+    pub fn pop_smallint_range(&mut self, min: u32, max: u32) -> Result<u32> {
+        let item = self.pop_int()?;
+        if let Some(item) = item.to_u32() {
+            if item >= min && item <= max {
+                return Ok(item);
+            }
+        }
+        anyhow::bail!(VmError::IntegerOutOfRange {
+            min,
+            max: max as usize,
+            actual: item.to_string(),
+        })
+    }
 }
 
 // TODO: impl store with limit
@@ -44,7 +108,7 @@ impl Store for Stack {
         context: &mut dyn CellContext,
     ) -> Result<(), Error> {
         let depth = self.items.len();
-        if depth > 0xffffff {
+        if depth > Self::MAX_DEPTH {
             return Err(Error::IntOverflow);
         }
         ok!(builder.store_uint(depth as _, 24));
@@ -123,49 +187,53 @@ pub trait StackValue: std::fmt::Debug {
         None
     }
 
-    fn into_int(self: Rc<Self>) -> Option<Rc<BigInt>> {
-        None
+    fn into_int(self: Rc<Self>) -> Result<Rc<BigInt>> {
+        Err(invalid_type(self.ty(), StackValueType::Int))
     }
 
     fn as_cell(&self) -> Option<&Cell> {
         None
     }
 
-    fn into_cell(self: Rc<Self>) -> Option<Rc<Cell>> {
-        None
+    fn into_cell(self: Rc<Self>) -> Result<Rc<Cell>> {
+        Err(invalid_type(self.ty(), StackValueType::Cell))
     }
 
     fn as_slice(&self) -> Option<&OwnedCellSlice> {
         None
     }
 
-    fn into_slice(self: Rc<Self>) -> Option<Rc<OwnedCellSlice>> {
-        None
+    fn into_slice(self: Rc<Self>) -> Result<Rc<OwnedCellSlice>> {
+        Err(invalid_type(self.ty(), StackValueType::Slice))
     }
 
     fn as_builder(&self) -> Option<&CellBuilder> {
         None
     }
 
-    fn into_builder(self: Rc<Self>) -> Option<Rc<CellBuilder>> {
-        None
+    fn into_builder(self: Rc<Self>) -> Result<Rc<CellBuilder>> {
+        Err(invalid_type(self.ty(), StackValueType::Builder))
     }
 
     fn as_cont(&self) -> Option<&RcCont> {
         None
     }
 
-    fn into_cont(self: Rc<Self>) -> Option<Rc<RcCont>> {
-        None
+    fn into_cont(self: Rc<Self>) -> Result<Rc<RcCont>> {
+        Err(invalid_type(self.ty(), StackValueType::Cont))
     }
 
     fn as_tuple(&self) -> Option<&[RcStackValue]> {
         None
     }
 
-    fn into_tuple(self: Rc<Self>) -> Option<Rc<Vec<RcStackValue>>> {
-        None
+    fn into_tuple(self: Rc<Self>) -> Result<Rc<Vec<RcStackValue>>> {
+        Err(invalid_type(self.ty(), StackValueType::Tuple))
     }
+}
+
+fn invalid_type(actual: StackValueType, expected: StackValueType) -> anyhow::Error {
+    anyhow::Error::from(VmError::InvalidType { expected, actual })
 }
 
 pub type RcStackValue = Rc<dyn StackValue>;
@@ -293,8 +361,8 @@ impl StackValue for BigInt {
         Some(self)
     }
 
-    fn into_int(self: Rc<Self>) -> Option<Rc<BigInt>> {
-        Some(self)
+    fn into_int(self: Rc<Self>) -> Result<Rc<BigInt>> {
+        Ok(self)
     }
 }
 
@@ -316,8 +384,8 @@ impl StackValue for Cell {
         Some(self)
     }
 
-    fn into_cell(self: Rc<Self>) -> Option<Rc<Cell>> {
-        Some(self)
+    fn into_cell(self: Rc<Self>) -> Result<Rc<Cell>> {
+        Ok(self)
     }
 }
 
@@ -339,8 +407,8 @@ impl StackValue for OwnedCellSlice {
         Some(self)
     }
 
-    fn into_slice(self: Rc<Self>) -> Option<Rc<OwnedCellSlice>> {
-        Some(self)
+    fn into_slice(self: Rc<Self>) -> Result<Rc<OwnedCellSlice>> {
+        Ok(self)
     }
 }
 impl StackValue for CellBuilder {
@@ -361,8 +429,8 @@ impl StackValue for CellBuilder {
         Some(self)
     }
 
-    fn into_builder(self: Rc<Self>) -> Option<Rc<CellBuilder>> {
-        Some(self)
+    fn into_builder(self: Rc<Self>) -> Result<Rc<CellBuilder>> {
+        Ok(self)
     }
 }
 
@@ -384,8 +452,8 @@ impl StackValue for RcCont {
         Some(self)
     }
 
-    fn into_cont(self: Rc<Self>) -> Option<Rc<RcCont>> {
-        Some(self)
+    fn into_cont(self: Rc<Self>) -> Result<Rc<RcCont>> {
+        Ok(self)
     }
 }
 
@@ -435,8 +503,8 @@ impl StackValue for Vec<RcStackValue> {
         Some(self)
     }
 
-    fn into_tuple(self: Rc<Self>) -> Option<Rc<Vec<RcStackValue>>> {
-        Some(self)
+    fn into_tuple(self: Rc<Self>) -> Result<Rc<Vec<RcStackValue>>> {
+        Ok(self)
     }
 }
 

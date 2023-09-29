@@ -9,5 +9,7 @@ macro_rules! ok {
 }
 
 pub mod cont;
+pub mod error;
 pub mod stack;
+pub mod state;
 pub mod util;
