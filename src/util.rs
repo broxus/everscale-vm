@@ -1,3 +1,4 @@
+use std::rc::Rc;
 use std::sync::OnceLock;
 
 use everscale_types::dict::DictKey;
@@ -190,4 +191,11 @@ pub fn to_signed_bytes_be(is_negative: bool, value: &BigUint) -> Vec<u8> {
     } else {
         value.to_bytes_be()
     }
+}
+
+#[inline]
+pub fn rc_ptr_eq<T1: ?Sized, T2: ?Sized>(lhs: &Rc<T1>, rhs: &Rc<T2>) -> bool {
+    let lhs = Rc::as_ptr(lhs) as *const ();
+    let rhs = Rc::as_ptr(rhs) as *const ();
+    lhs == rhs
 }

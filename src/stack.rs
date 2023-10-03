@@ -11,7 +11,7 @@ use crate::cont::{load_cont, RcCont};
 use crate::error::VmError;
 use crate::util::{ensure_empty_slice, store_int_to_builder, OwnedCellSlice};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Stack {
     pub items: Vec<RcStackValue>,
 }
@@ -70,6 +70,14 @@ impl Stack {
         self.push(value.into())
     }
 
+    pub fn move_from_stack(&mut self, other: &mut Self, n: usize) -> Result<()> {
+        let Some(new_other_len) = other.items.len().checked_sub(n) else {
+            anyhow::bail!(VmError::StackUnderflow(n));
+        };
+        self.items.extend(other.items.drain(new_other_len..));
+        Ok(())
+    }
+
     pub fn pop(&mut self) -> Result<Rc<dyn StackValue>> {
         self.items
             .pop()
@@ -97,6 +105,20 @@ impl Stack {
             max: max as usize,
             actual: item.to_string(),
         })
+    }
+
+    pub fn pop_many(&mut self, n: usize) -> Result<()> {
+        let Some(new_len) = self.items.len().checked_sub(n) else {
+            anyhow::bail!(VmError::StackUnderflow(n));
+        };
+        self.items.truncate(new_len);
+        Ok(())
+    }
+
+    pub fn drop_bottom(&mut self, n: usize) -> Result<()> {
+        anyhow::ensure!(n <= self.items.len(), VmError::StackUnderflow(n));
+        self.items.drain(..n);
+        Ok(())
     }
 }
 
@@ -152,7 +174,7 @@ pub fn load_stack(slice: &mut CellSlice, context: &mut dyn CellContext) -> Resul
             ok!(ensure_empty_slice(slice));
         }
 
-        ok!(ensure_empty_slice(&mut ok!(context
+        ok!(ensure_empty_slice(&ok!(context
             .load_dyn_cell(rest, LoadMode::Full)
             .and_then(CellSlice::new))));
 
@@ -270,28 +292,32 @@ pub fn load_stack_value(
             let len = ok!(slice.load_u16()) as usize;
             let mut tuple = Vec::with_capacity(std::cmp::min(len, 128));
 
-            if len > 1 {
-                let mut head = ok!(slice.load_reference());
-                let mut tail = ok!(slice.load_reference());
-                tuple.push(ok!(load_stack_value_from_cell(tail, context)));
-
-                for _ in 0..len - 2 {
-                    let slice = &mut ok!(context
-                        .load_dyn_cell(head, LoadMode::Full)
-                        .and_then(CellSlice::new));
-                    head = ok!(slice.load_reference());
-                    tail = ok!(slice.load_reference());
-                    ok!(ensure_empty_slice(slice));
-                    tuple.push(ok!(load_stack_value_from_cell(tail, context)));
+            match tuple.len() {
+                0 => {}
+                1 => {
+                    tuple.push(ok!(load_stack_value_from_cell(
+                        ok!(slice.load_reference()),
+                        context
+                    )));
                 }
+                _ => {
+                    let mut head = ok!(slice.load_reference());
+                    let mut tail = ok!(slice.load_reference());
+                    tuple.push(ok!(load_stack_value_from_cell(tail, context)));
 
-                tuple.push(ok!(load_stack_value_from_cell(head, context)));
-                tuple.reverse();
-            } else if len == 1 {
-                tuple.push(ok!(load_stack_value_from_cell(
-                    ok!(slice.load_reference()),
-                    context
-                )));
+                    for _ in 0..len - 2 {
+                        let slice = &mut ok!(context
+                            .load_dyn_cell(head, LoadMode::Full)
+                            .and_then(CellSlice::new));
+                        head = ok!(slice.load_reference());
+                        tail = ok!(slice.load_reference());
+                        ok!(ensure_empty_slice(slice));
+                        tuple.push(ok!(load_stack_value_from_cell(tail, context)));
+                    }
+
+                    tuple.push(ok!(load_stack_value_from_cell(head, context)));
+                    tuple.reverse();
+                }
             }
 
             Rc::new(tuple)
@@ -541,7 +567,9 @@ pub fn load_slice_as_stack_value(
     // TODO: is it ok to resolve library cell for stack?
     let cell = ok!(context.load_cell(cell, LoadMode::Full));
 
-    if bits_end > cell.bit_len() || refs_end > cell.reference_count() {}
+    if bits_end > cell.bit_len() || refs_end > cell.reference_count() {
+        return Err(Error::InvalidData);
+    }
 
     let mut range = CellSliceRange::empty();
     range.try_advance(bits_start, refs_end);

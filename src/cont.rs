@@ -4,13 +4,13 @@ use anyhow::Result;
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
 
-use crate::error::VmException;
+use crate::error::{VmError, VmException};
 use crate::stack::{
     load_slice_as_stack_value, load_stack, load_stack_value, store_slice_as_stack_value,
     RcStackValue, Stack, StackValue,
 };
 use crate::state::VmState;
-use crate::util::{ensure_empty_slice, OwnedCellSlice, Uint4};
+use crate::util::{ensure_empty_slice, rc_ptr_eq, OwnedCellSlice, Uint4};
 
 #[derive(Debug)]
 pub struct ControlData {
@@ -71,6 +71,33 @@ impl ControlRegs {
     const CONT_REG_COUNT: usize = 4;
     const DATA_REG_OFFSET: usize = Self::CONT_REG_COUNT;
     const DATA_REG_COUNT: usize = 2;
+    const DATA_REG_RANGE: std::ops::Range<usize> = Self::DATA_REG_OFFSET..Self::DATA_REG_OFFSET;
+
+    pub fn merge(&mut self, other: &ControlRegs) {
+        for (c, other_c) in std::iter::zip(&mut self.c, &other.c) {
+            Self::merge_stack_value(c, other_c);
+        }
+        for (d, other_d) in std::iter::zip(&mut self.d, &other.d) {
+            Self::merge_cell_value(d, other_d)
+        }
+        Self::merge_stack_value(&mut self.c7, &other.c7)
+    }
+
+    pub fn preclear(&mut self, other: &ControlRegs) {
+        for (c, other_c) in std::iter::zip(&mut self.c, &other.c) {
+            if other_c.is_some() {
+                *c = None;
+            }
+        }
+        for (d, other_d) in std::iter::zip(&mut self.d, &other.d) {
+            if other_d.is_some() {
+                *d = None;
+            }
+        }
+        if other.c7.is_some() {
+            self.c7 = None;
+        }
+    }
 
     // TODO: use `&dyn StackValue` for value?
     pub fn set(&mut self, i: usize, value: Rc<dyn StackValue>) -> bool {
@@ -79,7 +106,7 @@ impl ControlRegs {
                 self.c[i] = Some(cont.clone());
                 return true;
             }
-        } else if i >= Self::DATA_REG_OFFSET && i < Self::DATA_REG_OFFSET + Self::DATA_REG_COUNT {
+        } else if Self::DATA_REG_RANGE.contains(&i) {
             if let Some(cell) = value.as_cell() {
                 self.d[i - Self::DATA_REG_OFFSET] = Some(cell.clone());
                 return true;
@@ -116,6 +143,30 @@ impl ControlRegs {
 
     pub fn set_c7(&mut self, tuple: Rc<Vec<RcStackValue>>) {
         self.c7 = Some(tuple);
+    }
+
+    fn merge_cell_value(lhs: &mut Option<Cell>, rhs: &Option<Cell>) {
+        if let Some(rhs) = rhs {
+            if let Some(lhs) = lhs {
+                let lhs = lhs.as_ref() as *const _ as *const ();
+                let rhs = rhs.as_ref() as *const _ as *const ();
+                if std::ptr::eq(lhs, rhs) {
+                    return;
+                }
+            }
+            *lhs = Some(rhs.clone())
+        }
+    }
+
+    fn merge_stack_value<T: ?Sized>(lhs: &mut Option<Rc<T>>, rhs: &Option<Rc<T>>) {
+        if let Some(rhs) = rhs {
+            if let Some(lhs) = lhs {
+                if rc_ptr_eq(lhs, rhs) {
+                    return;
+                }
+            }
+            *lhs = Some(rhs.clone())
+        }
     }
 }
 
@@ -171,7 +222,7 @@ fn load_control_regs(
     for entry in dict.iter() {
         let (key, ref mut slice) = ok!(entry);
         let value = ok!(load_stack_value(slice, context));
-        ok!(ensure_empty_slice(&slice));
+        ok!(ensure_empty_slice(slice));
         if !result.set(key.0, value) {
             return Err(Error::InvalidData);
         }
@@ -186,9 +237,23 @@ pub trait Cont: Store + std::fmt::Debug {
     fn get_control_data(&self) -> Option<&ControlData> {
         None
     }
+
+    fn get_control_data_mut(&mut self) -> Option<&mut ControlData> {
+        None
+    }
 }
 
 pub type RcCont = Rc<dyn Cont>;
+
+impl<'a> dyn Cont + 'a {
+    pub fn has_c0(&self) -> bool {
+        if let Some(control) = self.get_control_data() {
+            control.save.c[0].is_some()
+        } else {
+            false
+        }
+    }
+}
 
 trait LoadWithContext<'a>: Sized {
     fn load_with_context(
@@ -198,6 +263,7 @@ trait LoadWithContext<'a>: Sized {
 }
 
 pub fn load_cont(slice: &mut CellSlice, context: &mut dyn CellContext) -> Result<RcCont, Error> {
+    #[allow(clippy::unusual_byte_groupings)]
     const MASK: u64 = 0x1_007_01_1_1_0001_0001;
 
     // Prefetch slice prefix aligned to 6 bits
@@ -246,7 +312,7 @@ impl QuitCont {
 }
 
 impl Cont for QuitCont {
-    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+    fn jump(self: Rc<Self>, _: &mut VmState) -> Result<i32> {
         Ok(!self.exit_code)
     }
 }
@@ -282,8 +348,7 @@ impl ExcQuitCont {
 
 impl Cont for ExcQuitCont {
     fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
-        let n = state
-            .stack
+        let n = Rc::make_mut(&mut state.stack)
             .pop_smallint_range(0, 0xffff)
             .unwrap_or_else(|e| VmException::from(e) as u32);
         Ok(!(n as i32))
@@ -321,8 +386,8 @@ impl PushIntCont {
 }
 
 impl Cont for PushIntCont {
-    fn jump(mut self: Rc<Self>, state: &mut VmState) -> Result<i32> {
-        ok!(state.stack.push_int(self.value));
+    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+        ok!(Rc::make_mut(&mut state.stack).push_int(self.value));
         state.jump(match Rc::try_unwrap(self) {
             Ok(this) => this.next,
             Err(this) => this.next.clone(),
@@ -371,14 +436,28 @@ impl RepeatCont {
 }
 
 impl Cont for RepeatCont {
-    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
-        match Rc::try_unwrap(self) {
-            Ok(this) => {
-                if this.count <= 0 {
-                    return state.jump(this.after);
-                }
-            }
+    fn jump(mut self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+        if self.count == 0 {
+            return state.jump(self.after.clone());
         }
+        if self.body.has_c0() {
+            return state.jump(self.body.clone());
+        }
+
+        let body = self.body.clone();
+        match Rc::get_mut(&mut self) {
+            Some(this) => {
+                this.count -= 1;
+                state.set_c0(self)
+            }
+            None => state.set_c0(Rc::new(RepeatCont {
+                count: self.count - 1,
+                body: self.body.clone(),
+                after: self.after.clone(),
+            })),
+        }
+
+        state.jump(body)
     }
 }
 
@@ -424,7 +503,14 @@ impl AgainCont {
     const TAG: u8 = 0b110001;
 }
 
-impl Cont for AgainCont {}
+impl Cont for AgainCont {
+    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+        if !self.body.has_c0() {
+            state.set_c0(self.clone())
+        }
+        state.jump(self.body.clone())
+    }
+}
 
 impl Store for AgainCont {
     fn store_into(
@@ -462,7 +548,18 @@ impl UntilCont {
     const TAG: u8 = 0b110000;
 }
 
-impl Cont for UntilCont {}
+impl Cont for UntilCont {
+    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+        let terminated = ok!(Rc::make_mut(&mut state.stack).pop_bool());
+        if terminated {
+            return state.jump(self.after.clone());
+        }
+        if !self.body.has_c0() {
+            state.set_c0(self.clone());
+        }
+        state.jump(self.body.clone())
+    }
+}
 
 impl Store for UntilCont {
     fn store_into(
@@ -504,7 +601,35 @@ impl WhileCont {
     const TAG: u8 = 0b11001;
 }
 
-impl Cont for WhileCont {}
+impl Cont for WhileCont {
+    fn jump(mut self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+        let next = if self.check_cond {
+            if !ok!(Rc::make_mut(&mut state.stack).pop_bool()) {
+                return state.jump(self.after.clone());
+            }
+            self.body.clone()
+        } else {
+            self.cond.clone()
+        };
+
+        if !next.has_c0() {
+            match Rc::get_mut(&mut self) {
+                Some(this) => {
+                    this.check_cond = !this.check_cond;
+                    state.set_c0(self);
+                }
+                None => state.set_c0(Rc::new(WhileCont {
+                    check_cond: !self.check_cond,
+                    cond: self.cond.clone(),
+                    body: self.body.clone(),
+                    after: self.after.clone(),
+                })),
+            }
+        }
+
+        state.jump(next)
+    }
+}
 
 impl Store for WhileCont {
     fn store_into(
@@ -549,8 +674,12 @@ impl ArgContExt {
 }
 
 impl Cont for ArgContExt {
-    fn jump(mut self: Rc<Self>, state: &mut VmState) -> Result<i32> {
-        // TODO: set control regs and codepage
+    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+        state.adjust_cr(&self.data.save);
+        if let Some(cp) = self.data.cp {
+            ok!(state.force_cp(cp));
+        }
+
         let ext = match Rc::try_unwrap(self) {
             Ok(this) => this.ext,
             Err(this) => this.ext.clone(),
@@ -560,6 +689,10 @@ impl Cont for ArgContExt {
 
     fn get_control_data(&self) -> Option<&ControlData> {
         Some(&self.data)
+    }
+
+    fn get_control_data_mut(&mut self) -> Option<&mut ControlData> {
+        Some(&mut self.data)
     }
 }
 
@@ -602,12 +735,20 @@ impl OrdCont {
 
 impl Cont for OrdCont {
     fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
-        // TODO: adjust control regs
+        state.adjust_cr(&self.data.save);
+        let Some(cp) = self.data.cp else {
+            anyhow::bail!(VmError::InvalidOpcode);
+        };
+        ok!(state.set_code(self.code.clone(), cp));
         Ok(0)
     }
 
     fn get_control_data(&self) -> Option<&ControlData> {
         Some(&self.data)
+    }
+
+    fn get_control_data_mut(&mut self) -> Option<&mut ControlData> {
+        Some(&mut self.data)
     }
 }
 
