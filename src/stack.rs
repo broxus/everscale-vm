@@ -57,6 +57,10 @@ impl Stack {
         self.push_raw(Self::make_null())
     }
 
+    pub fn push_nan(&mut self) -> Result<()> {
+        self.push_raw(Self::make_nan())
+    }
+
     pub fn push_bool(&mut self, value: bool) -> Result<()> {
         // TODO: replace with thread-local?
         self.push(if value {
@@ -119,6 +123,21 @@ impl Stack {
         anyhow::ensure!(n <= self.items.len(), VmError::StackUnderflow(n));
         self.items.drain(..n);
         Ok(())
+    }
+
+    pub fn swap(&mut self, lhs: usize, rhs: usize) -> Result<()> {
+        let len = self.items.len();
+        anyhow::ensure!(lhs < len, VmError::StackUnderflow(lhs));
+        anyhow::ensure!(rhs < len, VmError::StackUnderflow(rhs));
+        self.items.swap(len - lhs - 1, len - rhs - 1);
+        //eprintln!("AFTER SWAP: {}", self.display_dump());
+        Ok(())
+    }
+
+    pub fn fetch(&self, idx: usize) -> Result<Rc<dyn StackValue>> {
+        let len = self.items.len();
+        anyhow::ensure!(idx < len, VmError::StackUnderflow(idx));
+        Ok(self.items[len - idx - 1].clone())
     }
 }
 

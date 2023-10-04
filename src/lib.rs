@@ -8,6 +8,15 @@ macro_rules! ok {
     };
 }
 
+macro_rules! vm_log {
+    ($($tt:tt)*) => {
+        #[cfg(feature = "tracing")]
+        tracing::trace!($($tt)*)
+    };
+}
+
+pub use self::state::VmState;
+
 pub mod cont;
 pub mod dispatch;
 pub mod error;
@@ -15,3 +24,21 @@ pub mod instr;
 pub mod stack;
 pub mod state;
 pub mod util;
+
+#[cfg(test)]
+mod tests {
+    use everscale_types::prelude::*;
+    use tracing_test::traced_test;
+
+    use super::*;
+
+    #[test]
+    #[traced_test]
+    fn dispatch_works() {
+        let code = Boc::decode_base64("te6ccgEBAQEADAAAFHBxcgCD/wMTDyA=").unwrap();
+
+        let mut vm = VmState::builder().with_code(code).build().unwrap();
+        let exit_code = vm.run();
+        println!("Exit code: {exit_code}");
+    }
+}

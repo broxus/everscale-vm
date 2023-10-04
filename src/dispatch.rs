@@ -28,8 +28,8 @@ pub struct DispatchTable {
 }
 
 impl DispatchTable {
-    pub fn builder(id: u16) -> DispatchTableBuilder {
-        DispatchTableBuilder {
+    pub fn builder(id: u16) -> Opcodes {
+        Opcodes {
             id,
             opcodes: Default::default(),
         }
@@ -81,12 +81,12 @@ impl DispatchTable {
     }
 }
 
-pub struct DispatchTableBuilder {
+pub struct Opcodes {
     id: u16,
     opcodes: BTreeMap<u32, Box<dyn Opcode>>,
 }
 
-impl DispatchTableBuilder {
+impl Opcodes {
     pub fn build(self) -> DispatchTable {
         let mut opcodes = Vec::with_capacity(self.opcodes.len() * 2 + 1);
 
@@ -411,21 +411,21 @@ impl Opcode for ExtOpcode {
     }
 }
 
-type FnExecInstrSimple = fn(&mut VmState) -> Result<i32>;
+pub type FnExecInstrSimple = fn(&mut VmState) -> Result<i32>;
 
-type FnExecInstrArg = dyn Fn(&mut VmState, u32) -> Result<i32> + Send + Sync + 'static;
+pub type FnExecInstrArg = dyn Fn(&mut VmState, u32) -> Result<i32> + Send + Sync + 'static;
 
-type FnExecInstrFull = dyn Fn(&mut VmState, u32, u16) -> Result<i32> + Send + Sync + 'static;
+pub type FnExecInstrFull = dyn Fn(&mut VmState, u32, u16) -> Result<i32> + Send + Sync + 'static;
 
-type FnDumpArgInstr =
+pub type FnDumpArgInstr =
     dyn Fn(&mut CellSlice<'_>, u32, &mut dyn std::fmt::Write) -> Result<()> + Send + Sync + 'static;
 
-type FnDumpInstr = dyn Fn(&mut CellSlice<'_>, u32, u16, &mut dyn std::fmt::Write) -> Result<()>
+pub type FnDumpInstr = dyn Fn(&mut CellSlice<'_>, u32, u16, &mut dyn std::fmt::Write) -> Result<()>
     + Send
     + Sync
     + 'static;
 
-type FnComputeInstrLen = dyn Fn(&CellSlice<'_>, u32, u16) -> (u16, u8) + Send + Sync + 'static;
+pub type FnComputeInstrLen = dyn Fn(&CellSlice<'_>, u32, u16) -> (u16, u8) + Send + Sync + 'static;
 
 const MAX_OPCODE_BITS: u16 = 24;
 const MAX_OPCODE: u32 = 1 << MAX_OPCODE_BITS;

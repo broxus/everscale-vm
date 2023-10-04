@@ -7,7 +7,10 @@ use everscale_types::error::Error;
 use num_bigint::BigInt;
 use num_traits::Zero;
 
-use crate::cont::{ControlRegs, OrdCont, QuitCont, RcCont};
+#[cfg(feature = "tracing")]
+use tracing::instrument;
+
+use crate::cont::{ControlRegs, ExcQuitCont, OrdCont, QuitCont, RcCont};
 use crate::dispatch::DispatchTable;
 use crate::error::{VmError, VmException};
 use crate::instr::{codepage, codepage0};
@@ -17,9 +20,11 @@ use crate::util::OwnedCellSlice;
 #[derive(Default)]
 pub struct VmStateBuilder {
     pub code: OwnedCellSlice,
-    pub data: Cell,
+    pub data: Option<Cell>,
     pub stack: Vec<RcStackValue>,
     pub c7: Option<Vec<RcStackValue>>,
+    pub same_c3: bool,
+    pub without_push0: bool,
 }
 
 impl VmStateBuilder {
@@ -27,22 +32,43 @@ impl VmStateBuilder {
         Self::default()
     }
 
-    pub fn build(self) -> Result<VmState> {
-        let res = VmState {
+    pub fn build(mut self) -> Result<VmState> {
+        if self.same_c3 && !self.without_push0 {
+            vm_log!("implicit PUSH 0 at start");
+            self.stack.push(Rc::new(BigInt::zero()));
+        }
+
+        let quit0 = QUIT0.with(Rc::clone);
+        let quit1 = QUIT1.with(Rc::clone);
+        let cp = codepage0();
+
+        Ok(VmState {
+            cr: ControlRegs {
+                c: [
+                    Some(quit0.clone()),
+                    Some(quit1.clone()),
+                    Some(EXC_QUIT.with(Rc::clone)),
+                    Some(if self.same_c3 {
+                        Rc::new(OrdCont::simple(self.code.clone(), cp.id()))
+                    } else {
+                        Rc::new(QuitCont { exit_code: 11 })
+                    }),
+                ],
+                d: [
+                    Some(self.data.unwrap_or_default()),
+                    Some(Cell::empty_cell()),
+                ],
+                c7: Some(Rc::new(self.c7.unwrap_or_default())),
+            },
             code: self.code,
             stack: Rc::new(Stack { items: self.stack }),
-            cr: ControlRegs::default(),
             commited_state: None,
             steps: 0,
-            quit0: QUIT0.with(Rc::clone),
-            quit1: QUIT1.with(Rc::clone),
+            quit0,
+            quit1,
             gas: Default::default(), // TODO: pass gas limits as argument
-            cp: codepage0(),
-        };
-
-        // TODO: init registers
-
-        Ok(res)
+            cp,
+        })
     }
 
     pub fn with_code<T: Into<OwnedCellSlice>>(mut self, code: T) -> Self {
@@ -51,7 +77,17 @@ impl VmStateBuilder {
     }
 
     pub fn with_data(mut self, data: Cell) -> Self {
-        self.data = data;
+        self.data = Some(data);
+        self
+    }
+
+    pub fn with_same_c3(mut self) -> Self {
+        self.same_c3 = true;
+        self
+    }
+
+    pub fn without_push0(mut self) -> Self {
+        self.without_push0 = true;
         self
     }
 
@@ -91,12 +127,27 @@ pub struct VmState {
 impl VmState {
     pub const MAX_DATA_DEPTH: u16 = 512;
 
+    pub fn builder() -> VmStateBuilder {
+        VmStateBuilder::default()
+    }
+
+    #[cfg_attr(
+        feature = "tracing",
+        instrument(
+            level = "trace",
+            name = "vm_step",
+            fields(n = self.steps),
+            skip_all,
+        )
+    )]
     pub fn step(&mut self) -> Result<i32> {
         self.steps += 1;
         if !self.code.range().is_data_empty() {
             // TODO: dispatch
             self.cp.dispatch(self)
         } else if !self.code.range().is_refs_empty() {
+            vm_log!("implicit JMPREF");
+
             let next_cell = self.code.apply()?.get_reference_cloned(0)?;
 
             // TODO: consume implicit_jmpref_gas_price
@@ -109,6 +160,8 @@ impl VmState {
             let cont = Rc::new(OrdCont::simple(code, self.cp.id()));
             self.jump(cont)
         } else {
+            vm_log!("implicit RET");
+
             // TODO: consume implicit_ret_gas_price
             self.ret()
         }
@@ -119,10 +172,15 @@ impl VmState {
             let res = match self.step() {
                 Ok(res) => res,
                 Err(e) => {
+                    vm_log!(e = ?VmException::from(&e), "handling exception: {e:?}");
+
                     self.steps += 1;
                     match self.throw_exception(VmException::from(&e) as i32) {
                         Ok(res) => res,
-                        Err(e) => break VmException::from(&e).as_exit_code(),
+                        Err(e) => {
+                            vm_log!(e = ?VmException::from(&e), "double exception: {e:?}");
+                            break VmException::from(&e).as_exit_code();
+                        }
                     }
                 }
             };
@@ -132,6 +190,7 @@ impl VmState {
             if res != 0 {
                 // Try commit on ~(0) and ~(-1) exit codes
                 if res | 1 == -1 && !self.try_commit() {
+                    vm_log!("automatic commit failed");
                     self.stack = Rc::new(Stack {
                         items: vec![Rc::new(BigInt::default())],
                     });
@@ -403,4 +462,5 @@ impl CellContext for GasConsumerContext<'_> {
 thread_local! {
     static QUIT0: Rc<QuitCont> = Rc::new(QuitCont { exit_code: 0 });
     static QUIT1: Rc<QuitCont> = Rc::new(QuitCont { exit_code: 1 });
+    static EXC_QUIT: Rc<ExcQuitCont> = Rc::new(ExcQuitCont);
 }
