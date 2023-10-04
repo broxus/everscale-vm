@@ -8,7 +8,9 @@ use num_bigint::BigInt;
 use num_traits::Zero;
 
 use crate::cont::{ControlRegs, OrdCont, QuitCont, RcCont};
+use crate::dispatch::DispatchTable;
 use crate::error::{VmError, VmException};
+use crate::instr::{codepage, codepage0};
 use crate::stack::{RcStackValue, Stack, StackValue};
 use crate::util::OwnedCellSlice;
 
@@ -26,7 +28,21 @@ impl VmStateBuilder {
     }
 
     pub fn build(self) -> Result<VmState> {
-        VmState::new(self.code, self.data)
+        let res = VmState {
+            code: self.code,
+            stack: Rc::new(Stack { items: self.stack }),
+            cr: ControlRegs::default(),
+            commited_state: None,
+            steps: 0,
+            quit0: QUIT0.with(Rc::clone),
+            quit1: QUIT1.with(Rc::clone),
+            gas: Default::default(), // TODO: pass gas limits as argument
+            cp: codepage0(),
+        };
+
+        // TODO: init registers
+
+        Ok(res)
     }
 
     pub fn with_code<T: Into<OwnedCellSlice>>(mut self, code: T) -> Self {
@@ -65,44 +81,21 @@ pub struct VmState {
     pub stack: Rc<Stack>,
     pub cr: ControlRegs,
     pub commited_state: Option<CommitedState>,
-    pub cp: u16,
     pub steps: u64,
     pub quit0: Rc<QuitCont>,
     pub quit1: Rc<QuitCont>,
     pub gas: GasConsumer,
+    pub cp: &'static DispatchTable,
 }
 
 impl VmState {
     pub const MAX_DATA_DEPTH: u16 = 512;
 
-    thread_local! {
-        static QUIT0: Rc<QuitCont> = Rc::new(QuitCont { exit_code: 0 });
-        static QUIT1: Rc<QuitCont> = Rc::new(QuitCont { exit_code: 1 });
-    }
-
-    fn new(code: OwnedCellSlice, data: Cell) -> Result<Self> {
-        let mut result = Self {
-            code,
-            stack: Default::default(),
-            cr: ControlRegs::default(),
-            commited_state: None,
-            cp: 0,
-            steps: 0,
-            quit0: Self::QUIT0.with(Rc::clone),
-            quit1: Self::QUIT1.with(Rc::clone),
-            gas: Default::default(), // TODO: pass gas limits as argument
-        };
-
-        // TODO
-
-        Ok(result)
-    }
-
     pub fn step(&mut self) -> Result<i32> {
         self.steps += 1;
         if !self.code.range().is_data_empty() {
             // TODO: dispatch
-            todo!()
+            self.cp.dispatch(self)
         } else if !self.code.range().is_refs_empty() {
             let next_cell = self.code.apply()?.get_reference_cloned(0)?;
 
@@ -113,7 +106,7 @@ impl VmState {
                 .load_cell(next_cell, LoadMode::Full)?
                 .into();
 
-            let cont = Rc::new(OrdCont::simple(code, self.cp));
+            let cont = Rc::new(OrdCont::simple(code, self.cp.id()));
             self.jump(cont)
         } else {
             // TODO: consume implicit_ret_gas_price
@@ -163,7 +156,8 @@ impl VmState {
                 return true;
             }
         }
-        return false;
+
+        false
     }
 
     pub fn force_commit(&mut self) -> Result<()> {
@@ -312,8 +306,10 @@ impl VmState {
     }
 
     pub fn force_cp(&mut self, cp: u16) -> Result<()> {
-        // TODO: add better CP check and probably update dispatch table
-        anyhow::ensure!(cp == 0, VmError::InvalidOpcode);
+        let Some(cp) = codepage(cp) else {
+            anyhow::bail!(VmError::InvalidOpcode);
+        };
+        self.cp = cp;
         Ok(())
     }
 
@@ -402,4 +398,9 @@ impl CellContext for GasConsumerContext<'_> {
         ok!(self.consume_load_cell(cell, mode));
         Ok(cell)
     }
+}
+
+thread_local! {
+    static QUIT0: Rc<QuitCont> = Rc::new(QuitCont { exit_code: 0 });
+    static QUIT1: Rc<QuitCont> = Rc::new(QuitCont { exit_code: 1 });
 }

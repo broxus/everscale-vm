@@ -27,6 +27,11 @@ impl OwnedCellSlice {
     }
 
     #[inline]
+    pub fn range_mut(&mut self) -> &mut CellSliceRange {
+        &mut self.0 .1
+    }
+
+    #[inline]
     pub fn cell(&self) -> &Cell {
         &self.0 .0
     }

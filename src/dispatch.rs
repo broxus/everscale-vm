@@ -9,13 +9,7 @@ use crate::state::VmState;
 pub trait Opcode: Send + Sync {
     fn range(&self) -> (u32, u32);
 
-    fn dispatch(
-        &self,
-        st: &mut VmState,
-        slice: &mut CellSlice<'_>,
-        opcode: u32,
-        bits: u16,
-    ) -> Result<i32>;
+    fn dispatch(&self, st: &mut VmState, opcode: u32, bits: u16) -> Result<i32>;
 
     fn load_dump(
         &self,
@@ -29,15 +23,26 @@ pub trait Opcode: Send + Sync {
 }
 
 pub struct DispatchTable {
+    id: u16,
     opcodes: Vec<(u32, Box<dyn Opcode>)>,
 }
 
 impl DispatchTable {
-    pub fn builder() -> DispatchTableBuilder {
-        DispatchTableBuilder::default()
+    pub fn builder(id: u16) -> DispatchTableBuilder {
+        DispatchTableBuilder {
+            id,
+            opcodes: Default::default(),
+        }
+    }
+
+    #[inline]
+    pub fn id(&self) -> u16 {
+        self.id
     }
 
     pub fn lookup(&self, opcode: u32) -> &dyn Opcode {
+        debug_assert!(!self.opcodes.is_empty());
+
         let mut i = 0;
         let mut j = self.opcodes.len();
         while j - i > 1 {
@@ -51,16 +56,22 @@ impl DispatchTable {
         self.opcodes[i].1.as_ref()
     }
 
-    pub fn compute_len(&self, slice: &CellSlice<'_>) -> Option<(u16, u8)> {
-        let (opcode, bits) = Self::get_opcode_from_slice(slice);
+    pub fn dispatch(&self, st: &mut VmState) -> Result<i32> {
+        let (opcode, bits) = Self::get_opcode_from_slice(&st.code.apply()?);
         let op = self.lookup(opcode);
-        op.compute_len(slice, opcode, bits)
+        op.dispatch(st, opcode, bits)
     }
 
     pub fn load_dump(&self, slice: &mut CellSlice<'_>, f: &mut dyn std::fmt::Write) -> Result<()> {
         let (opcode, bits) = Self::get_opcode_from_slice(slice);
         let op = self.lookup(opcode);
         op.load_dump(slice, opcode, bits, f)
+    }
+
+    pub fn compute_len(&self, slice: &CellSlice<'_>) -> Option<(u16, u8)> {
+        let (opcode, bits) = Self::get_opcode_from_slice(slice);
+        let op = self.lookup(opcode);
+        op.compute_len(slice, opcode, bits)
     }
 
     fn get_opcode_from_slice(slice: &CellSlice<'_>) -> (u32, u16) {
@@ -70,8 +81,8 @@ impl DispatchTable {
     }
 }
 
-#[derive(Default)]
 pub struct DispatchTableBuilder {
+    id: u16,
     opcodes: BTreeMap<u32, Box<dyn Opcode>>,
 }
 
@@ -108,7 +119,10 @@ impl DispatchTableBuilder {
 
         opcodes.shrink_to_fit();
 
-        DispatchTable { opcodes }
+        DispatchTable {
+            id: self.id,
+            opcodes,
+        }
     }
 
     pub fn add_simple(
@@ -190,7 +204,6 @@ impl DispatchTableBuilder {
         opcode_min: u32,
         opcode_max: u32,
         total_bits: u16,
-        _arg_bits: u16,
         dump: Box<FnDumpInstr>,
         exec: Box<FnExecInstrFull>,
         instr_len: Box<FnComputeInstrLen>,
@@ -245,7 +258,7 @@ impl Opcode for DummyOpcode {
         (self.opcode_min, self.opcode_max)
     }
 
-    fn dispatch(&self, _: &mut VmState, _: &mut CellSlice<'_>, _: u32, _: u16) -> Result<i32> {
+    fn dispatch(&self, _: &mut VmState, _: u32, _: u16) -> Result<i32> {
         // TODO: consume gas_per_instr
         anyhow::bail!(VmError::InvalidOpcode);
     }
@@ -278,16 +291,10 @@ impl Opcode for SimpleOpcode {
         (self.opcode_min, self.opcode_max)
     }
 
-    fn dispatch(
-        &self,
-        st: &mut VmState,
-        slice: &mut CellSlice<'_>,
-        _: u32,
-        bits: u16,
-    ) -> Result<i32> {
+    fn dispatch(&self, st: &mut VmState, _: u32, bits: u16) -> Result<i32> {
         // TODO: consume gas_per_instr + opcode_bits * gas_per_bit
         anyhow::ensure!(bits >= self.opcode_bits, VmError::InvalidOpcode);
-        slice.advance(self.opcode_bits, 0)?;
+        st.code.range_mut().advance(self.opcode_bits, 0)?;
         (self.exec)(st)
     }
 
@@ -323,16 +330,10 @@ impl Opcode for FixedOpcode {
         (self.opcode_min, self.opcode_max)
     }
 
-    fn dispatch(
-        &self,
-        st: &mut VmState,
-        slice: &mut CellSlice<'_>,
-        opcode: u32,
-        bits: u16,
-    ) -> Result<i32> {
+    fn dispatch(&self, st: &mut VmState, opcode: u32, bits: u16) -> Result<i32> {
         // TODO: consume gas_per_instr + total_bits * gas_per_bit
         anyhow::ensure!(bits >= self.total_bits, VmError::InvalidOpcode);
-        slice.advance(self.total_bits, 0)?;
+        st.code.range_mut().advance(self.total_bits, 0)?;
         (self.exec)(st, opcode >> (MAX_OPCODE_BITS - self.total_bits))
     }
 
@@ -369,18 +370,11 @@ impl Opcode for ExtOpcode {
         (self.opcode_min, self.opcode_max)
     }
 
-    fn dispatch(
-        &self,
-        st: &mut VmState,
-        slice: &mut CellSlice<'_>,
-        opcode: u32,
-        bits: u16,
-    ) -> Result<i32> {
+    fn dispatch(&self, st: &mut VmState, opcode: u32, bits: u16) -> Result<i32> {
         // TODO: consume gas_per_instr + total_bits * gas_per_bit
         anyhow::ensure!(bits >= self.total_bits, VmError::InvalidOpcode);
         (self.exec)(
             st,
-            slice,
             opcode >> (MAX_OPCODE_BITS - self.total_bits),
             self.total_bits,
         )
@@ -421,8 +415,7 @@ type FnExecInstrSimple = fn(&mut VmState) -> Result<i32>;
 
 type FnExecInstrArg = dyn Fn(&mut VmState, u32) -> Result<i32> + Send + Sync + 'static;
 
-type FnExecInstrFull =
-    dyn Fn(&mut VmState, &mut CellSlice<'_>, u32, u16) -> Result<i32> + Send + Sync + 'static;
+type FnExecInstrFull = dyn Fn(&mut VmState, u32, u16) -> Result<i32> + Send + Sync + 'static;
 
 type FnDumpArgInstr =
     dyn Fn(&mut CellSlice<'_>, u32, &mut dyn std::fmt::Write) -> Result<()> + Send + Sync + 'static;
