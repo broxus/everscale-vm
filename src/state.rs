@@ -4,11 +4,61 @@ use ahash::HashSet;
 use anyhow::Result;
 use everscale_types::cell::*;
 use everscale_types::error::Error;
+use num_bigint::BigInt;
+use num_traits::Zero;
 
-use crate::cont::{ControlRegs, QuitCont, RcCont};
-use crate::error::VmError;
-use crate::stack::Stack;
+use crate::cont::{ControlRegs, OrdCont, QuitCont, RcCont};
+use crate::error::{VmError, VmException};
+use crate::stack::{RcStackValue, Stack, StackValue};
 use crate::util::OwnedCellSlice;
+
+#[derive(Default)]
+pub struct VmStateBuilder {
+    pub code: OwnedCellSlice,
+    pub data: Cell,
+    pub stack: Vec<RcStackValue>,
+    pub c7: Option<Vec<RcStackValue>>,
+}
+
+impl VmStateBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn build(self) -> Result<VmState> {
+        VmState::new(self.code, self.data)
+    }
+
+    pub fn with_code<T: Into<OwnedCellSlice>>(mut self, code: T) -> Self {
+        self.code = code.into();
+        self
+    }
+
+    pub fn with_data(mut self, data: Cell) -> Self {
+        self.data = data;
+        self
+    }
+
+    pub fn with_stack<I: IntoIterator<Item = RcStackValue>>(mut self, values: I) -> Self {
+        self.stack = values.into_iter().collect();
+        self
+    }
+
+    pub fn push<T: StackValue + 'static>(mut self, value: T) -> Self {
+        self.stack.push(Rc::new(value));
+        self
+    }
+
+    pub fn push_raw(mut self, value: RcStackValue) -> Self {
+        self.stack.push(value);
+        self
+    }
+
+    pub fn with_c7(mut self, c7: Vec<RcStackValue>) -> Self {
+        self.c7 = Some(c7);
+        self
+    }
+}
 
 pub struct VmState {
     pub code: OwnedCellSlice,
@@ -23,6 +73,131 @@ pub struct VmState {
 }
 
 impl VmState {
+    pub const MAX_DATA_DEPTH: u16 = 512;
+
+    thread_local! {
+        static QUIT0: Rc<QuitCont> = Rc::new(QuitCont { exit_code: 0 });
+        static QUIT1: Rc<QuitCont> = Rc::new(QuitCont { exit_code: 1 });
+    }
+
+    fn new(code: OwnedCellSlice, data: Cell) -> Result<Self> {
+        let mut result = Self {
+            code,
+            stack: Default::default(),
+            cr: ControlRegs::default(),
+            commited_state: None,
+            cp: 0,
+            steps: 0,
+            quit0: Self::QUIT0.with(Rc::clone),
+            quit1: Self::QUIT1.with(Rc::clone),
+            gas: Default::default(), // TODO: pass gas limits as argument
+        };
+
+        // TODO
+
+        Ok(result)
+    }
+
+    pub fn step(&mut self) -> Result<i32> {
+        self.steps += 1;
+        if !self.code.range().is_data_empty() {
+            // TODO: dispatch
+            todo!()
+        } else if !self.code.range().is_refs_empty() {
+            let next_cell = self.code.apply()?.get_reference_cloned(0)?;
+
+            // TODO: consume implicit_jmpref_gas_price
+            let code = self
+                .gas
+                .context()
+                .load_cell(next_cell, LoadMode::Full)?
+                .into();
+
+            let cont = Rc::new(OrdCont::simple(code, self.cp));
+            self.jump(cont)
+        } else {
+            // TODO: consume implicit_ret_gas_price
+            self.ret()
+        }
+    }
+
+    pub fn run(&mut self) -> i32 {
+        loop {
+            let res = match self.step() {
+                Ok(res) => res,
+                Err(e) => {
+                    self.steps += 1;
+                    match self.throw_exception(VmException::from(&e) as i32) {
+                        Ok(res) => res,
+                        Err(e) => break VmException::from(&e).as_exit_code(),
+                    }
+                }
+            };
+
+            // TODO: handle out of gas
+
+            if res != 0 {
+                // Try commit on ~(0) and ~(-1) exit codes
+                if res | 1 == -1 && !self.try_commit() {
+                    self.stack = Rc::new(Stack {
+                        items: vec![Rc::new(BigInt::default())],
+                    });
+                    break VmException::CellOverflow.as_exit_code();
+                }
+                break res;
+            }
+        }
+    }
+
+    pub fn try_commit(&mut self) -> bool {
+        if let (Some(c4), Some(c5)) = (&self.cr.d[0], &self.cr.d[1]) {
+            if c4.level() == 0
+                && c5.level() == 0
+                && c4.repr_depth() <= Self::MAX_DATA_DEPTH
+                && c5.repr_depth() <= Self::MAX_DATA_DEPTH
+            {
+                self.commited_state = Some(CommitedState {
+                    c4: c4.clone(),
+                    c5: c5.clone(),
+                });
+                return true;
+            }
+        }
+        return false;
+    }
+
+    pub fn force_commit(&mut self) -> Result<()> {
+        if self.try_commit() {
+            Ok(())
+        } else {
+            anyhow::bail!(Error::CellOverflow)
+        }
+    }
+
+    pub fn throw_exception(&mut self, n: i32) -> Result<i32> {
+        self.stack = Rc::new(Stack {
+            items: vec![Rc::new(BigInt::zero()), Rc::new(BigInt::from(n))],
+        });
+        self.code = Default::default();
+        // TODO: try consume exception_gas_price
+        let Some(c2) = self.cr.c[2].clone() else {
+            anyhow::bail!(VmError::InvalidOpcode);
+        };
+        self.jump(c2)
+    }
+
+    pub fn throw_exception_with_arg(&mut self, n: i32, arg: RcStackValue) -> Result<i32> {
+        self.stack = Rc::new(Stack {
+            items: vec![arg, Rc::new(BigInt::from(n))],
+        });
+        self.code = Default::default();
+        // TODO: try consume exception_gas_price
+        let Some(c2) = self.cr.c[2].clone() else {
+            anyhow::bail!(VmError::InvalidOpcode);
+        };
+        self.jump(c2)
+    }
+
     pub fn jump(&mut self, cont: RcCont) -> Result<i32> {
         if let Some(cont_data) = cont.get_control_data() {
             if cont_data.stack.is_some() || cont_data.nargs.is_some() {
@@ -99,6 +274,26 @@ impl VmState {
         cont.jump(self)
     }
 
+    pub fn ret(&mut self) -> Result<i32> {
+        let cont = ok!(self.take_c0());
+        self.jump(cont)
+    }
+
+    pub fn ret_ext(&mut self, ret_args: Option<u16>) -> Result<i32> {
+        let cont = ok!(self.take_c0());
+        self.jump_ext(cont, ret_args)
+    }
+
+    pub fn ret_alt(&mut self) -> Result<i32> {
+        let cont = ok!(self.take_c1());
+        self.jump(cont)
+    }
+
+    pub fn ret_alt_ext(&mut self, ret_args: Option<u16>) -> Result<i32> {
+        let cont = ok!(self.take_c1());
+        self.jump_ext(cont, ret_args)
+    }
+
     pub fn adjust_cr(&mut self, save: &ControlRegs) {
         self.cr.merge(save)
     }
@@ -121,13 +316,29 @@ impl VmState {
         anyhow::ensure!(cp == 0, VmError::InvalidOpcode);
         Ok(())
     }
+
+    fn take_c0(&mut self) -> Result<RcCont> {
+        let Some(cont) = std::mem::replace(&mut self.cr.c[0], Some(self.quit0.clone())) else {
+            anyhow::bail!(VmError::InvalidOpcode);
+        };
+        Ok(cont)
+    }
+
+    fn take_c1(&mut self) -> Result<RcCont> {
+        let Some(cont) = std::mem::replace(&mut self.cr.c[1], Some(self.quit1.clone())) else {
+            anyhow::bail!(VmError::InvalidOpcode);
+        };
+        Ok(cont)
+    }
 }
 
 pub struct CommitedState {
-    pub c4: Option<Cell>,
-    pub c5: Option<Cell>,
+    pub c4: Cell,
+    pub c5: Cell,
 }
 
+// TODO: remove default
+#[derive(Default)]
 pub struct GasConsumer {
     pub gas_max: u64,
     pub gas_limit: u64,

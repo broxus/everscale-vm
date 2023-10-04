@@ -25,6 +25,7 @@ pub enum VmError {
     OutOfGas,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u8)]
 pub enum VmException {
     Ok = 0,
@@ -42,6 +43,12 @@ pub enum VmException {
     Fatal = 12,
     OutOfGas = 13,
     VirtError = 14,
+}
+
+impl VmException {
+    pub const fn as_exit_code(&self) -> i32 {
+        !(*self as i32)
+    }
 }
 
 impl std::fmt::Display for VmException {

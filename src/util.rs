@@ -7,7 +7,7 @@ use everscale_types::prelude::*;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{One, Zero};
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 #[repr(transparent)]
 pub struct OwnedCellSlice(CellSliceParts);
 
@@ -34,6 +34,13 @@ impl OwnedCellSlice {
     #[inline]
     pub fn set_range(&mut self, range: CellSliceRange) {
         self.0 .1 = range
+    }
+}
+
+impl From<Cell> for OwnedCellSlice {
+    #[inline]
+    fn from(value: Cell) -> Self {
+        Self::new(value)
     }
 }
 

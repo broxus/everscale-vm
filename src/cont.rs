@@ -12,7 +12,7 @@ use crate::stack::{
 use crate::state::VmState;
 use crate::util::{ensure_empty_slice, rc_ptr_eq, OwnedCellSlice, Uint4};
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ControlData {
     pub nargs: Option<u16>,
     pub stack: Option<Rc<Stack>>,
@@ -731,6 +731,16 @@ pub struct OrdCont {
 
 impl OrdCont {
     const TAG: u8 = 0b00;
+
+    pub fn simple(code: OwnedCellSlice, cp: u16) -> Self {
+        Self {
+            data: ControlData {
+                cp: Some(cp),
+                ..Default::default()
+            },
+            code,
+        }
+    }
 }
 
 impl Cont for OrdCont {
