@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 ahash = "0.8"
 anyhow = "1.0"
+bumpalo = "3.14"
 num-bigint = "0.4"
 num-traits = "0.2"
 thiserror = "1.0"
