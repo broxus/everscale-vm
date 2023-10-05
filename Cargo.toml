@@ -3,6 +3,9 @@ name = "everscale-vm"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+members = ["proc"]
+
 [dependencies]
 ahash = "0.8"
 anyhow = "1.0"
@@ -16,6 +19,8 @@ everscale-types = { version = "0.1.0-rc.5", default-features = false, features =
     "sync",
     "models",
 ] }
+
+everscale-vm-proc = { path = "./proc" }
 
 [dev-dependencies]
 everscale-types = { version = "0.1.0-rc.5", default-features = false, features = [

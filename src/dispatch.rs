@@ -10,16 +10,6 @@ pub trait Opcode: Send + Sync {
     fn range(&self) -> (u32, u32);
 
     fn dispatch(&self, st: &mut VmState, opcode: u32, bits: u16) -> Result<i32>;
-
-    fn load_dump(
-        &self,
-        slice: &mut CellSlice<'_>,
-        opcode: u32,
-        bits: u16,
-        f: &mut dyn std::fmt::Write,
-    ) -> Result<()>;
-
-    fn compute_len(&self, slice: &CellSlice<'_>, opcode: u32, bits: u16) -> Option<(u16, u8)>;
 }
 
 pub struct DispatchTable {
@@ -60,18 +50,6 @@ impl DispatchTable {
         let (opcode, bits) = Self::get_opcode_from_slice(&st.code.apply()?);
         let op = self.lookup(opcode);
         op.dispatch(st, opcode, bits)
-    }
-
-    pub fn load_dump(&self, slice: &mut CellSlice<'_>, f: &mut dyn std::fmt::Write) -> Result<()> {
-        let (opcode, bits) = Self::get_opcode_from_slice(slice);
-        let op = self.lookup(opcode);
-        op.load_dump(slice, opcode, bits, f)
-    }
-
-    pub fn compute_len(&self, slice: &CellSlice<'_>) -> Option<(u16, u8)> {
-        let (opcode, bits) = Self::get_opcode_from_slice(slice);
-        let op = self.lookup(opcode);
-        op.compute_len(slice, opcode, bits)
     }
 
     fn get_opcode_from_slice(slice: &CellSlice<'_>) -> (u32, u16) {
@@ -125,16 +103,9 @@ impl Opcodes {
         }
     }
 
-    pub fn add_simple(
-        &mut self,
-        opcode: u32,
-        bits: u16,
-        name: &'static str,
-        exec: FnExecInstrSimple,
-    ) -> Result<()> {
+    pub fn add_simple(&mut self, opcode: u32, bits: u16, exec: FnExecInstrSimple) -> Result<()> {
         let remaining_bits = MAX_OPCODE_BITS - bits;
         self.add_opcode(Box::new(SimpleOpcode {
-            name,
             opcode_min: opcode << remaining_bits,
             opcode_max: (opcode + 1) << remaining_bits,
             opcode_bits: bits,
@@ -147,13 +118,11 @@ impl Opcodes {
         opcode: u32,
         opcode_bits: u16,
         arg_bits: u16,
-        dump: Box<FnDumpArgInstr>,
-        exec: Box<FnExecInstrArg>,
+        exec: FnExecInstrArg,
     ) -> Result<()> {
         let remaining_bits = MAX_OPCODE_BITS - opcode_bits;
         self.add_opcode(Box::new(FixedOpcode {
             exec,
-            dump,
             opcode_min: opcode << remaining_bits,
             opcode_max: (opcode + 1) << remaining_bits,
             total_bits: opcode_bits + arg_bits,
@@ -166,13 +135,11 @@ impl Opcodes {
         opcode_max: u32,
         total_bits: u16,
         _arg_bits: u16,
-        dump: Box<FnDumpArgInstr>,
-        exec: Box<FnExecInstrArg>,
+        exec: FnExecInstrArg,
     ) -> Result<()> {
         let remaining_bits = MAX_OPCODE_BITS - total_bits;
         self.add_opcode(Box::new(FixedOpcode {
             exec,
-            dump,
             opcode_min: opcode_min << remaining_bits,
             opcode_max: opcode_max << remaining_bits,
             total_bits,
@@ -184,15 +151,11 @@ impl Opcodes {
         opcode: u32,
         opcode_bits: u16,
         arg_bits: u16,
-        dump: Box<FnDumpInstr>,
         exec: Box<FnExecInstrFull>,
-        instr_len: Box<FnComputeInstrLen>,
     ) -> Result<()> {
         let remaining_bits = MAX_OPCODE_BITS - opcode_bits;
         self.add_opcode(Box::new(ExtOpcode {
             exec,
-            dump,
-            instr_len,
             opcode_min: opcode << remaining_bits,
             opcode_max: (opcode + 1) << remaining_bits,
             total_bits: opcode_bits + arg_bits,
@@ -204,15 +167,11 @@ impl Opcodes {
         opcode_min: u32,
         opcode_max: u32,
         total_bits: u16,
-        dump: Box<FnDumpInstr>,
         exec: Box<FnExecInstrFull>,
-        instr_len: Box<FnComputeInstrLen>,
     ) -> Result<()> {
         let remaining_bits = MAX_OPCODE_BITS - total_bits;
         self.add_opcode(Box::new(ExtOpcode {
             exec,
-            dump,
-            instr_len,
             opcode_min: opcode_min << remaining_bits,
             opcode_max: opcode_max << remaining_bits,
             total_bits,
@@ -262,25 +221,10 @@ impl Opcode for DummyOpcode {
         // TODO: consume gas_per_instr
         anyhow::bail!(VmError::InvalidOpcode);
     }
-
-    fn load_dump(
-        &self,
-        _: &mut CellSlice<'_>,
-        _: u32,
-        _: u16,
-        _: &mut dyn std::fmt::Write,
-    ) -> Result<()> {
-        Ok(())
-    }
-
-    fn compute_len(&self, _: &CellSlice<'_>, _: u32, _: u16) -> Option<(u16, u8)> {
-        None
-    }
 }
 
 struct SimpleOpcode {
     exec: FnExecInstrSimple,
-    name: &'static str,
     opcode_min: u32,
     opcode_max: u32,
     opcode_bits: u16,
@@ -297,29 +241,10 @@ impl Opcode for SimpleOpcode {
         st.code.range_mut().advance(self.opcode_bits, 0)?;
         (self.exec)(st)
     }
-
-    fn load_dump(
-        &self,
-        slice: &mut CellSlice<'_>,
-        _: u32,
-        bits: u16,
-        f: &mut dyn std::fmt::Write,
-    ) -> Result<()> {
-        if bits >= self.opcode_bits {
-            slice.try_advance(self.opcode_bits, 0);
-            f.write_str(self.name)?;
-        }
-        Ok(())
-    }
-
-    fn compute_len(&self, _: &CellSlice<'_>, _: u32, bits: u16) -> Option<(u16, u8)> {
-        (bits >= self.opcode_bits).then_some((self.opcode_bits, 0))
-    }
 }
 
 struct FixedOpcode {
-    exec: Box<FnExecInstrArg>,
-    dump: Box<FnDumpArgInstr>,
+    exec: FnExecInstrArg,
     opcode_min: u32,
     opcode_max: u32,
     total_bits: u16,
@@ -336,30 +261,10 @@ impl Opcode for FixedOpcode {
         st.code.range_mut().advance(self.total_bits, 0)?;
         (self.exec)(st, opcode >> (MAX_OPCODE_BITS - self.total_bits))
     }
-
-    fn load_dump(
-        &self,
-        slice: &mut CellSlice<'_>,
-        opcode: u32,
-        bits: u16,
-        f: &mut dyn std::fmt::Write,
-    ) -> Result<()> {
-        if bits >= self.total_bits {
-            slice.try_advance(self.total_bits, 0);
-            (self.dump)(slice, opcode >> (MAX_OPCODE_BITS - self.total_bits), f)?;
-        }
-        Ok(())
-    }
-
-    fn compute_len(&self, _: &CellSlice<'_>, _: u32, bits: u16) -> Option<(u16, u8)> {
-        (bits >= self.total_bits).then_some((self.total_bits, 0))
-    }
 }
 
 struct ExtOpcode {
     exec: Box<FnExecInstrFull>,
-    dump: Box<FnDumpInstr>,
-    instr_len: Box<FnComputeInstrLen>,
     opcode_min: u32,
     opcode_max: u32,
     total_bits: u16,
@@ -379,53 +284,13 @@ impl Opcode for ExtOpcode {
             self.total_bits,
         )
     }
-
-    fn load_dump(
-        &self,
-        slice: &mut CellSlice<'_>,
-        opcode: u32,
-        bits: u16,
-        f: &mut dyn std::fmt::Write,
-    ) -> Result<()> {
-        if bits >= self.total_bits {
-            (self.dump)(
-                slice,
-                opcode >> (MAX_OPCODE_BITS - self.total_bits),
-                self.total_bits,
-                f,
-            )?;
-        }
-        Ok(())
-    }
-
-    fn compute_len(&self, slice: &CellSlice<'_>, opcode: u32, bits: u16) -> Option<(u16, u8)> {
-        if bits >= self.total_bits {
-            Some((self.instr_len)(
-                slice,
-                opcode >> (MAX_OPCODE_BITS - self.total_bits),
-                self.total_bits,
-            ))
-        } else {
-            None
-        }
-    }
 }
 
 pub type FnExecInstrSimple = fn(&mut VmState) -> Result<i32>;
 
-pub type FnExecInstrArg = dyn Fn(&mut VmState, u32) -> Result<i32> + Send + Sync + 'static;
+pub type FnExecInstrArg = fn(&mut VmState, u32) -> Result<i32>;
 
 pub type FnExecInstrFull = dyn Fn(&mut VmState, u32, u16) -> Result<i32> + Send + Sync + 'static;
-
-pub type FnDumpArgInstr =
-    dyn Fn(&mut CellSlice<'_>, u32, &mut dyn std::fmt::Write) -> Result<()> + Send + Sync + 'static;
-
-pub type FnDumpInstr = dyn Fn(&mut CellSlice<'_>, u32, u16, &mut dyn std::fmt::Write) -> Result<()>
-    + Send
-    + Sync
-    + 'static;
-
-pub type FnComputeInstrLen = dyn Fn(&CellSlice<'_>, u32, u16) -> (u16, u8) + Send + Sync + 'static;
 
 const MAX_OPCODE_BITS: u16 = 24;
 const MAX_OPCODE: u32 = 1 << MAX_OPCODE_BITS;

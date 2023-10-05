@@ -134,6 +134,14 @@ impl Stack {
         Ok(())
     }
 
+    pub fn reverse_range(&mut self, offset: usize, n: usize) -> Result<()> {
+        let len = self.items.len();
+        anyhow::ensure!(offset < len, VmError::StackUnderflow(offset));
+        anyhow::ensure!(offset + n <= len, VmError::StackUnderflow(offset + n));
+        self.items[len - offset - n..len - offset].reverse();
+        Ok(())
+    }
+
     pub fn fetch(&self, idx: usize) -> Result<Rc<dyn StackValue>> {
         let len = self.items.len();
         anyhow::ensure!(idx < len, VmError::StackUnderflow(idx));

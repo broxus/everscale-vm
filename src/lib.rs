@@ -1,3 +1,5 @@
+extern crate self as everscale_vm;
+
 /// Prevents using `From::from` for plain error conversion.
 macro_rules! ok {
     ($e:expr $(,)?) => {
@@ -35,7 +37,10 @@ mod tests {
     #[test]
     #[traced_test]
     fn dispatch_works() {
-        let code = Boc::decode_base64("te6ccgEBAQEADAAAFHBxcgCD/wMTDyA=").unwrap();
+        let code = Boc::decode_base64(
+            "te6ccgEBAQEAJgAASHBxcgCD/wMTUhMgISMwMTNBI1ASURJSEVM0Q0VUQyFUcSNVAQ==",
+        )
+        .unwrap();
 
         let mut vm = VmState::builder().with_code(code).build().unwrap();
         let exit_code = vm.run();
