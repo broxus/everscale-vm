@@ -116,10 +116,26 @@ impl Stack {
             }
         }
         anyhow::bail!(VmError::IntegerOutOfRange {
-            min,
+            min: min as usize,
             max: max as usize,
             actual: item.to_string(),
         })
+    }
+
+    pub fn pop_tuple(&mut self) -> Result<Rc<Vec<RcStackValue>>> {
+        self.pop()?.into_tuple()
+    }
+
+    pub fn pop_tuple_range(&mut self, min_len: u32, max_len: u32) -> Result<Rc<Vec<RcStackValue>>> {
+        let tuple = self.pop()?.into_tuple()?;
+        anyhow::ensure!(
+            (min_len as usize..=max_len as usize).contains(&tuple.len()),
+            VmError::InvalidType {
+                expected: StackValueType::Tuple,
+                actual: StackValueType::Tuple,
+            }
+        );
+        Ok(tuple)
     }
 
     pub fn pop_many(&mut self, n: usize) -> Result<()> {
@@ -289,6 +305,12 @@ pub trait StackValue: std::fmt::Debug {
 
     fn into_tuple(self: Rc<Self>) -> Result<Rc<Vec<RcStackValue>>> {
         Err(invalid_type(self.ty(), StackValueType::Tuple))
+    }
+}
+
+impl dyn StackValue {
+    pub fn is_null(&self) -> bool {
+        self.ty() == StackValueType::Null
     }
 }
 

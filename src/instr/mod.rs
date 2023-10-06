@@ -4,10 +4,12 @@ use anyhow::Result;
 
 use self::arithops::Arithmetic;
 use self::stackops::Stackops;
+use self::tupleops::Tupleops;
 use crate::dispatch::{DispatchTable, Opcodes};
 
 mod arithops;
 mod stackops;
+mod tupleops;
 
 pub fn codepage(n: u16) -> Option<&'static DispatchTable> {
     match n {
@@ -21,6 +23,7 @@ pub fn codepage0() -> &'static DispatchTable {
         let mut cp = DispatchTable::builder(0);
         Arithmetic.init(&mut cp)?;
         Stackops.init(&mut cp)?;
+        Tupleops.init(&mut cp)?;
         Ok(cp.build())
     }
 

@@ -10,7 +10,7 @@ pub enum VmError {
     TooManyArguments(usize),
     #[error("expected integer in range {min}..={max}, found {actual}")]
     IntegerOutOfRange {
-        min: u32,
+        min: usize,
         max: usize,
         actual: String,
     },
