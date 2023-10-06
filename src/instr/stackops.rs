@@ -3,7 +3,6 @@ use std::rc::Rc;
 use anyhow::Result;
 use everscale_vm_proc::vm_module;
 
-use crate::dispatch::Opcodes;
 use crate::error::VmError;
 use crate::state::VmState;
 
@@ -22,343 +21,387 @@ impl Stackops {
         Ok(0)
     }
 
-    #[instr(code = "0i", range_from = "02", fmt = "XCHG s{i}")]
-    #[instr(code = "11ii", fmt = "XCHG s{i}")]
-    fn exec_xchg0(st: &mut VmState, i: u32) -> Result<i32> {
-        ok!(Rc::make_mut(&mut st.stack).swap(0, i as _));
-        Ok(0)
-    }
-
-    #[instr(code = "10ij", fmt = "XCHG s{i},s{j}")]
+    #[instr(code = "0j", range_from = "02", fmt = "XCHG s{j}", args(i = 0))]
+    #[instr(code = "10ij", fmt = "XCHG s{i},s{j}", cond = i != 0 && i < j)]
+    #[instr(code = "11jj", fmt = "XCHG s{j}", args(i = 0))]
+    #[instr(code = "1j", range_from = "12", fmt = "XCHG s1,s{j}", args(i = 1))]
     fn exec_xchg(st: &mut VmState, i: u32, j: u32) -> Result<i32> {
-        anyhow::ensure!(i != 0 && i < j, VmError::InvalidOpcode);
         ok!(Rc::make_mut(&mut st.stack).swap(i as _, j as _));
         Ok(0)
     }
 
-    #[instr(code = "1i", range_from = "12", fmt = "XCHG s1,s{i}")]
-    fn exec_xchg1(st: &mut VmState, x: u32) -> Result<i32> {
-        debug_assert!(x >= 2); // opcode range must cover this (0x12..0x20)
-        ok!(Rc::make_mut(&mut st.stack).swap(1, x as _));
+    #[instr(code = "20", fmt = "DUP")]
+    fn exec_dup(st: &mut VmState) -> Result<i32> {
+        ok!(Rc::make_mut(&mut st.stack).push_nth(0));
         Ok(0)
     }
-}
 
-#[rustfmt::skip]
-pub fn register_stack_ops(t: &mut Opcodes) -> Result<()> {
-    t.add_fixed_range(0x12, 0x20, 8, 4, dump_fn!("XCHG s1," @s), exec_xchg1)?;
-    t.add_simple(0x20, 8, "DUP", exec_dup)?;
-    t.add_simple(0x21, 8, "OVER", exec_over)?;
-    t.add_fixed_range(0x22, 0x30, 8, 4, dump_fn!("PUSH " @s), exec_push)?;
-    t.add_simple(0x30, 8, "DROP", exec_drop)?;
-    t.add_simple(0x31, 8, "NIP", exec_nip)?;
-    t.add_fixed_range(0x32, 0x40, 8, 4, dump_fn!("POP " @s), exec_pop)?;
-    t.add_fixed(0x4, 4, 12, dump_fn!("XCHG3 " @s @s @s), exec_xchg3)?;
-    t.add_fixed(0x50, 8, 8, dump_fn!("XCHG2 " @s @s), exec_xchg2)?;
-    t.add_fixed(0x51, 8, 8, dump_fn!("XCPU " @s @s), exec_xcpu)?;
-    t.add_fixed(0x52, 8, 8, dump_fn!("PUXC " @s @s -1), exec_puxc)?;
-    t.add_fixed(0x53, 8, 8, dump_fn!("PUSH2 " @s @s), exec_push2)?;
-    t.add_fixed(0x540, 12, 12, dump_fn!("XCHG3 " @s @s @s), exec_xchg3)?;
-    t.add_fixed(0x541, 12, 12, dump_fn!("XC2PU " @s @s @s), exec_xc2pu)?;
-    t.add_fixed(0x542, 12, 12, dump_fn!("XCPUXC " @s @s @s -1), exec_xcpuxc)?;
-    t.add_fixed(0x543, 12, 12, dump_fn!("XCPU2 " @s @s @s), exec_xcpu2)?;
-    t.add_fixed(0x544, 12, 12, dump_fn!("PUXC2 " @s @s @s -0x11), exec_puxc2)?;
-    t.add_fixed(0x545, 12, 12, dump_fn!("PUXCPU " @s @s @s -0x11), exec_puxcpu)?;
-    t.add_fixed(0x546, 12, 12, dump_fn!("PU2XC " @s @s @s -0x12), exec_pu2xc)?;
-    t.add_fixed(0x547, 12, 12, dump_fn!("PUSH3 " @s @s @s), exec_push3)?;
-    t.add_fixed(0x55, 8, 8, dump_fn!("BLKSWAP " @c "," @c +0x11), exec_blkswap)?;
-    t.add_fixed(0x56, 8, 8, dump_fn!("PUSH " @sl), exec_push_l)?;
-    t.add_fixed(0x57, 8, 8, dump_fn!("POP " @sl), exec_pop_l)?;
-    t.add_simple(0x58, 8, "ROT", exec_rot)?;
-    t.add_simple(0x59, 8, "ROTREV", exec_rotrev)?;
-    t.add_simple(0x5a, 8, "2SWAP", exec_2swap)?;
-    t.add_simple(0x5b, 8, "2DROP", exec_2drop)?;
-    t.add_simple(0x5c, 8, "2DUP", exec_2dup)?;
-    t.add_simple(0x5d, 8, "2OVER", exec_2over)?;
-
-
-    Ok(())
-}
-
-// fn exec_nop(_: &mut VmState) -> Result<i32> {
-//     vm_log!("execute NOP");
-//     Ok(0)
-// }
-
-// fn exec_swap(st: &mut VmState) -> Result<i32> {
-//     vm_log!("execute SWAP");
-//     ok!(Rc::make_mut(&mut st.stack).swap(0, 1));
-//     Ok(0)
-// }
-
-// fn exec_xchg0(st: &mut VmState, args: u32) -> Result<i32> {
-//     args!(let x = args);
-//     vm_log!("execute XCHG s{x}");
-//     ok!(Rc::make_mut(&mut st.stack).swap(0, x as _));
-//     Ok(0)
-// }
-
-// fn exec_xchg(st: &mut VmState, args: u32) -> Result<i32> {
-//     args!(let (x, y) = args);
-//     anyhow::ensure!(x != 0 && x < y, VmError::InvalidOpcode);
-//     vm_log!("execute XCHG s{x},s{y}");
-//     ok!(Rc::make_mut(&mut st.stack).swap(x as _, y as _));
-//     Ok(0)
-// }
-
-fn dump_xchg(args: u32, f: &mut dyn std::fmt::Write) -> Result<()> {
-    args!(let (x, y) = args);
-    if x != 0 && x < y {
-        write!(f, "XCHG s{x},s{y}")?
+    #[instr(code = "21", fmt = "OVER")]
+    fn exec_over(st: &mut VmState) -> Result<i32> {
+        ok!(Rc::make_mut(&mut st.stack).push_nth(1));
+        Ok(0)
     }
-    Ok(())
-}
 
-// fn exec_xchg0_l(st: &mut VmState, args: u32) -> Result<i32> {
-//     args!(let x(l) = args);
-//     vm_log!("execute XCHG s{x}");
-//     ok!(Rc::make_mut(&mut st.stack).swap(0, x as _));
-//     Ok(0)
-// }
+    #[instr(code = "2i", range_from = "22", fmt = "PUSH s{i}")]
+    #[instr(code = "56ii", fmt = "PUSH s{i}")]
+    fn exec_push(st: &mut VmState, i: u32) -> Result<i32> {
+        ok!(Rc::make_mut(&mut st.stack).push_nth(i as _));
+        Ok(0)
+    }
 
-fn exec_dup(st: &mut VmState) -> Result<i32> {
-    vm_log!("execute DUP");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.push_raw(ok!(stack.fetch(0))));
-    Ok(0)
-}
+    #[instr(code = "30", fmt = "DROP")]
+    fn exec_drop(st: &mut VmState) -> Result<i32> {
+        ok!(Rc::make_mut(&mut st.stack).pop());
+        Ok(0)
+    }
 
-fn exec_over(st: &mut VmState) -> Result<i32> {
-    vm_log!("execute OVER");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.push_raw(ok!(stack.fetch(1))));
-    Ok(0)
-}
+    #[instr(code = "31", fmt = "NIP")]
+    fn exec_nip(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.swap(0, 1));
+        ok!(stack.pop());
+        Ok(0)
+    }
 
-fn exec_push(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let x = args);
-    vm_log!("execute PUSH s{x}");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.push_raw(ok!(stack.fetch(x as _))));
-    Ok(0)
-}
+    #[instr(code = "3i", range_from = "32", fmt = "POP s{i}")]
+    #[instr(code = "57ii", fmt = "POP s{i}")]
+    fn exec_pop(st: &mut VmState, i: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.swap(0, i as _));
+        ok!(stack.pop());
+        Ok(0)
+    }
 
-fn exec_drop(st: &mut VmState) -> Result<i32> {
-    vm_log!("execute DROP");
-    ok!(Rc::make_mut(&mut st.stack).pop());
-    Ok(0)
-}
+    #[instr(code = "4ijk", fmt = "XCHG3 s{i},s{j},s{k}")]
+    #[instr(code = "540ijk", fmt = "XCHG3 s{i},s{j},s{k}")]
+    fn exec_xchg3(st: &mut VmState, i: u32, j: u32, k: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.swap(2, i as _));
+        ok!(stack.swap(1, j as _));
+        ok!(stack.swap(0, k as _));
+        Ok(0)
+    }
 
-fn exec_nip(st: &mut VmState) -> Result<i32> {
-    vm_log!("execute NIP");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.swap(0, 1));
-    ok!(stack.pop());
-    Ok(0)
-}
+    #[instr(code = "50ij", fmt = "XCHG2 s{i},s{j}")]
+    fn exec_xchg2(st: &mut VmState, i: u32, j: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.swap(1, i as _));
+        ok!(stack.swap(0, j as _));
+        Ok(0)
+    }
 
-fn exec_pop(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let x = args);
-    vm_log!("execute POP s{x}");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.swap(0, x as _));
-    ok!(stack.pop());
-    Ok(0)
-}
+    #[instr(code = "51ij", fmt = "XCPU s{i},s{j}")]
+    fn exec_xcpu(st: &mut VmState, i: u32, j: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.swap(0, i as _));
+        ok!(stack.push_nth(j as _));
+        Ok(0)
+    }
 
-fn exec_xchg3(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let (x, y, z) = args);
-    vm_log!("execute XCHG3 s{x},s{y},s{z}");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.swap(2, x as _));
-    ok!(stack.swap(1, y as _));
-    ok!(stack.swap(0, z as _));
-    Ok(0)
-}
+    #[instr(code = "52ij", fmt = ("PUXC s{i},s{}", j as i32 - 1))]
+    fn exec_puxc(st: &mut VmState, i: u32, j: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.push_nth(i as _));
+        ok!(stack.swap(0, 1));
+        ok!(stack.swap(0, j as _));
+        Ok(0)
+    }
 
-fn exec_xchg2(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let (x, y) = args);
-    vm_log!("execute XCHG2 s{x},s{y}");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.swap(1, x as _));
-    ok!(stack.swap(0, y as _));
-    Ok(0)
-}
+    #[instr(code = "53ij", fmt = "PUSH2 s{i},s{j}")]
+    fn exec_push2(st: &mut VmState, i: u32, j: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.push_nth(i as _));
+        ok!(stack.push_nth(1 + j as usize));
+        Ok(0)
+    }
 
-fn exec_xcpu(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let (x, y) = args);
-    vm_log!("execute XCPU s{x},s{y}");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.swap(0, x as _));
-    ok!(stack.push_raw(ok!(stack.fetch(y as _))));
-    Ok(0)
-}
+    // XCHG XCHG XCHG -> 540ijk exec_xchg3
 
-fn exec_puxc(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let (x, y) = args);
-    vm_log!("execute PUXC s{x},s{}", y - 1);
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.push_raw(ok!(stack.fetch(x as _))));
-    ok!(stack.swap(0, 1));
-    ok!(stack.swap(0, y as _));
-    Ok(0)
-}
+    // XCHG XCHG PUSH
+    #[instr(code = "541ijk", fmt = "XC2PU")]
+    fn exec_xc2pu(st: &mut VmState, i: u32, j: u32, k: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.swap(1, i as _));
+        ok!(stack.swap(0, j as _));
+        ok!(stack.push_nth(k as _));
+        Ok(0)
+    }
 
-fn exec_push2(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let (x, y) = args);
-    vm_log!("execute PUSH2 s{x},s{y}");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.push_raw(ok!(stack.fetch(x as _))));
-    ok!(stack.push_raw(ok!(stack.fetch(1 + y as usize))));
-    Ok(0)
-}
+    // XCHG PUSH XCHG
+    #[instr(code = "542ijk", fmt = ("XCPUXC s{i},s{j},s{}", k as i32 - 1))]
+    fn exec_xcpuxc(st: &mut VmState, i: u32, j: u32, k: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.swap(1, i as _));
+        ok!(stack.push_nth(j as _));
+        ok!(stack.swap(0, 1));
+        ok!(stack.swap(0, k as _));
+        Ok(0)
+    }
 
-fn exec_xc2pu(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let (x, y, z) = args);
-    vm_log!("execute XC2PU s{x},s{y},s{z}");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.swap(1, x as _));
-    ok!(stack.swap(0, y as _));
-    ok!(stack.push_raw(ok!(stack.fetch(z as _))));
-    Ok(0)
-}
+    // XCHG PUSH PUSH
+    #[instr(code = "543ijk", fmt = "XCPU2 s{i},s{j},s{k}")]
+    fn exec_xcpu2(st: &mut VmState, i: u32, j: u32, k: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.swap(0, i as _));
+        ok!(stack.push_nth(j as _));
+        ok!(stack.push_nth(1 + k as usize));
+        Ok(0)
+    }
 
-fn exec_xcpuxc(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let (x, y, z) = args);
-    vm_log!("execute XCPUXC s{x},s{y},s{}", z - 1);
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.swap(1, x as _));
-    ok!(stack.push_raw(ok!(stack.fetch(y as _))));
-    ok!(stack.swap(0, 1));
-    ok!(stack.swap(0, z as _));
-    Ok(0)
-}
+    // PUSH XCHG XCHG
+    #[instr(code = "544ijk", fmt = ("PUXC2 s{i},s{},s{}", j as i32 - 1, k as i32 - 1))]
+    fn exec_puxc2(st: &mut VmState, i: u32, j: u32, k: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.push_nth(i as _));
+        ok!(stack.swap(2, 0));
+        ok!(stack.swap(1, j as _));
+        ok!(stack.swap(0, k as _));
+        Ok(0)
+    }
 
-fn exec_xcpu2(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let (x, y, z) = args);
-    vm_log!("execute XCPU2 s{x},s{y},s{z}");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.swap(0, x as _));
-    ok!(stack.push_raw(ok!(stack.fetch(y as _))));
-    ok!(stack.push_raw(ok!(stack.fetch(1 + z as usize))));
-    Ok(0)
-}
+    // PUSH XCHG PUSH
+    #[instr(code = "545ijk", fmt = ("PUXCPU s{i},s{},s{}", j as i32 - 1, k as i32 - 1))]
+    fn exec_puxcpu(st: &mut VmState, i: u32, j: u32, k: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.push_nth(i as _));
+        ok!(stack.swap(0, 1));
+        ok!(stack.swap(0, j as _));
+        ok!(stack.push_nth(k as _));
+        Ok(0)
+    }
 
-fn exec_puxc2(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let (x, y, z) = args);
-    vm_log!("execute PUXC2 s{x},s{},s{}", y - 1, z - 1);
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.push_raw(ok!(stack.fetch(x as _))));
-    ok!(stack.swap(2, 0));
-    ok!(stack.swap(1, y as _));
-    ok!(stack.swap(0, z as _));
-    Ok(0)
-}
+    // PUSH PUSH XCHG
+    #[instr(code = "546ijk", fmt = ("PU2XC s{i},s{},s{}", j as i32 - 1, k as i32 - 2))]
+    fn exec_pu2xc(st: &mut VmState, i: u32, j: u32, k: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.push_nth(i as _));
+        ok!(stack.swap(1, 0));
+        ok!(stack.push_nth(j as _));
+        ok!(stack.swap(1, 0));
+        ok!(stack.swap(0, k as _));
+        Ok(0)
+    }
 
-fn exec_puxcpu(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let (x, y, z) = args);
-    vm_log!("execute PUXCPU s{x},s{},s{}", y - 1, z - 1);
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.push_raw(ok!(stack.fetch(x as _))));
-    ok!(stack.swap(0, 1));
-    ok!(stack.swap(0, y as _));
-    ok!(stack.push_raw(ok!(stack.fetch(z as _))));
-    Ok(0)
-}
+    // PUSH PUSH PUSH
+    #[instr(code = "547ijk", fmt = "PUSH3 s{i},s{j},s{k}")]
+    fn exec_push3(st: &mut VmState, i: u32, j: u32, k: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.push_nth(i as _));
+        ok!(stack.push_nth(1 + j as usize));
+        ok!(stack.push_nth(2 + k as usize));
+        Ok(0)
+    }
 
-fn exec_pu2xc(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let (x, y, z) = args);
-    vm_log!("execute PU2XC s{x},s{},s{}", y - 1, z - 2);
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.push_raw(ok!(stack.fetch(x as _))));
-    ok!(stack.swap(1, 0));
-    ok!(stack.push_raw(ok!(stack.fetch(y as _))));
-    ok!(stack.swap(1, 0));
-    ok!(stack.swap(0, z as _));
-    Ok(0)
-}
+    #[instr(code = "55ij", fmt = "BLKSWAP {i},{j}", args(i = 1 + ((args >> 4) & 0xf), j = 1 + (args & 0xf)))]
+    fn exec_blkswap(st: &mut VmState, i: u32, j: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.reverse_range(j as _, i as _));
+        ok!(stack.reverse_range(0, j as _));
+        ok!(stack.reverse_range(0, (i + j) as _));
+        Ok(0)
+    }
 
-fn exec_push3(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let (x, y, z) = args);
-    vm_log!("execute PUSH3 s{x},s{y},s{z}");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.push_raw(ok!(stack.fetch(x as _))));
-    ok!(stack.push_raw(ok!(stack.fetch(1 + y as usize))));
-    ok!(stack.push_raw(ok!(stack.fetch(2 + z as usize))));
-    Ok(0)
-}
+    // 56ii exec_push
+    // 57ii exec_pop
 
-fn exec_blkswap(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let (x + 1, y + 1) = args);
-    vm_log!("execute BLKSWAP {x},{y}");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.reverse_range((x + y) as _, y as _));
-    ok!(stack.reverse_range(0, y as _));
-    ok!(stack.reverse_range(0, (x + y) as _));
-    Ok(0)
-}
+    #[instr(code = "58", fmt = "ROT")]
+    fn exec_rot(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.swap(1, 2));
+        ok!(stack.swap(0, 1));
+        Ok(0)
+    }
 
-fn exec_push_l(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let x(l) = args);
-    vm_log!("execute PUSH s{x}");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.push_raw(ok!(stack.fetch(x as _))));
-    Ok(0)
-}
+    #[instr(code = "59", fmt = "ROTREV")]
+    fn exec_rotrev(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.swap(0, 1));
+        ok!(stack.swap(1, 2));
+        Ok(0)
+    }
 
-fn exec_pop_l(st: &mut VmState, args: u32) -> Result<i32> {
-    args!(let x(l) = args);
-    vm_log!("execute POP s{x}");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.swap(0, x as _));
-    ok!(stack.pop());
-    Ok(0)
-}
+    #[instr(code = "5a", fmt = "2SWAP")]
+    fn exec_2swap(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.swap(1, 3));
+        ok!(stack.swap(0, 2));
+        Ok(0)
+    }
 
-fn exec_rot(st: &mut VmState) -> Result<i32> {
-    vm_log!("execute ROT");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.swap(1, 2));
-    ok!(stack.swap(0, 1));
-    Ok(0)
-}
+    #[instr(code = "5b", fmt = "2DROP")]
+    fn exec_2drop(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.pop());
+        ok!(stack.pop());
+        Ok(0)
+    }
 
-fn exec_rotrev(st: &mut VmState) -> Result<i32> {
-    vm_log!("execute ROTREV");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.swap(0, 1));
-    ok!(stack.swap(1, 2));
-    Ok(0)
-}
+    #[instr(code = "5c", fmt = "2DUP")]
+    fn exec_2dup(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.push_nth(1));
+        ok!(stack.push_nth(1));
+        Ok(0)
+    }
 
-fn exec_2swap(st: &mut VmState) -> Result<i32> {
-    vm_log!("execute 2SWAP");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.swap(1, 3));
-    ok!(stack.swap(0, 2));
-    Ok(0)
-}
+    #[instr(code = "5d", fmt = "2OVER")]
+    fn exec_2over(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.push_nth(3));
+        ok!(stack.push_nth(3));
+        Ok(0)
+    }
 
-fn exec_2drop(st: &mut VmState) -> Result<i32> {
-    vm_log!("execute 2DROP");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.pop());
-    ok!(stack.pop());
-    Ok(0)
-}
+    #[instr(code = "5eij", fmt = "REVERSE {i},{j}", args(i = 2 + ((args >> 4) & 0xf)))]
+    fn exec_reverse(st: &mut VmState, i: u32, j: u32) -> Result<i32> {
+        ok!(Rc::make_mut(&mut st.stack).reverse_range(j as _, i as _));
+        Ok(0)
+    }
 
-fn exec_2dup(st: &mut VmState) -> Result<i32> {
-    vm_log!("execute 2DUP");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.push_raw(ok!(stack.fetch(1))));
-    ok!(stack.push_raw(ok!(stack.fetch(1))));
-    Ok(0)
-}
+    #[instr(code = "5f0i", fmt = "BLKDROP {i}")]
+    fn exec_blkdrop(st: &mut VmState, i: u32) -> Result<i32> {
+        ok!(Rc::make_mut(&mut st.stack).pop_many(i as _));
+        Ok(0)
+    }
 
-fn exec_2over(st: &mut VmState) -> Result<i32> {
-    vm_log!("execute 2OVER");
-    let stack = Rc::make_mut(&mut st.stack);
-    ok!(stack.push_raw(ok!(stack.fetch(3))));
-    ok!(stack.push_raw(ok!(stack.fetch(3))));
-    Ok(0)
+    #[instr(code = "5fij", range_from = "5f10", fmt = "BLKPUSH {i},{j}")]
+    fn exec_blkpush(st: &mut VmState, mut i: u32, j: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        while i > 1 {
+            ok!(stack.push_nth(j as _));
+            i -= 1;
+        }
+        Ok(0)
+    }
+
+    #[instr(code = "60", fmt = "PICK")]
+    fn exec_pick(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let i = ok!(stack.pop_smallint_range(0, 255));
+        ok!(stack.push_nth(i as _));
+        Ok(0)
+    }
+
+    #[instr(code = "61", fmt = "ROLL")]
+    fn exec_roll(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let mut i = ok!(stack.pop_smallint_range(0, 255));
+        while i > 1 {
+            ok!(stack.swap(i as _, (i - 1) as _));
+            i -= 1;
+        }
+        Ok(0)
+    }
+
+    #[instr(code = "62", fmt = "ROLLREV")]
+    fn exec_rollrev(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let x = ok!(stack.pop_smallint_range(0, 255));
+        for i in 0..x {
+            ok!(stack.swap(i as _, (i + 1) as _));
+        }
+        Ok(0)
+    }
+
+    #[instr(code = "63", fmt = "BLKSWX")]
+    fn exec_blkswap_x(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let y = ok!(stack.pop_smallint_range(0, 255));
+        let x = ok!(stack.pop_smallint_range(0, 255));
+        if x > 0 && y > 0 {
+            ok!(stack.reverse_range(y as _, x as _));
+            ok!(stack.reverse_range(0, y as _));
+            ok!(stack.reverse_range(0, (x + y) as _));
+        }
+        Ok(0)
+    }
+
+    #[instr(code = "64", fmt = "REVX")]
+    fn exec_reverse_x(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let y = ok!(stack.pop_smallint_range(0, 255));
+        let x = ok!(stack.pop_smallint_range(0, 255));
+        ok!(stack.reverse_range(y as _, x as _));
+        Ok(0)
+    }
+
+    #[instr(code = "65", fmt = "DROPX")]
+    fn exec_drop_x(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let x = ok!(stack.pop_smallint_range(0, 255));
+        ok!(stack.pop_many(x as _));
+        Ok(0)
+    }
+
+    #[instr(code = "66", fmt = "TUCK")]
+    fn exec_tuck(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.swap(0, 1));
+        ok!(stack.push_nth(1));
+        Ok(0)
+    }
+
+    #[instr(code = "67", fmt = "XCHGX")]
+    fn exec_xchg_x(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let x = ok!(stack.pop_smallint_range(0, 255));
+        ok!(stack.swap(0, x as _));
+        Ok(0)
+    }
+
+    #[instr(code = "68", fmt = "DEPTH")]
+    fn exec_depth(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.push_int(stack.items.len()));
+        Ok(0)
+    }
+
+    #[instr(code = "69", fmt = "CHKDEPTH")]
+    fn exec_chkdepth(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let x = ok!(stack.pop_smallint_range(0, 255)) as usize;
+        anyhow::ensure!(x <= stack.items.len(), VmError::StackUnderflow(x));
+        Ok(0)
+    }
+
+    #[instr(code = "6a", fmt = "ONLYTOPX")]
+    fn exec_onlytop_x(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let x = ok!(stack.pop_smallint_range(0, 255)) as usize;
+        let n = stack.items.len();
+        let Some(d) = n.checked_sub(x) else {
+            anyhow::bail!(VmError::StackUnderflow(x));
+        };
+        if d > 0 {
+            stack.items.drain(..d);
+        }
+        stack.items.truncate(x);
+        Ok(0)
+    }
+
+    #[instr(code = "6b", fmt = "ONLYX")]
+    fn exec_only_x(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let x = ok!(stack.pop_smallint_range(0, 255)) as usize;
+        let Some(d) = stack.items.len().checked_sub(x) else {
+            anyhow::bail!(VmError::StackUnderflow(x));
+        };
+        stack.items.truncate(d);
+        Ok(0)
+    }
+
+    #[instr(code = "6cij", range_from = "6c10", fmt = "BLKDROP2 {i},{j}")]
+    fn exec_blkdrop2(st: &mut VmState, i: u32, j: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let len = stack.items.len();
+        let offset = j as usize;
+        let count = i as usize;
+        anyhow::ensure!(
+            (count + offset) < len,
+            VmError::StackUnderflow(count + offset)
+        );
+
+        stack.items.drain(len - (count + offset)..len - offset);
+        Ok(0)
+    }
 }

@@ -53,6 +53,17 @@ impl Stack {
         Ok(())
     }
 
+    pub fn push_nth(&mut self, idx: usize) -> Result<()> {
+        let len = self.items.len();
+        anyhow::ensure!(idx < len, VmError::StackUnderflow(idx));
+        anyhow::ensure!(
+            len + 1 < Self::MAX_DEPTH,
+            VmError::StackUnderflow(Self::MAX_DEPTH)
+        );
+        self.items.push(self.items[len - idx - 1].clone());
+        Ok(())
+    }
+
     pub fn push_null(&mut self) -> Result<()> {
         self.push_raw(Self::make_null())
     }

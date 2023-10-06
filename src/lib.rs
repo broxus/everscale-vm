@@ -38,7 +38,7 @@ mod tests {
     #[traced_test]
     fn dispatch_works() {
         let code = Boc::decode_base64(
-            "te6ccgEBAQEAJgAASHBxcgCD/wMTUhMgISMwMTNBI1ASURJSEVM0Q0VUQyFUcSNVAQ==",
+            "te6ccgEBAQEAKQAATnBxcgCD/wMTUhMgISMwMTNBI1ASURJSEVM0Q0BUQyFUcSNUYTBVAQ==",
         )
         .unwrap();
 
