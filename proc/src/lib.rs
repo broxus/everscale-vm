@@ -238,6 +238,91 @@ fn process_instr_definition(
         }
     };
 
+    let (arg_definitions, arg_idents) = {
+        let mut shift = arg_bits as u32;
+
+        let function_arg_count = function.sig.inputs.len().saturating_sub(1);
+
+        let mut errors = Vec::new();
+        let mut opcode_args = args.iter().peekable();
+        let mut arg_definitions = Vec::with_capacity(function_arg_count);
+        let mut arg_idents = Vec::with_capacity(function_arg_count);
+
+        #[allow(clippy::never_loop)] // fixes clippy false-positive
+        for function_arg in function.sig.inputs.iter().skip(1) {
+            let name = 'function_arg: {
+                if let syn::FnArg::Typed(input) = function_arg {
+                    if let syn::Pat::Ident(pat) = &*input.pat {
+                        break 'function_arg pat.ident.to_string();
+                    }
+                }
+                return Err(Error::custom("Unsupported argument binding").with_span(&function_arg));
+            };
+
+            let explicit_arg = instr.args.remove(&name);
+
+            match opcode_args.peek() {
+                Some((opcode_arg, bits)) => {
+                    if opcode_arg.to_string() != name {
+                        if let Some(expr) = explicit_arg {
+                            let ident = quote::format_ident!("{name}");
+                            arg_definitions.push(quote! { let #ident = #expr; });
+                            arg_idents.push(ident);
+                            continue;
+                        }
+
+                        return Err(Error::custom(format!("Expected argument `{opcode_arg}`"))
+                            .with_span(&function_arg));
+                    }
+
+                    let ident = quote::format_ident!("{name}");
+
+                    shift -= *bits as u32;
+                    arg_definitions.push(match explicit_arg {
+                        None => {
+                            let mask = (1u32 << *bits) - 1;
+                            quote! { let #ident = (args >> #shift) & #mask; }
+                        }
+                        Some(expr) => {
+                            quote! { let #ident = #expr; }
+                        }
+                    });
+                    arg_idents.push(ident);
+
+                    opcode_args.next();
+                }
+                None => match explicit_arg {
+                    Some(expr) => {
+                        let ident = quote::format_ident!("{name}");
+                        arg_definitions.push(quote! { let #ident = #expr; });
+                        arg_idents.push(ident);
+                    }
+                    None => {
+                        errors.push(Error::custom("Unexpected argument").with_span(&function_arg));
+                    }
+                },
+            }
+        }
+
+        for (unused_arg, _) in opcode_args {
+            errors.push(
+                Error::custom(format_args!("Unused opcode arg `{unused_arg}`"))
+                    .with_span(&instr.code.span()),
+            )
+        }
+        for (unused_arg, expr) in instr.args {
+            errors.push(
+                Error::custom(format_args!("Unused arg override for {unused_arg}"))
+                    .with_span(&expr),
+            )
+        }
+        if !errors.is_empty() {
+            return Err(Error::multiple(errors));
+        }
+
+        (arg_definitions, arg_idents)
+    };
+
     let wrapper_func_name = quote::format_ident!("{function_name}_wrapper");
     let wrapper_func = match &ty {
         OpcodeTy::Simple { .. } => {
@@ -249,97 +334,13 @@ fn process_instr_definition(
 
             quote! {
                 fn #wrapper_func_name(st: &mut ::everscale_vm::state::VmState) -> ::anyhow::Result<i32> {
+                    #(#arg_definitions)*
                     vm_log!("execute {}", format_args!(#fmt));
-                    #function_name(st)
+                    #function_name(st, #(#arg_idents),*)
                 }
             }
         }
         OpcodeTy::Fixed { .. } | OpcodeTy::FixedRange { .. } => {
-            let mut shift = arg_bits as u32;
-
-            let function_arg_count = function.sig.inputs.len().saturating_sub(1);
-
-            let mut errors = Vec::new();
-            let mut opcode_args = args.iter().peekable();
-            let mut arg_definitions = Vec::with_capacity(function_arg_count);
-            let mut arg_idents = Vec::with_capacity(function_arg_count);
-
-            #[allow(clippy::never_loop)] // fixes clippy false-positive
-            for function_arg in function.sig.inputs.iter().skip(1) {
-                let name = 'function_arg: {
-                    if let syn::FnArg::Typed(input) = function_arg {
-                        if let syn::Pat::Ident(pat) = &*input.pat {
-                            break 'function_arg pat.ident.to_string();
-                        }
-                    }
-                    return Err(
-                        Error::custom("Unsupported argument binding").with_span(&function_arg)
-                    );
-                };
-
-                let explicit_arg = instr.args.remove(&name);
-
-                match opcode_args.peek() {
-                    Some((opcode_arg, bits)) => {
-                        if opcode_arg.to_string() != name {
-                            if let Some(expr) = explicit_arg {
-                                let ident = quote::format_ident!("{name}");
-                                arg_definitions.push(quote! { let #ident = #expr; });
-                                arg_idents.push(ident);
-                                continue;
-                            }
-
-                            return Err(Error::custom(format!("Expected argument `{opcode_arg}`"))
-                                .with_span(&function_arg));
-                        }
-
-                        let ident = quote::format_ident!("{name}");
-
-                        shift -= *bits as u32;
-                        arg_definitions.push(match explicit_arg {
-                            None => {
-                                let mask = (1u32 << *bits) - 1;
-                                quote! { let #ident = (args >> #shift) & #mask; }
-                            }
-                            Some(expr) => {
-                                quote! { let #ident = #expr; }
-                            }
-                        });
-                        arg_idents.push(ident);
-
-                        opcode_args.next();
-                    }
-                    None => match explicit_arg {
-                        Some(expr) => {
-                            let ident = quote::format_ident!("{name}");
-                            arg_definitions.push(quote! { let #ident = #expr; });
-                            arg_idents.push(ident);
-                        }
-                        None => {
-                            errors.push(
-                                Error::custom("Unexpected argument").with_span(&function_arg),
-                            );
-                        }
-                    },
-                }
-            }
-
-            for (unused_arg, _) in opcode_args {
-                errors.push(
-                    Error::custom(format_args!("Unused opcode arg `{unused_arg}`"))
-                        .with_span(&instr.code.span()),
-                )
-            }
-            for (unused_arg, expr) in instr.args {
-                errors.push(
-                    Error::custom(format_args!("Unused arg override for {unused_arg}"))
-                        .with_span(&expr),
-                )
-            }
-            if !errors.is_empty() {
-                return Err(Error::multiple(errors));
-            }
-
             let cond = instr.cond.map(|cond| {
                 quote! {
                     ::anyhow::ensure!(#cond, crate::error::VmError::InvalidOpcode);

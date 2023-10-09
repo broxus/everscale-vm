@@ -9,8 +9,8 @@ use tracing::instrument;
 
 use crate::error::{VmError, VmException};
 use crate::stack::{
-    load_slice_as_stack_value, load_stack, load_stack_value, store_slice_as_stack_value,
-    RcStackValue, Stack, StackValue,
+    load_slice_as_stack_value, load_stack, load_stack_value, store_slice_as_stack_value, Stack,
+    StackValue, Tuple,
 };
 use crate::state::VmState;
 use crate::util::{ensure_empty_slice, rc_ptr_eq, OwnedCellSlice, Uint4};
@@ -67,7 +67,7 @@ fn load_control_data(
 pub struct ControlRegs {
     pub c: [Option<RcCont>; 4],
     pub d: [Option<Cell>; 2],
-    pub c7: Option<Rc<Vec<RcStackValue>>>,
+    pub c7: Option<Rc<Tuple>>,
 }
 
 impl ControlRegs {
@@ -144,7 +144,7 @@ impl ControlRegs {
         }
     }
 
-    pub fn set_c7(&mut self, tuple: Rc<Vec<RcStackValue>>) {
+    pub fn set_c7(&mut self, tuple: Rc<Tuple>) {
         self.c7 = Some(tuple);
     }
 

@@ -53,6 +53,13 @@ impl Stack {
         Ok(())
     }
 
+    pub fn push_opt<T: StackValue + 'static>(&mut self, value: Option<T>) -> Result<()> {
+        match value {
+            None => self.push_null(),
+            Some(value) => self.push(value),
+        }
+    }
+
     pub fn push_nth(&mut self, idx: usize) -> Result<()> {
         let len = self.items.len();
         anyhow::ensure!(idx < len, VmError::StackUnderflow(idx));
@@ -122,11 +129,11 @@ impl Stack {
         })
     }
 
-    pub fn pop_tuple(&mut self) -> Result<Rc<Vec<RcStackValue>>> {
+    pub fn pop_tuple(&mut self) -> Result<Rc<Tuple>> {
         self.pop()?.into_tuple()
     }
 
-    pub fn pop_tuple_range(&mut self, min_len: u32, max_len: u32) -> Result<Rc<Vec<RcStackValue>>> {
+    pub fn pop_tuple_range(&mut self, min_len: u32, max_len: u32) -> Result<Rc<Tuple>> {
         let tuple = self.pop()?.into_tuple()?;
         anyhow::ensure!(
             (min_len as usize..=max_len as usize).contains(&tuple.len()),
@@ -136,6 +143,25 @@ impl Stack {
             }
         );
         Ok(tuple)
+    }
+
+    pub fn pop_opt_tuple_range(&mut self, min_len: u32, max_len: u32) -> Result<Option<Rc<Tuple>>> {
+        let tuple = {
+            let value = self.pop()?;
+            if value.is_null() {
+                return Ok(None);
+            }
+            value.into_tuple()?
+        };
+
+        anyhow::ensure!(
+            (min_len as usize..=max_len as usize).contains(&tuple.len()),
+            VmError::InvalidType {
+                expected: StackValueType::Tuple,
+                actual: StackValueType::Tuple,
+            }
+        );
+        Ok(Some(tuple))
     }
 
     pub fn pop_many(&mut self, n: usize) -> Result<()> {
@@ -303,7 +329,7 @@ pub trait StackValue: std::fmt::Debug {
         None
     }
 
-    fn into_tuple(self: Rc<Self>) -> Result<Rc<Vec<RcStackValue>>> {
+    fn into_tuple(self: Rc<Self>) -> Result<Rc<Tuple>> {
         Err(invalid_type(self.ty(), StackValueType::Tuple))
     }
 }
@@ -312,6 +338,10 @@ impl dyn StackValue {
     pub fn is_null(&self) -> bool {
         self.ty() == StackValueType::Null
     }
+
+    pub fn is_tuple(&self) -> bool {
+        self.ty() == StackValueType::Tuple
+    }
 }
 
 fn invalid_type(actual: StackValueType, expected: StackValueType) -> anyhow::Error {
@@ -319,6 +349,7 @@ fn invalid_type(actual: StackValueType, expected: StackValueType) -> anyhow::Err
 }
 
 pub type RcStackValue = Rc<dyn StackValue>;
+pub type Tuple = Vec<RcStackValue>;
 
 pub fn load_stack_value(
     slice: &mut CellSlice,
@@ -543,7 +574,7 @@ impl StackValue for RcCont {
     }
 }
 
-impl StackValue for Vec<RcStackValue> {
+impl StackValue for Tuple {
     fn ty(&self) -> StackValueType {
         StackValueType::Tuple
     }
@@ -589,7 +620,7 @@ impl StackValue for Vec<RcStackValue> {
         Some(self)
     }
 
-    fn into_tuple(self: Rc<Self>) -> Result<Rc<Vec<RcStackValue>>> {
+    fn into_tuple(self: Rc<Self>) -> Result<Rc<Tuple>> {
         Ok(self)
     }
 }
