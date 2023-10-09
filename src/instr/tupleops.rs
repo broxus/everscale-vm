@@ -5,7 +5,7 @@ use everscale_vm_proc::vm_module;
 use num_traits::Zero;
 
 use crate::error::VmError;
-use crate::stack::{RcStackValue, Stack};
+use crate::stack::{RcStackValue, Stack, StackValue, StackValueType};
 use crate::state::VmState;
 
 pub struct Tupleops;
@@ -227,6 +227,43 @@ impl Tupleops {
         ok!(stack.push_raw(x));
         Ok(0)
     }
+
+    #[instr(code = "6fb$iijj", fmt = "INDEX2 {i},{j}")]
+    fn exec_tuple_index2(st: &mut VmState, i: u32, j: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let tuple = ok!(stack.pop_tuple_range(0, 255));
+
+        let Some(value) = tuple.get(i as usize) else {
+            anyhow::bail!(VmError::IntegerOutOfRange {
+                actual: i.to_string(),
+                min: 0,
+                max: tuple.len(),
+            });
+        };
+
+        let value = ok!(index_stack_value_as_tuple(value.as_ref(), j as usize));
+        ok!(stack.push_raw(value.clone()));
+        Ok(0)
+    }
+
+    #[instr(code = "6f$11iijjkk", fmt = "INDEX3 {i},{j},{k}")]
+    fn exec_tuple_index3(st: &mut VmState, i: u32, j: u32, k: u32) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let tuple = ok!(stack.pop_tuple_range(0, 255));
+
+        let Some(value) = tuple.get(i as usize) else {
+            anyhow::bail!(VmError::IntegerOutOfRange {
+                actual: i.to_string(),
+                min: 0,
+                max: tuple.len(),
+            });
+        };
+
+        let value = ok!(index_stack_value_as_tuple(value.as_ref(), j as usize));
+        let value = ok!(index_stack_value_as_tuple(value.as_ref(), k as usize));
+        ok!(stack.push_raw(value.clone()));
+        Ok(0)
+    }
 }
 
 fn make_tuple_impl(stack: &mut Stack, n: usize) -> Result<i32> {
@@ -245,7 +282,7 @@ fn tuple_index_impl(stack: &mut Stack, i: usize) -> Result<i32> {
         i < tuple.len(),
         VmError::IntegerOutOfRange {
             actual: i.to_string(),
-            min: tuple.len(),
+            min: 0,
             max: tuple.len(),
         }
     );
@@ -362,4 +399,23 @@ fn tuple_set_index_quiet_impl(stack: &mut Stack, i: usize) -> Result<i32> {
     });
 
     Ok(0)
+}
+
+fn index_stack_value_as_tuple(value: &dyn StackValue, i: usize) -> Result<&RcStackValue> {
+    if let Some(tuple) = value.as_tuple_range(0, 255) {
+        let Some(value) = tuple.get(i) else {
+            anyhow::bail!(VmError::IntegerOutOfRange {
+                actual: i.to_string(),
+                min: 0,
+                max: tuple.len(),
+            });
+        };
+
+        return Ok(value);
+    }
+
+    anyhow::bail!(VmError::InvalidType {
+        expected: StackValueType::Tuple,
+        actual: value.ty(),
+    });
 }

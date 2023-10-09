@@ -113,34 +113,58 @@ fn process_instr_definition(
 
     let mut opcode_bits = 0u16;
     let mut opcode_base_min = 0;
+    let mut binary_mode = false;
     let mut args = Vec::<(char, u16)>::new();
     for c in instr.code.chars() {
-        if !c.is_ascii_alphanumeric() {
-            return Err(
-                Error::custom("Invalid pattern for the opcode").with_span(&instr.code.span())
-            );
+        if c.is_whitespace() || c == '_' {
+            continue;
+        }
+        if c == '$' {
+            binary_mode = true;
         }
 
-        opcode_base_min <<= 4;
+        match c {
+            '$' => {
+                binary_mode = true;
+                continue;
+            }
+            '#' => {
+                binary_mode = false;
+                continue;
+            }
+            c if c.is_whitespace() || c == '_' => {
+                continue;
+            }
+            c if c.is_ascii_alphanumeric() => {}
+            _ => {
+                return Err(
+                    Error::custom("Invalid pattern for the opcode").with_span(&instr.code.span())
+                )
+            }
+        }
 
-        if let Some(c) = c.to_digit(16) {
+        let (radix, symbol_bits) = if binary_mode { (2, 1) } else { (16, 4) };
+
+        opcode_base_min <<= symbol_bits;
+
+        if let Some(c) = c.to_digit(radix) {
             if !args.is_empty() {
                 return Err(
                     Error::custom("Invalid pattern for the opcode").with_span(&instr.code.span())
                 );
             }
 
-            opcode_bits += 4;
+            opcode_bits += symbol_bits;
             opcode_base_min |= c;
         } else {
             if let Some((last, last_bits)) = args.last_mut() {
                 if *last == c {
-                    *last_bits += 4;
+                    *last_bits += symbol_bits;
                     continue;
                 }
             }
 
-            args.push((c, 4));
+            args.push((c, symbol_bits));
         }
     }
     let arg_bits = args.iter().map(|(_, bits)| bits).sum::<u16>();

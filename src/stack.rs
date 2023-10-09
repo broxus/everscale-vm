@@ -334,13 +334,20 @@ pub trait StackValue: std::fmt::Debug {
     }
 }
 
-impl dyn StackValue {
+impl dyn StackValue + '_ {
     pub fn is_null(&self) -> bool {
         self.ty() == StackValueType::Null
     }
 
     pub fn is_tuple(&self) -> bool {
         self.ty() == StackValueType::Tuple
+    }
+
+    pub fn as_tuple_range(&self, min_len: u32, max_len: u32) -> Option<&[RcStackValue]> {
+        let tuple = self.as_tuple()?;
+        (min_len as usize..=max_len as usize)
+            .contains(&tuple.len())
+            .then_some(tuple)
     }
 }
 
