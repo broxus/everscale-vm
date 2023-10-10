@@ -21,6 +21,11 @@ impl OwnedCellSlice {
         self.range().apply(self.cell())
     }
 
+    pub fn apply_allow_special(&self) -> CellSlice<'_> {
+        // SAFETY: we are okay with special cell slice there
+        unsafe { self.range().apply_unchecked(self.cell()) }
+    }
+
     #[inline]
     pub fn range(&self) -> CellSliceRange {
         self.0 .1

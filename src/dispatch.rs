@@ -151,7 +151,7 @@ impl Opcodes {
         opcode: u32,
         opcode_bits: u16,
         arg_bits: u16,
-        exec: Box<FnExecInstrFull>,
+        exec: FnExecInstrFull,
     ) -> Result<()> {
         let remaining_bits = MAX_OPCODE_BITS - opcode_bits;
         self.add_opcode(Box::new(ExtOpcode {
@@ -167,7 +167,7 @@ impl Opcodes {
         opcode_min: u32,
         opcode_max: u32,
         total_bits: u16,
-        exec: Box<FnExecInstrFull>,
+        exec: FnExecInstrFull,
     ) -> Result<()> {
         let remaining_bits = MAX_OPCODE_BITS - total_bits;
         self.add_opcode(Box::new(ExtOpcode {
@@ -264,7 +264,7 @@ impl Opcode for FixedOpcode {
 }
 
 struct ExtOpcode {
-    exec: Box<FnExecInstrFull>,
+    exec: FnExecInstrFull,
     opcode_min: u32,
     opcode_max: u32,
     total_bits: u16,
@@ -290,7 +290,7 @@ pub type FnExecInstrSimple = fn(&mut VmState) -> Result<i32>;
 
 pub type FnExecInstrArg = fn(&mut VmState, u32) -> Result<i32>;
 
-pub type FnExecInstrFull = dyn Fn(&mut VmState, u32, u16) -> Result<i32> + Send + Sync + 'static;
+pub type FnExecInstrFull = fn(&mut VmState, u32, u16) -> Result<i32>;
 
 const MAX_OPCODE_BITS: u16 = 24;
 const MAX_OPCODE: u32 = 1 << MAX_OPCODE_BITS;

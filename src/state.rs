@@ -25,6 +25,7 @@ pub struct VmStateBuilder {
     pub c7: Option<Vec<RcStackValue>>,
     pub same_c3: bool,
     pub without_push0: bool,
+    pub debug: Option<Box<dyn std::fmt::Write>>,
 }
 
 impl VmStateBuilder {
@@ -68,7 +69,13 @@ impl VmStateBuilder {
             quit1,
             gas: Default::default(), // TODO: pass gas limits as argument
             cp,
+            debug: self.debug,
         })
+    }
+
+    pub fn with_debug<T: std::fmt::Write + 'static>(mut self, stderr: T) -> Self {
+        self.debug = Some(Box::new(stderr));
+        self
     }
 
     pub fn with_code<T: Into<OwnedCellSlice>>(mut self, code: T) -> Self {
@@ -122,6 +129,7 @@ pub struct VmState {
     pub quit1: Rc<QuitCont>,
     pub gas: GasConsumer,
     pub cp: &'static DispatchTable,
+    pub debug: Option<Box<dyn std::fmt::Write>>,
 }
 
 impl VmState {

@@ -2,12 +2,14 @@ use std::sync::OnceLock;
 
 use anyhow::Result;
 
-use self::arithops::Arithmetic;
+use self::arithops::Arithops;
+use self::debugops::Debugops;
 use self::stackops::Stackops;
 use self::tupleops::Tupleops;
 use crate::dispatch::{DispatchTable, Opcodes};
 
 mod arithops;
+mod debugops;
 mod stackops;
 mod tupleops;
 
@@ -21,9 +23,10 @@ pub fn codepage(n: u16) -> Option<&'static DispatchTable> {
 pub fn codepage0() -> &'static DispatchTable {
     fn build() -> Result<DispatchTable> {
         let mut cp = DispatchTable::builder(0);
-        Arithmetic.init(&mut cp)?;
+        Arithops.init(&mut cp)?;
         Stackops.init(&mut cp)?;
         Tupleops.init(&mut cp)?;
+        Debugops.init(&mut cp)?;
         Ok(cp.build())
     }
 

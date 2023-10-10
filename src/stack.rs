@@ -285,6 +285,8 @@ pub trait StackValue: std::fmt::Debug {
         context: &mut dyn CellContext,
     ) -> Result<(), Error>;
 
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
+
     fn as_int(&self) -> Option<&BigInt> {
         None
     }
@@ -348,6 +350,80 @@ impl dyn StackValue + '_ {
         (min_len as usize..=max_len as usize)
             .contains(&tuple.len())
             .then_some(tuple)
+    }
+
+    pub fn as_pair(&self) -> Option<(&dyn StackValue, &dyn StackValue)> {
+        match self.as_tuple()? {
+            [first, second] => Some((first.as_ref(), second.as_ref())),
+            _ => None,
+        }
+    }
+
+    pub fn as_list(&self) -> Option<(&dyn StackValue, &dyn StackValue)> {
+        let (head, tail) = self.as_pair()?;
+
+        let mut next = tail;
+        while !next.is_null() {
+            let (_, tail) = next.as_pair()?;
+            next = tail;
+        }
+
+        Some((head, tail))
+    }
+
+    pub fn display_list(&self) -> impl std::fmt::Display + '_ {
+        pub struct DisplayList<'a>(&'a dyn StackValue);
+
+        impl std::fmt::Display for DisplayList<'_> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.0.fmt_list(f)
+            }
+        }
+
+        DisplayList(self)
+    }
+
+    fn fmt_list(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_null() {
+            f.write_str("()")
+        } else if let Some(tuple) = self.as_tuple() {
+            if let Some((head, tail)) = self.as_list() {
+                f.write_str("(")?;
+                head.fmt_list(f)?;
+                tail.fmt_list_tail(f)?;
+                return Ok(());
+            }
+
+            f.write_str("[")?;
+            let mut first = true;
+            for item in tuple {
+                if !std::mem::take(&mut first) {
+                    f.write_str(" ")?;
+                }
+                item.as_ref().fmt_list(f)?;
+            }
+            f.write_str("]")?;
+
+            Ok(())
+        } else {
+            self.fmt_dump(f)
+        }
+    }
+
+    fn fmt_list_tail(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut item = self;
+        while !item.is_null() {
+            let Some((head, tail)) = item.as_pair() else {
+                f.write_str(" . ")?;
+                item.fmt_list(f)?;
+                break;
+            };
+
+            f.write_str(" ")?;
+            head.fmt_list(f)?;
+            item = tail;
+        }
+        f.write_str(")")
     }
 }
 
@@ -448,6 +524,10 @@ impl StackValue for () {
     ) -> Result<(), Error> {
         builder.store_zeros(8)
     }
+
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("(null)")
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -465,6 +545,10 @@ impl StackValue for NaN {
     ) -> Result<(), Error> {
         builder.store_u16(0x02ff)
     }
+
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NaN")
+    }
 }
 
 impl StackValue for BigInt {
@@ -479,6 +563,10 @@ impl StackValue for BigInt {
     ) -> Result<(), Error> {
         ok!(builder.store_uint(0x0200 >> 1, 15));
         store_int_to_builder(self, 257, builder)
+    }
+
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
     }
 
     fn as_int(&self) -> Option<&BigInt> {
@@ -504,6 +592,10 @@ impl StackValue for Cell {
         builder.store_reference(self.clone())
     }
 
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "C{{{}}}", self.repr_hash())
+    }
+
     fn as_cell(&self) -> Option<&Cell> {
         Some(self)
     }
@@ -527,6 +619,20 @@ impl StackValue for OwnedCellSlice {
         store_slice_as_stack_value(self, builder)
     }
 
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let bits_end = self.range().bits_offset() + self.range().remaining_bits();
+        let refs_end = self.range().refs_offset() + self.range().remaining_refs();
+        write!(
+            f,
+            "CS{{Cell {{{}}} bits: {}..{}; refs: {}..{}}}",
+            self.cell().repr_hash(),
+            self.range().bits_offset(),
+            bits_end,
+            self.range().refs_offset(),
+            refs_end
+        )
+    }
+
     fn as_slice(&self) -> Option<&OwnedCellSlice> {
         Some(self)
     }
@@ -535,6 +641,7 @@ impl StackValue for OwnedCellSlice {
         Ok(self)
     }
 }
+
 impl StackValue for CellBuilder {
     fn ty(&self) -> StackValueType {
         StackValueType::Builder
@@ -547,6 +654,10 @@ impl StackValue for CellBuilder {
     ) -> Result<(), Error> {
         ok!(builder.store_u8(0x05));
         builder.store_reference(ok!(self.clone().build_ext(context)))
+    }
+
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "BC{{{}}}", self.display_data())
     }
 
     fn as_builder(&self) -> Option<&CellBuilder> {
@@ -570,6 +681,10 @@ impl StackValue for RcCont {
     ) -> Result<(), Error> {
         ok!(builder.store_u8(0x06));
         self.as_ref().store_into(builder, context)
+    }
+
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Cont{{{:?}}}", Rc::as_ptr(self))
     }
 
     fn as_cont(&self) -> Option<&RcCont> {
@@ -621,6 +736,21 @@ impl StackValue for Tuple {
             ok!(builder.store_reference(tail));
         }
         Ok(())
+    }
+
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_empty() {
+            return f.write_str("[]");
+        }
+        f.write_str("[ ")?;
+        let mut first = true;
+        for item in self {
+            if !std::mem::take(&mut first) {
+                f.write_str(" ")?;
+            }
+            StackValue::fmt_dump(item.as_ref(), f)?;
+        }
+        f.write_str(" ]")
     }
 
     fn as_tuple(&self) -> Option<&[RcStackValue]> {

@@ -11,6 +11,8 @@ struct VmInstrArgs {
     code: SpannedValue<String>,
     #[darling(default)]
     range_from: Option<SpannedValue<String>>,
+    #[darling(default)]
+    range_to: Option<SpannedValue<String>>,
 
     #[darling(with = "parse_expr::preserve_str_literal")]
     fmt: syn::Expr,
@@ -200,19 +202,33 @@ fn process_instr_definition(
         fmt => fmt.into_token_stream(),
     };
 
-    let ty = match (!args.is_empty(), instr.range_from) {
-        (false, None) => {
-            opcodes.add_opcode(range)?;
-            OpcodeTy::Simple {
-                opcode: opcode_base_min,
-                bits: opcode_bits,
+    let ty = match (!args.is_empty(), instr.range_from, instr.range_to) {
+        (false, range_from, range_to) => {
+            let mut errors = Vec::new();
+            if let Some(range_from) = range_from {
+                errors.push(
+                    Error::custom("Unexpected `range_from` for a simple opcode")
+                        .with_span(&range_from.span()),
+                );
+            }
+            if let Some(range_to) = range_to {
+                errors.push(
+                    Error::custom("Unexpected `range_to` for a simple opcode")
+                        .with_span(&range_to.span()),
+                );
+            }
+
+            if errors.is_empty() {
+                opcodes.add_opcode(range)?;
+                OpcodeTy::Simple {
+                    opcode: opcode_base_min,
+                    bits: opcode_bits,
+                }
+            } else {
+                return Err(Error::multiple(errors));
             }
         }
-        (false, Some(range_from)) => {
-            return Err(Error::custom("Unexpected `range_from` for a simple opcode")
-                .with_span(&range_from.span()))
-        }
-        (true, None) => {
+        (true, None, None) => {
             opcodes.add_opcode(range)?;
             OpcodeTy::Fixed {
                 opcode: opcode_base_min >> arg_bits,
@@ -220,42 +236,82 @@ fn process_instr_definition(
                 arg_bits,
             }
         }
-        (true, Some(range_from)) => {
-            let range_from_span = &range_from.span();
+        (true, range_from, range_to) => {
+            let opcode_min = if let Some(range_from) = range_from {
+                let range_from_span = &range_from.span();
 
-            let range_from_bits = range_from.len() * 4;
-            let range_from = u32::from_str_radix(&range_from, 16).map_err(|e| {
-                Error::custom(format!("Invalid `range_from` value: {e}")).with_span(range_from_span)
-            })?;
+                let range_from_bits = range_from.len() * 4;
+                let range_from = u32::from_str_radix(&range_from, 16).map_err(|e| {
+                    Error::custom(format!("Invalid `range_from` value: {e}"))
+                        .with_span(range_from_span)
+                })?;
 
-            if range_from_bits != total_bits as usize {
-                return Err(Error::custom(format!(
-                    "Invalid `range_from` size in bits. Expected {total_bits}, got {range_from_bits}",
-                )).with_span(range_from_span));
-            }
-            if range_from <= opcode_base_min {
-                return Err(Error::custom(format!(
-                    "`range_from` must be greater than opcode base. \
-                    Opcode base: {:0n$x}, `range_from`: {range_from:0n$x}",
-                    opcode_base_min >> arg_bits
-                ))
-                .with_span(range_from_span));
-            }
-            if range_from >= opcode_base_max {
-                return Err(Error::custom(format!(
-                    "`range_from` must be less than opcode max value. \
-                    Opcode max value: {:0n$x}, `range_from`: {range_from:0n$x}",
-                    opcode_base_max >> arg_bits
-                ))
-                .with_span(range_from_span));
-            }
+                if range_from_bits != total_bits as usize {
+                    return Err(Error::custom(format!(
+                        "Invalid `range_from` size in bits. Expected {total_bits}, got {range_from_bits}",
+                    )).with_span(range_from_span));
+                }
+                if range_from <= opcode_base_min {
+                    return Err(Error::custom(format!(
+                        "`range_from` must be greater than opcode base. Opcode base: {:0n$x}",
+                        opcode_base_min >> arg_bits
+                    ))
+                    .with_span(range_from_span));
+                }
+                if range_from >= opcode_base_max {
+                    return Err(Error::custom(format!(
+                        "`range_from` must be less than opcode max value. Opcode max value: {:0n$x}",
+                        opcode_base_max >> arg_bits
+                    ))
+                    .with_span(range_from_span));
+                }
 
-            range.aligned_opcode_min = range_from << remaining_bits;
+                range.aligned_opcode_min = range_from << remaining_bits;
+                range_from
+            } else {
+                opcode_base_min
+            };
+
+            let opcode_max = if let Some(range_to) = range_to {
+                let range_to_span = &range_to.span();
+
+                let range_to_bits = range_to.len() * 4;
+                let range_to = u32::from_str_radix(&range_to, 16).map_err(|e| {
+                    Error::custom(format!("Invalid `range_to` value: {e}")).with_span(range_to_span)
+                })?;
+
+                if range_to_bits != total_bits as usize {
+                    return Err(Error::custom(format!(
+                        "Invalid `range_to` size in bits. Expected {total_bits}, got {range_to_bits}",
+                    ))
+                    .with_span(range_to_span));
+                }
+                if range_to <= opcode_min {
+                    return Err(Error::custom(format!(
+                        "`range_to` must be greater than opcode base. Opcode base: {:0n$x}",
+                        opcode_min >> arg_bits
+                    ))
+                    .with_span(range_to_span));
+                }
+                if range_to >= opcode_base_max {
+                    return Err(Error::custom(format!(
+                        "`range_to` must be less than opcode max value. Opcode max value: {:0n$x}",
+                        opcode_base_max >> arg_bits
+                    ))
+                    .with_span(range_to_span));
+                }
+
+                range.aligned_opcode_max = range_to << remaining_bits;
+                range_to
+            } else {
+                opcode_base_max
+            };
+
             opcodes.add_opcode(range)?;
 
             OpcodeTy::FixedRange {
-                opcode_min: range_from,
-                opcode_max: opcode_base_max,
+                opcode_min,
+                opcode_max,
                 total_bits,
                 arg_bits,
             }

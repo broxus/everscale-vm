@@ -38,12 +38,40 @@ mod tests {
     #[traced_test]
     fn dispatch_works() {
         let code = Boc::decode_base64(
-            "te6ccgEBAQEAKQAATnBxcgCD/wMTUhMgISMwMTNBI1ASURJSEVM0Q0BUQyFUcSNUYTBVAQ==",
+            "te6ccgEBAQEANgAAaHBxcgCD//4AAxNSEyAhIzAxM0EjUBJRElIRUzRDQFRDIVRxI1RhMFUB/gD+9khFTFAxMjM=",
         )
         .unwrap();
 
-        let mut vm = VmState::builder().with_code(code).build().unwrap();
+        let mut vm = VmState::builder()
+            .with_code(code)
+            .with_debug(TracingOutput::default())
+            .build()
+            .unwrap();
         let exit_code = vm.run();
         println!("Exit code: {exit_code}");
+    }
+
+    #[derive(Default)]
+    struct TracingOutput {
+        buffer: String,
+    }
+
+    impl std::fmt::Write for TracingOutput {
+        fn write_str(&mut self, mut s: &str) -> std::fmt::Result {
+            while !s.is_empty() {
+                match s.split_once('\n') {
+                    None => {
+                        self.buffer.push_str(s);
+                        return Ok(());
+                    }
+                    Some((prefix, rest)) => {
+                        tracing::debug!("{}{prefix}", self.buffer);
+                        self.buffer.clear();
+                        s = rest;
+                    }
+                }
+            }
+            Ok(())
+        }
     }
 }
