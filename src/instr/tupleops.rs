@@ -237,7 +237,7 @@ impl Tupleops {
             anyhow::bail!(VmError::IntegerOutOfRange {
                 actual: i.to_string(),
                 min: 0,
-                max: tuple.len(),
+                max: tuple.len() as _,
             });
         };
 
@@ -255,7 +255,7 @@ impl Tupleops {
             anyhow::bail!(VmError::IntegerOutOfRange {
                 actual: i.to_string(),
                 min: 0,
-                max: tuple.len(),
+                max: tuple.len() as _,
             });
         };
 
@@ -267,7 +267,7 @@ impl Tupleops {
 }
 
 fn make_tuple_impl(stack: &mut Stack, n: usize) -> Result<i32> {
-    let Some(offset) = stack.items.len().checked_sub(n) else {
+    let Some(offset) = stack.depth().checked_sub(n) else {
         anyhow::bail!(VmError::StackUnderflow(n));
     };
     let tuple = Rc::new(stack.items.drain(offset..offset + n).collect::<Vec<_>>());
@@ -283,7 +283,7 @@ fn tuple_index_impl(stack: &mut Stack, i: usize) -> Result<i32> {
         VmError::IntegerOutOfRange {
             actual: i.to_string(),
             min: 0,
-            max: tuple.len(),
+            max: tuple.len() as _,
         }
     );
     ok!(stack.push_raw(tuple[i].clone()));
@@ -348,7 +348,7 @@ fn tuple_set_index_impl(stack: &mut Stack, i: usize) -> Result<i32> {
         i < tuple.len(),
         VmError::IntegerOutOfRange {
             min: 0,
-            max: tuple.len(),
+            max: tuple.len() as _,
             actual: i.to_string()
         }
     );
@@ -407,7 +407,7 @@ fn index_stack_value_as_tuple(value: &dyn StackValue, i: usize) -> Result<&RcSta
             anyhow::bail!(VmError::IntegerOutOfRange {
                 actual: i.to_string(),
                 min: 0,
-                max: tuple.len(),
+                max: tuple.len() as _,
             });
         };
 

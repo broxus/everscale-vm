@@ -352,7 +352,7 @@ impl Stackops {
     #[instr(code = "68", fmt = "DEPTH")]
     fn exec_depth(st: &mut VmState) -> Result<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        ok!(stack.push_int(stack.items.len()));
+        ok!(stack.push_int(stack.depth()));
         Ok(0)
     }
 
@@ -360,7 +360,7 @@ impl Stackops {
     fn exec_chkdepth(st: &mut VmState) -> Result<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let x = ok!(stack.pop_smallint_range(0, 255)) as usize;
-        anyhow::ensure!(x <= stack.items.len(), VmError::StackUnderflow(x));
+        anyhow::ensure!(x <= stack.depth(), VmError::StackUnderflow(x));
         Ok(0)
     }
 
@@ -368,8 +368,7 @@ impl Stackops {
     fn exec_onlytop_x(st: &mut VmState) -> Result<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let x = ok!(stack.pop_smallint_range(0, 255)) as usize;
-        let n = stack.items.len();
-        let Some(d) = n.checked_sub(x) else {
+        let Some(d) = stack.depth().checked_sub(x) else {
             anyhow::bail!(VmError::StackUnderflow(x));
         };
         if d > 0 {
@@ -383,7 +382,7 @@ impl Stackops {
     fn exec_only_x(st: &mut VmState) -> Result<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let x = ok!(stack.pop_smallint_range(0, 255)) as usize;
-        let Some(d) = stack.items.len().checked_sub(x) else {
+        let Some(d) = stack.depth().checked_sub(x) else {
             anyhow::bail!(VmError::StackUnderflow(x));
         };
         stack.items.truncate(d);
@@ -393,15 +392,15 @@ impl Stackops {
     #[instr(code = "6cij", range_from = "6c10", fmt = "BLKDROP2 {i},{j}")]
     fn exec_blkdrop2(st: &mut VmState, i: u32, j: u32) -> Result<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let len = stack.items.len();
+        let depth = stack.depth();
         let offset = j as usize;
         let count = i as usize;
         anyhow::ensure!(
-            (count + offset) < len,
+            (count + offset) < depth,
             VmError::StackUnderflow(count + offset)
         );
 
-        stack.items.drain(len - (count + offset)..len - offset);
+        stack.items.drain(depth - (count + offset)..depth - offset);
         Ok(0)
     }
 }

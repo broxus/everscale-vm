@@ -40,13 +40,17 @@ impl Stack {
         EMPTY_TUPLE.with(Rc::clone)
     }
 
+    pub fn depth(&self) -> usize {
+        self.items.len()
+    }
+
     pub fn push<T: StackValue + 'static>(&mut self, item: T) -> Result<()> {
         self.push_raw(Rc::new(item))
     }
 
     pub fn push_raw(&mut self, item: Rc<dyn StackValue>) -> Result<()> {
         anyhow::ensure!(
-            self.items.len() < Self::MAX_DEPTH,
+            self.depth() < Self::MAX_DEPTH,
             VmError::StackUnderflow(Self::MAX_DEPTH)
         );
         self.items.push(item);
@@ -61,13 +65,13 @@ impl Stack {
     }
 
     pub fn push_nth(&mut self, idx: usize) -> Result<()> {
-        let len = self.items.len();
-        anyhow::ensure!(idx < len, VmError::StackUnderflow(idx));
+        let depth = self.depth();
+        anyhow::ensure!(idx < depth, VmError::StackUnderflow(idx));
         anyhow::ensure!(
-            len + 1 < Self::MAX_DEPTH,
+            depth + 1 < Self::MAX_DEPTH,
             VmError::StackUnderflow(Self::MAX_DEPTH)
         );
-        self.items.push(self.items[len - idx - 1].clone());
+        self.items.push(self.items[depth - idx - 1].clone());
         Ok(())
     }
 
@@ -93,11 +97,20 @@ impl Stack {
     }
 
     pub fn move_from_stack(&mut self, other: &mut Self, n: usize) -> Result<()> {
-        let Some(new_other_len) = other.items.len().checked_sub(n) else {
+        let Some(new_other_len) = other.depth().checked_sub(n) else {
             anyhow::bail!(VmError::StackUnderflow(n));
         };
         self.items.extend(other.items.drain(new_other_len..));
         Ok(())
+    }
+
+    pub fn split_top(&mut self, n: usize) -> Result<Rc<Self>> {
+        let Some(new_depth) = self.depth().checked_sub(n) else {
+            anyhow::bail!(VmError::StackUnderflow(n));
+        };
+        Ok(Rc::new(Self {
+            items: self.items.drain(new_depth..).collect(),
+        }))
     }
 
     pub fn pop(&mut self) -> Result<Rc<dyn StackValue>> {
@@ -123,8 +136,22 @@ impl Stack {
             }
         }
         anyhow::bail!(VmError::IntegerOutOfRange {
-            min: min as usize,
-            max: max as usize,
+            min: min as isize,
+            max: max as isize,
+            actual: item.to_string(),
+        })
+    }
+
+    pub fn pop_smallint_signed_range(&mut self, min: i32, max: i32) -> Result<i32> {
+        let item = self.pop_int()?;
+        if let Some(item) = item.to_i32() {
+            if item >= min && item <= max {
+                return Ok(item);
+            }
+        }
+        anyhow::bail!(VmError::IntegerOutOfRange {
+            min: min as isize,
+            max: max as isize,
             actual: item.to_string(),
         })
     }
@@ -164,8 +191,19 @@ impl Stack {
         Ok(Some(tuple))
     }
 
+    pub fn pop_cont(&mut self) -> Result<Rc<RcCont>> {
+        self.pop()?.into_cont()
+    }
+
+    pub fn pop_cont_owned(&mut self) -> Result<RcCont> {
+        Ok(match Rc::try_unwrap(self.pop()?.into_cont()?) {
+            Ok(cont) => cont,
+            Err(e) => e.as_ref().clone(),
+        })
+    }
+
     pub fn pop_many(&mut self, n: usize) -> Result<()> {
-        let Some(new_len) = self.items.len().checked_sub(n) else {
+        let Some(new_len) = self.depth().checked_sub(n) else {
             anyhow::bail!(VmError::StackUnderflow(n));
         };
         self.items.truncate(new_len);
@@ -173,32 +211,32 @@ impl Stack {
     }
 
     pub fn drop_bottom(&mut self, n: usize) -> Result<()> {
-        anyhow::ensure!(n <= self.items.len(), VmError::StackUnderflow(n));
+        anyhow::ensure!(n <= self.depth(), VmError::StackUnderflow(n));
         self.items.drain(..n);
         Ok(())
     }
 
     pub fn swap(&mut self, lhs: usize, rhs: usize) -> Result<()> {
-        let len = self.items.len();
-        anyhow::ensure!(lhs < len, VmError::StackUnderflow(lhs));
-        anyhow::ensure!(rhs < len, VmError::StackUnderflow(rhs));
-        self.items.swap(len - lhs - 1, len - rhs - 1);
+        let depth = self.depth();
+        anyhow::ensure!(lhs < depth, VmError::StackUnderflow(lhs));
+        anyhow::ensure!(rhs < depth, VmError::StackUnderflow(rhs));
+        self.items.swap(depth - lhs - 1, depth - rhs - 1);
         //eprintln!("AFTER SWAP: {}", self.display_dump());
         Ok(())
     }
 
     pub fn reverse_range(&mut self, offset: usize, n: usize) -> Result<()> {
-        let len = self.items.len();
-        anyhow::ensure!(offset < len, VmError::StackUnderflow(offset));
-        anyhow::ensure!(offset + n <= len, VmError::StackUnderflow(offset + n));
-        self.items[len - offset - n..len - offset].reverse();
+        let depth = self.depth();
+        anyhow::ensure!(offset < depth, VmError::StackUnderflow(offset));
+        anyhow::ensure!(offset + n <= depth, VmError::StackUnderflow(offset + n));
+        self.items[depth - offset - n..depth - offset].reverse();
         Ok(())
     }
 
     pub fn fetch(&self, idx: usize) -> Result<Rc<dyn StackValue>> {
-        let len = self.items.len();
-        anyhow::ensure!(idx < len, VmError::StackUnderflow(idx));
-        Ok(self.items[len - idx - 1].clone())
+        let depth = self.depth();
+        anyhow::ensure!(idx < depth, VmError::StackUnderflow(idx));
+        Ok(self.items[depth - idx - 1].clone())
     }
 }
 
@@ -209,7 +247,7 @@ impl Store for Stack {
         builder: &mut CellBuilder,
         context: &mut dyn CellContext,
     ) -> Result<(), Error> {
-        let depth = self.items.len();
+        let depth = self.depth();
         if depth > Self::MAX_DEPTH {
             return Err(Error::IntOverflow);
         }

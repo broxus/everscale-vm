@@ -9,6 +9,7 @@ members = ["proc"]
 [dependencies]
 ahash = "0.8"
 anyhow = "1.0"
+bitflags = "2.4"
 bumpalo = "3.14"
 num-bigint = "0.4"
 num-traits = "0.2"

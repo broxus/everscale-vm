@@ -15,7 +15,7 @@ impl Debugops {
             return Ok(0);
         };
 
-        let mut depth = st.stack.items.len();
+        let mut depth = st.stack.depth();
         write!(&mut *debug, "#DEBUG#: stack({depth} values) :")?;
         if depth > 255 {
             write!(&mut *debug, " ...")?;
@@ -68,7 +68,7 @@ impl Debugops {
         };
 
         let x = x as usize;
-        let depth = st.stack.items.len();
+        let depth = st.stack.depth();
         if x < depth {
             writeln!(
                 &mut *debug,
