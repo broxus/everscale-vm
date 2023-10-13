@@ -316,7 +316,6 @@ pub fn load_stack(slice: &mut CellSlice, context: &mut dyn CellContext) -> Resul
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum StackValueType {
     Null,
-    NaN,
     Int,
     Cell,
     Slice,
@@ -584,7 +583,7 @@ pub struct NaN;
 
 impl StackValue for NaN {
     fn ty(&self) -> StackValueType {
-        StackValueType::NaN
+        StackValueType::Int
     }
 
     fn store_as_stack_value(

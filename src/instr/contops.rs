@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use anyhow::Result;
+use everscale_types::prelude::Cell;
 use everscale_vm_proc::vm_module;
 
 use crate::cont::{OrdCont, RcCont};
@@ -131,7 +132,7 @@ impl Contops {
     }
 
     #[init]
-    fn init_do_with_ref(&self, t: &mut Opcodes) -> Result<()> {
+    fn init_jumps_with_ref(&self, t: &mut Opcodes) -> Result<()> {
         ok!(t.add_ext(0xdb3c, 16, 0, exec_callref));
         ok!(t.add_ext(0xdb3d, 16, 0, exec_jmpref));
         t.add_ext(0xdb3e, 16, 0, exec_jmpref_data)
@@ -158,6 +159,313 @@ impl Contops {
         ok!(Rc::make_mut(&mut st.stack).push(st.code.clone()));
         st.ret()
     }
+
+    // === Conditions and loops ===
+
+    #[instr(code = "dc", fmt = "IFRET")]
+    fn exec_ifret(st: &mut VmState) -> Result<i32> {
+        if ok!(Rc::make_mut(&mut st.stack).pop_bool()) {
+            st.ret()
+        } else {
+            Ok(0)
+        }
+    }
+
+    #[instr(code = "dd", fmt = "IFNOTRET")]
+    fn exec_ifnotret(st: &mut VmState) -> Result<i32> {
+        if ok!(Rc::make_mut(&mut st.stack).pop_bool()) {
+            Ok(0)
+        } else {
+            st.ret()
+        }
+    }
+
+    #[instr(code = "de", fmt = "IF")]
+    fn exec_if(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let cont = ok!(stack.pop_cont_owned());
+        if ok!(stack.pop_bool()) {
+            st.call(cont)
+        } else {
+            Ok(0)
+        }
+    }
+
+    #[instr(code = "df", fmt = "IFNOT")]
+    fn exec_ifnot(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let cont = ok!(stack.pop_cont_owned());
+        if ok!(stack.pop_bool()) {
+            Ok(0)
+        } else {
+            st.call(cont)
+        }
+    }
+
+    #[instr(code = "e0", fmt = "IFJMP")]
+    fn exec_if_jmp(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let cont = ok!(stack.pop_cont_owned());
+        if ok!(stack.pop_bool()) {
+            st.jump(cont)
+        } else {
+            Ok(0)
+        }
+    }
+
+    #[instr(code = "e1", fmt = "IFNOTJMP")]
+    fn exec_ifnot_jmp(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let cont = ok!(stack.pop_cont_owned());
+        if ok!(stack.pop_bool()) {
+            Ok(0)
+        } else {
+            st.jump(cont)
+        }
+    }
+
+    #[instr(code = "e2", fmt = "IFELSE")]
+    fn exec_if_else(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let cont = {
+            let cont0 = ok!(stack.pop_cont_owned());
+            let cont1 = ok!(stack.pop_cont_owned());
+            match ok!(stack.pop_bool()) {
+                false => cont0,
+                true => cont1,
+            }
+        };
+        st.call(cont)
+    }
+
+    #[init]
+    fn init_if_with_ref(&self, t: &mut Opcodes) -> Result<()> {
+        ok!(t.add_ext(0xe300, 16, 0, exec_ifref));
+        ok!(t.add_ext(0xe301, 16, 0, exec_ifnotref));
+        ok!(t.add_ext(0xe302, 16, 0, exec_ifjmpref));
+        t.add_ext(0xe303, 16, 0, exec_ifnotjmpref)
+    }
+
+    fn exec_ifref(st: &mut VmState, _: u32, bits: u16) -> Result<i32> {
+        let cell = ok!(exec_cell_prefix(st, bits, "IFREF"));
+        if ok!(Rc::make_mut(&mut st.stack).pop_bool()) {
+            let cont = ok!(st.ref_to_cont(cell));
+            st.call(cont)
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn exec_ifnotref(st: &mut VmState, _: u32, bits: u16) -> Result<i32> {
+        let cell = ok!(exec_cell_prefix(st, bits, "IFNOTREF"));
+        if ok!(Rc::make_mut(&mut st.stack).pop_bool()) {
+            Ok(0)
+        } else {
+            let cont = ok!(st.ref_to_cont(cell));
+            st.call(cont)
+        }
+    }
+
+    fn exec_ifjmpref(st: &mut VmState, _: u32, bits: u16) -> Result<i32> {
+        let cell = ok!(exec_cell_prefix(st, bits, "IFJMPREF"));
+        if ok!(Rc::make_mut(&mut st.stack).pop_bool()) {
+            let cont = ok!(st.ref_to_cont(cell));
+            st.jump(cont)
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn exec_ifnotjmpref(st: &mut VmState, _: u32, bits: u16) -> Result<i32> {
+        let cell = ok!(exec_cell_prefix(st, bits, "IFNOTJMPREF"));
+        if ok!(Rc::make_mut(&mut st.stack).pop_bool()) {
+            Ok(0)
+        } else {
+            let cont = ok!(st.ref_to_cont(cell));
+            st.jump(cont)
+        }
+    }
+
+    #[instr(code = "e304", fmt = "CONDSEL")]
+    fn exec_condsel(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let y = ok!(stack.pop());
+        let x = ok!(stack.pop());
+        let cond = ok!(stack.pop_bool());
+        ok!(stack.push_raw(match cond {
+            true => x,
+            false => y,
+        }));
+        Ok(0)
+    }
+
+    #[instr(code = "e305", fmt = "CONDSELCHK")]
+    fn exec_condsel_chk(st: &mut VmState) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let y = ok!(stack.pop());
+        let x = ok!(stack.pop());
+        anyhow::ensure!(
+            x.ty() == y.ty(),
+            VmError::InvalidType {
+                expected: x.ty(),
+                actual: y.ty(),
+            }
+        );
+        let cond = ok!(stack.pop_bool());
+        ok!(stack.push_raw(match cond {
+            true => x,
+            false => y,
+        }));
+        Ok(0)
+    }
+
+    #[instr(code = "e308", fmt = "IFRETALT")]
+    fn exec_ifretalt(st: &mut VmState) -> Result<i32> {
+        if ok!(Rc::make_mut(&mut st.stack).pop_bool()) {
+            st.ret_alt()
+        } else {
+            Ok(0)
+        }
+    }
+
+    #[instr(code = "e309", fmt = "IFNOTRETALT")]
+    fn exec_ifnotretalt(st: &mut VmState) -> Result<i32> {
+        if ok!(Rc::make_mut(&mut st.stack).pop_bool()) {
+            Ok(0)
+        } else {
+            st.ret_alt()
+        }
+    }
+
+    #[init]
+    fn init_ifelse_with_ref(&self, t: &mut Opcodes) -> Result<()> {
+        ok!(t.add_ext(0xe30d, 16, 0, exec_ifrefelse));
+        ok!(t.add_ext(0xe30e, 16, 0, exec_ifelseref));
+        ok!(t.add_ext(0xe30f, 16, 0, exec_ifref_elseref));
+        t.add_ext(0xe3c0 >> 6, 10, 0, exec_if_bit_jmpref)
+    }
+
+    fn exec_ifrefelse(st: &mut VmState, _: u32, bits: u16) -> Result<i32> {
+        exec_ifelse_ref_impl(st, bits, true)
+    }
+
+    fn exec_ifelseref(st: &mut VmState, _: u32, bits: u16) -> Result<i32> {
+        exec_ifelse_ref_impl(st, bits, false)
+    }
+
+    fn exec_ifref_elseref(st: &mut VmState, _: u32, bits: u16) -> Result<i32> {
+        let cell = {
+            let code = &mut st.code;
+            anyhow::ensure!(code.range().has_remaining(bits, 2), VmError::InvalidOpcode);
+            code.range_mut().try_advance(bits, 0);
+
+            let Some(cell1) = code.cell().reference_cloned(code.range().refs_offset()) else {
+                anyhow::bail!(everscale_types::error::Error::CellUnderflow);
+            };
+            code.range_mut().try_advance(0, 1);
+
+            let Some(cell0) = code.cell().reference_cloned(code.range().refs_offset()) else {
+                anyhow::bail!(everscale_types::error::Error::CellUnderflow);
+            };
+            code.range_mut().try_advance(0, 1);
+
+            vm_log!(
+                "execute IFREFELSEREF ({}) ({})",
+                cell1.repr_hash(),
+                cell0.repr_hash()
+            );
+
+            match ok!(Rc::make_mut(&mut st.stack).pop_bool()) {
+                false => cell0,
+                true => cell1,
+            }
+        };
+        let cont = ok!(st.ref_to_cont(cell));
+        st.call(cont)
+    }
+
+    #[instr(code = "e3$10nx#x", fmt = ("IF{}BITJMP {x}", if n != 0 { "N" } else { "" }))]
+    fn exec_if_bit_jmp(st: &mut VmState, n: u32, x: u32) -> Result<i32> {
+        let negate = n != 0;
+        let (cont, bit) = {
+            let stack = Rc::make_mut(&mut st.stack);
+            let cont = ok!(stack.pop_cont_owned());
+            let value = ok!(stack.pop_int());
+            let bit = value.bit(x as _);
+            ok!(stack.push_raw(value));
+            (cont, bit)
+        };
+
+        if bit ^ negate {
+            st.jump(cont)
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn exec_if_bit_jmpref(st: &mut VmState, args: u32, bits: u16) -> Result<i32> {
+        let code_range = st.code.range();
+        anyhow::ensure!(code_range.has_remaining(bits, 1), VmError::InvalidOpcode);
+        st.code.range_mut().try_advance(bits, 0);
+
+        let Some(cell) = st.code.cell().reference_cloned(code_range.refs_offset()) else {
+            anyhow::bail!(everscale_types::error::Error::CellUnderflow);
+        };
+        st.code.range_mut().try_advance(0, 1);
+
+        let negate = (args & 0x20) != 0;
+        let bit = args & 0x1f;
+        vm_log!(
+            "execute {}BITJMPREF {bit} ({})",
+            if negate { "N" } else { "" },
+            cell.repr_hash()
+        );
+
+        let bit = {
+            let stack = Rc::make_mut(&mut st.stack);
+            let value = ok!(stack.pop_int());
+            let bit = value.bit(bit as _);
+            ok!(stack.push_raw(value));
+            bit
+        };
+
+        if bit ^ negate {
+            let cont = ok!(st.ref_to_cont(cell));
+            st.jump(cont)
+        } else {
+            Ok(0)
+        }
+    }
+
+    #[instr(code = "e4", fmt = "REPEAT", args(brk = false))]
+    #[instr(code = "e314", fmt = "REPEATBRK", args(brk = true))]
+    fn exec_repeat(st: &mut VmState, brk: bool) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let body = ok!(stack.pop_cont_owned());
+        let n = ok!(stack.pop_smallint_signed_range(i32::MIN, i32::MAX));
+        if n <= 0 {
+            return Ok(0);
+        }
+
+        let cc = ok!(st.extract_cc(SaveCr::C0, None, None));
+        let after = st.c1_envelope_if(brk, cc, true);
+        st.repeat(body, after, n as _)
+    }
+
+    #[instr(code = "e5", fmt = "REPEATEND", args(brk = false))]
+    #[instr(code = "e315", fmt = "REPEATENDBRK", args(brk = true))]
+    fn exec_repeat_end(st: &mut VmState, brk: bool) -> Result<i32> {
+        let n = ok!(Rc::make_mut(&mut st.stack).pop_smallint_signed_range(i32::MIN, i32::MAX));
+        if n <= 0 {
+            return Ok(0);
+        }
+        let body = ok!(st.extract_cc(SaveCr::NONE, None, None));
+        let Some(c0) = st.cr.c[0].clone() else {
+            anyhow::bail!(VmError::InvalidOpcode);
+        };
+        let after = st.c1_envelope_if(brk, c0, true);
+        st.repeat(body, after, n as _)
+    }
 }
 
 fn exec_ref_prefix(st: &mut VmState, bits: u16, name: &str) -> Result<Rc<OrdCont>> {
@@ -172,4 +480,48 @@ fn exec_ref_prefix(st: &mut VmState, bits: u16, name: &str) -> Result<Rc<OrdCont
 
     vm_log!("execute {name} ({})", code.repr_hash());
     st.ref_to_cont(code)
+}
+
+fn exec_cell_prefix(st: &mut VmState, bits: u16, name: &str) -> Result<Cell> {
+    let code_range = st.code.range();
+    anyhow::ensure!(code_range.has_remaining(bits, 1), VmError::InvalidOpcode);
+    st.code.range_mut().try_advance(bits, 0);
+
+    let Some(cell) = st.code.cell().reference_cloned(code_range.refs_offset()) else {
+        anyhow::bail!(everscale_types::error::Error::CellUnderflow);
+    };
+    st.code.range_mut().try_advance(0, 1);
+
+    vm_log!("execute {name} ({})", cell.repr_hash());
+    Ok(cell)
+}
+
+fn exec_ifelse_ref_impl(st: &mut VmState, bits: u16, ref_first: bool) -> Result<i32> {
+    let cont = {
+        let code_range = st.code.range();
+        anyhow::ensure!(code_range.has_remaining(bits, 1), VmError::InvalidOpcode);
+        st.code.range_mut().try_advance(bits, 0);
+
+        let Some(cell) = st.code.cell().reference_cloned(code_range.refs_offset()) else {
+            anyhow::bail!(everscale_types::error::Error::CellUnderflow);
+        };
+        st.code.range_mut().try_advance(0, 1);
+
+        let name = match ref_first {
+            true => "IFREFELSE",
+            false => "IFELSEREF",
+        };
+
+        vm_log!("execute {name} ({})", cell.repr_hash());
+
+        let stack = Rc::make_mut(&mut st.stack);
+        let cont = ok!(stack.pop_cont_owned());
+
+        if ok!(stack.pop_bool()) == ref_first {
+            ok!(st.ref_to_cont(cell))
+        } else {
+            cont
+        }
+    };
+    st.call(cont)
 }

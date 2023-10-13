@@ -11,7 +11,9 @@ use num_traits::Zero;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::cont::{ControlData, ControlRegs, ExcQuitCont, OrdCont, QuitCont, RcCont};
+use crate::cont::{
+    ArgContExt, ControlData, ControlRegs, ExcQuitCont, OrdCont, QuitCont, RcCont, RepeatCont,
+};
 use crate::dispatch::DispatchTable;
 use crate::error::{VmError, VmException};
 use crate::instr::{codepage, codepage0};
@@ -247,6 +249,37 @@ impl VmState {
     pub fn ref_to_cont(&mut self, code: Cell) -> Result<Rc<OrdCont>> {
         let code = self.gas.context().load_cell(code, LoadMode::Full)?;
         Ok(Rc::new(OrdCont::simple(code.into(), self.cp.id())))
+    }
+
+    pub fn c1_envelope_if(&mut self, cond: bool, cont: RcCont, save: bool) -> RcCont {
+        if cond {
+            self.c1_envelope(cont, save)
+        } else {
+            cont
+        }
+    }
+
+    pub fn c1_envelope(&mut self, mut cont: RcCont, save: bool) -> RcCont {
+        if save {
+            if cont.get_control_data().is_none() {
+                let mut c = ArgContExt {
+                    ext: cont,
+                    data: Default::default(),
+                };
+                c.data.save.define_c0(&self.cr.c[0]);
+                c.data.save.define_c1(&self.cr.c[1]);
+
+                cont = Rc::new(c);
+            } else {
+                let cont = dyn_clone::rc_make_mut(&mut cont);
+                if let Some(data) = cont.get_control_data_mut() {
+                    data.save.define_c0(&self.cr.c[0]);
+                    data.save.define_c1(&self.cr.c[1]);
+                }
+            }
+        }
+        self.cr.c[1] = Some(cont.clone());
+        cont
     }
 
     pub fn extract_cc(
@@ -540,6 +573,19 @@ impl VmState {
         cont.jump(self)
     }
 
+    pub fn repeat(&mut self, body: RcCont, after: RcCont, n: u32) -> Result<i32> {
+        self.jump(if n == 0 {
+            drop(body);
+            after
+        } else {
+            Rc::new(RepeatCont {
+                count: n as _,
+                body,
+                after,
+            })
+        })
+    }
+
     pub fn ret(&mut self) -> Result<i32> {
         let cont = ok!(self.take_c0());
         self.jump(cont)
@@ -607,6 +653,8 @@ pub struct CommitedState {
 
 bitflags! {
     pub struct SaveCr: u8 {
+        const NONE = 0;
+
         const C0 = 1;
         const C1 = 1 << 1;
         const C2 = 1 << 2;

@@ -15,7 +15,7 @@ use crate::stack::{
 use crate::state::VmState;
 use crate::util::{ensure_empty_slice, rc_ptr_eq, OwnedCellSlice, Uint4};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ControlData {
     pub nargs: Option<u16>,
     pub stack: Option<Rc<Stack>>,
@@ -63,7 +63,7 @@ fn load_control_data(
     })
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct ControlRegs {
     pub c: [Option<RcCont>; 4],
     pub d: [Option<Cell>; 2],
@@ -146,6 +146,18 @@ impl ControlRegs {
 
     pub fn set_c7(&mut self, tuple: Rc<Tuple>) {
         self.c7 = Some(tuple);
+    }
+
+    pub fn define_c0(&mut self, cont: &Option<RcCont>) {
+        if self.c[0].is_none() {
+            self.c[0] = cont.clone()
+        }
+    }
+
+    pub fn define_c1(&mut self, cont: &Option<RcCont>) {
+        if self.c[1].is_none() {
+            self.c[1] = cont.clone()
+        }
     }
 
     fn merge_cell_value(lhs: &mut Option<Cell>, rhs: &Option<Cell>) {
@@ -234,7 +246,7 @@ fn load_control_regs(
     Ok(result)
 }
 
-pub trait Cont: Store + std::fmt::Debug {
+pub trait Cont: Store + dyn_clone::DynClone + std::fmt::Debug {
     fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32>;
 
     fn get_control_data(&self) -> Option<&ControlData> {
@@ -305,7 +317,7 @@ pub fn load_cont(slice: &mut CellSlice, context: &mut dyn CellContext) -> Result
     })
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct QuitCont {
     pub exit_code: i32,
 }
@@ -346,7 +358,7 @@ impl LoadWithContext<'_> for QuitCont {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct ExcQuitCont;
 
 impl ExcQuitCont {
@@ -387,7 +399,7 @@ impl LoadWithContext<'_> for ExcQuitCont {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PushIntCont {
     pub value: i32,
     pub next: Rc<dyn Cont>,
@@ -444,7 +456,7 @@ impl LoadWithContext<'_> for PushIntCont {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RepeatCont {
     pub count: u64,
     pub body: Rc<dyn Cont>,
@@ -524,7 +536,7 @@ impl LoadWithContext<'_> for RepeatCont {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AgainCont {
     pub body: Rc<dyn Cont>,
 }
@@ -572,7 +584,7 @@ impl LoadWithContext<'_> for AgainCont {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UntilCont {
     pub body: Rc<dyn Cont>,
     pub after: Rc<dyn Cont>,
@@ -629,7 +641,7 @@ impl LoadWithContext<'_> for UntilCont {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WhileCont {
     pub check_cond: bool,
     pub cond: Rc<dyn Cont>,
@@ -715,7 +727,7 @@ impl LoadWithContext<'_> for WhileCont {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ArgContExt {
     pub data: ControlData,
     pub ext: RcCont,
@@ -779,7 +791,7 @@ impl LoadWithContext<'_> for ArgContExt {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OrdCont {
     pub data: ControlData,
     pub code: OwnedCellSlice,
