@@ -113,6 +113,17 @@ impl Stack {
         }))
     }
 
+    pub fn split_top_ext(&mut self, n: usize, drop: usize) -> Result<Rc<Self>> {
+        let Some(new_depth) = self.depth().checked_sub(n + drop) else {
+            anyhow::bail!(VmError::StackUnderflow(n + drop));
+        };
+        let res = Rc::new(Self {
+            items: self.items.drain(new_depth + drop..).collect(),
+        });
+        self.items.truncate(new_depth);
+        Ok(res)
+    }
+
     pub fn pop(&mut self) -> Result<Rc<dyn StackValue>> {
         self.items
             .pop()

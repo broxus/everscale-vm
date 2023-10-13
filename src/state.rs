@@ -244,7 +244,7 @@ impl VmState {
         std::mem::replace(&mut self.stack, Self::EMPTY_STACK.with(Rc::clone))
     }
 
-    pub fn ref_to_cont(&self, code: Cell) -> Result<Rc<OrdCont>> {
+    pub fn ref_to_cont(&mut self, code: Cell) -> Result<Rc<OrdCont>> {
         let code = self.gas.context().load_cell(code, LoadMode::Full)?;
         Ok(Rc::new(OrdCont::simple(code.into(), self.cp.id())))
     }
@@ -257,7 +257,7 @@ impl VmState {
     ) -> Result<Rc<OrdCont>> {
         let new_stack = match stack_copy {
             Some(0) => None,
-            Some(n) if n as _ != self.stack.depth() => {
+            Some(n) if (n as usize) != self.stack.depth() => {
                 ok!(Rc::make_mut(&mut self.stack).split_top(n as _).map(Some))
             }
             _ => Some(self.take_stack()),
@@ -272,6 +272,9 @@ impl VmState {
                 cp: Some(self.cp.id()),
             },
         };
+        if let Some(new_stack) = new_stack {
+            self.stack = new_stack;
+        }
 
         if mode.contains(SaveCr::C0) {
             res.data.save.c[0] = std::mem::replace(&mut self.cr.c[0], Some(self.quit0.clone()));
@@ -310,7 +313,7 @@ impl VmState {
         self.jump(c2)
     }
 
-    pub fn call(&mut self, mut cont: RcCont) -> Result<i32> {
+    pub fn call(&mut self, cont: RcCont) -> Result<i32> {
         if let Some(control_data) = cont.get_control_data() {
             if control_data.save.c[0].is_some() {
                 // If cont has c0 then call reduces to a jump
@@ -324,7 +327,7 @@ impl VmState {
         }
 
         // Create return continuation
-        let mut ret = OrdCont::simple(self.code, self.cp.id());
+        let mut ret = OrdCont::simple(std::mem::take(&mut self.code), self.cp.id());
         ret.data.save.c[0] = self.cr.c[0].take();
         self.cr.c[0] = Some(Rc::new(ret));
 
@@ -338,16 +341,16 @@ impl VmState {
         pass_args: Option<u16>,
         ret_args: Option<u16>,
     ) -> Result<i32> {
-        if let Some(control_data) = cont.get_control_data() {
+        let (new_stack, c0) = if let Some(control_data) = cont.get_control_data() {
             if control_data.save.c[0].is_some() {
                 // If cont has c0 then call reduces to a jump
                 return self.jump(cont);
             }
 
-            let depth = self.stack.depth();
+            let current_depth = self.stack.depth();
             anyhow::ensure!(
-                pass_args.unwrap_or_default() as usize <= depth
-                    && control_data.nargs.unwrap_or_default() as usize <= depth,
+                pass_args.unwrap_or_default() as usize <= current_depth
+                    && control_data.nargs.unwrap_or_default() as usize <= current_depth,
                 VmError::StackUnderflow(std::cmp::max(
                     pass_args.unwrap_or_default(),
                     control_data.nargs.unwrap_or_default()
@@ -365,59 +368,68 @@ impl VmState {
             self.cr.preclear(&control_data.save);
 
             let (copy, skip) = match (pass_args, control_data.nargs) {
-                (Some(pass_args), Some(copy)) => (Some(copy), pass_args - copy),
-                (Some(pass_args), None) => (Some(pass_args), 0),
+                (Some(pass_args), Some(copy)) => (Some(copy as usize), (pass_args - copy) as usize),
+                (Some(pass_args), None) => (Some(pass_args as usize), 0),
                 _ => (None, 0),
             };
 
-            let new_stack = match &control_data.stack {
-                Some(stack) if !stack.items.is_empty() => {
-                    // TODO
+            let new_stack = match Rc::get_mut(&mut cont) {
+                Some(cont) => cont
+                    .get_control_data_mut()
+                    .and_then(|control_data| control_data.stack.take()),
+                None => cont
+                    .get_control_data()
+                    .and_then(|control_data| control_data.stack.clone()),
+            };
+
+            let new_stack = match new_stack {
+                Some(mut stack) if !stack.items.is_empty() => {
+                    let copy = copy.unwrap_or(current_depth);
+
+                    let current_stack = Rc::make_mut(&mut self.stack);
+                    ok!(Rc::make_mut(&mut stack).move_from_stack(current_stack, copy));
+                    ok!(current_stack.pop_many(skip));
+                    // TODO: consume stack gas price
+
+                    stack
                 }
                 _ => {
                     if let Some(copy) = copy {
-                        let stack = Rc::make_mut(&mut self.stack);
+                        ok!(Rc::make_mut(&mut self.stack).split_top_ext(copy, skip))
+                        // TODO: consume stack gas price
                     } else {
-                        std::mem::replace(&mut self.stack, Self::EMPTY_STACK.with(Rc::clone))
+                        self.take_stack()
                     }
                 }
             };
+
+            (new_stack, old_c0)
         } else {
             // Simple case without continuation data
-
             let new_stack = if let Some(pass_args) = pass_args {
-                let Some(new_length) = self.stack.depth().checked_sub(pass_args as _) else {
-                    anyhow::bail!(VmError::StackUnderflow(
-                        pass_args.unwrap_or_default() as usize
-                    ));
-                };
-
-                Rc::new(Stack {
-                    items: Rc::make_mut(&mut self.stack)
-                        .items
-                        .drain(new_length..)
-                        .collect::<Vec<_>>(),
-                })
+                ok!(Rc::make_mut(&mut self.stack).split_top(pass_args as _))
                 // TODO: consume gas of new stack length
             } else {
-                std::mem::replace(&mut self.stack, Self::EMPTY_STACK.with(Rc::clone))
+                self.take_stack()
             };
 
-            // Create a new stack from the top `pass_args` items of the current stack
-            let mut ret = OrdCont {
-                code: self.code,
-                data: ControlData {
-                    save: Default::default(),
-                    nargs: ret_args,
-                    stack: Some(std::mem::replace(&mut self.stack, new_stack)),
-                    cp: Some(self.cp.id()),
-                },
-            };
-            ret.data.save.c[0] = self.cr.c[0].take();
-            self.cr.c[0] = Some(Rc::new(ret));
+            (new_stack, self.cr.c[0].take())
+        };
 
-            cont.jump(self)
-        }
+        // Create a new stack from the top `pass_args` items of the current stack
+        let mut ret = OrdCont {
+            code: std::mem::take(&mut self.code),
+            data: ControlData {
+                save: Default::default(),
+                nargs: ret_args,
+                stack: Some(std::mem::replace(&mut self.stack, new_stack)),
+                cp: Some(self.cp.id()),
+            },
+        };
+        ret.data.save.c[0] = c0;
+        self.cr.c[0] = Some(Rc::new(ret));
+
+        cont.jump(self)
     }
 
     pub fn jump(&mut self, cont: RcCont) -> Result<i32> {
@@ -477,7 +489,11 @@ impl VmState {
             self.preclear_cr(&control_data.save);
 
             // Compute the next stack depth
-            let next_depth = control_data.nargs.or(pass_args).unwrap_or(current_depth) as usize;
+            let next_depth = control_data
+                .nargs
+                .or(pass_args)
+                .map(|n| n as usize)
+                .unwrap_or(current_depth);
 
             // Try to reuse continuation stack to reduce copies
             let cont_stack = match Rc::get_mut(&mut cont) {
