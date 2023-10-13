@@ -12,7 +12,8 @@ use num_traits::Zero;
 use tracing::instrument;
 
 use crate::cont::{
-    ArgContExt, ControlData, ControlRegs, ExcQuitCont, OrdCont, QuitCont, RcCont, RepeatCont,
+    AgainCont, ArgContExt, ControlData, ControlRegs, ExcQuitCont, OrdCont, QuitCont, RcCont,
+    RepeatCont, UntilCont, WhileCont,
 };
 use crate::dispatch::DispatchTable;
 use crate::error::{VmError, VmException};
@@ -263,8 +264,8 @@ impl VmState {
         if save {
             if cont.get_control_data().is_none() {
                 let mut c = ArgContExt {
-                    ext: cont,
                     data: Default::default(),
+                    ext: cont,
                 };
                 c.data.save.define_c0(&self.cr.c[0]);
                 c.data.save.define_c1(&self.cr.c[1]);
@@ -280,6 +281,28 @@ impl VmState {
         }
         self.cr.c[1] = Some(cont.clone());
         cont
+    }
+
+    pub fn c1_save_set(&mut self) {
+        let [c0, c1, ..] = &mut self.cr.c;
+
+        if let Some(c0) = c0 {
+            if c0.get_control_data().is_none() {
+                let mut c = ArgContExt {
+                    data: Default::default(),
+                    ext: c0.clone(),
+                };
+                c.data.save.define_c1(c1);
+                *c0 = Rc::new(c);
+            } else {
+                let c0 = dyn_clone::rc_make_mut(c0);
+                if let Some(data) = c0.get_control_data_mut() {
+                    data.save.define_c1(c1);
+                }
+            }
+        }
+
+        *c1 = c0.clone();
     }
 
     pub fn extract_cc(
@@ -573,19 +596,6 @@ impl VmState {
         cont.jump(self)
     }
 
-    pub fn repeat(&mut self, body: RcCont, after: RcCont, n: u32) -> Result<i32> {
-        self.jump(if n == 0 {
-            drop(body);
-            after
-        } else {
-            Rc::new(RepeatCont {
-                count: n as _,
-                body,
-                after,
-            })
-        })
-    }
-
     pub fn ret(&mut self) -> Result<i32> {
         let cont = ok!(self.take_c0());
         self.jump(cont)
@@ -604,6 +614,45 @@ impl VmState {
     pub fn ret_alt_ext(&mut self, ret_args: Option<u16>) -> Result<i32> {
         let cont = ok!(self.take_c1());
         self.jump_ext(cont, ret_args)
+    }
+
+    pub fn repeat(&mut self, body: RcCont, after: RcCont, n: u32) -> Result<i32> {
+        self.jump(if n == 0 {
+            drop(body);
+            after
+        } else {
+            Rc::new(RepeatCont {
+                count: n as _,
+                body,
+                after,
+            })
+        })
+    }
+
+    pub fn until(&mut self, body: RcCont, after: RcCont) -> Result<i32> {
+        if !body.has_c0() {
+            self.cr.c[0] = Some(Rc::new(UntilCont {
+                body: body.clone(),
+                after,
+            }))
+        }
+        self.jump(body)
+    }
+
+    pub fn loop_while(&mut self, cond: RcCont, body: RcCont, after: RcCont) -> Result<i32> {
+        if !cond.has_c0() {
+            self.cr.c[0] = Some(Rc::new(WhileCont {
+                check_cond: true,
+                cond: cond.clone(),
+                body,
+                after,
+            }));
+        }
+        self.jump(cond)
+    }
+
+    pub fn again(&mut self, body: RcCont) -> Result<i32> {
+        self.jump(Rc::new(AgainCont { body }))
     }
 
     pub fn adjust_cr(&mut self, save: &ControlRegs) {

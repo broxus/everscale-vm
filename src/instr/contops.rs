@@ -466,6 +466,71 @@ impl Contops {
         let after = st.c1_envelope_if(brk, c0, true);
         st.repeat(body, after, n as _)
     }
+
+    #[instr(code = "e6", fmt = "UNTIL", args(brk = false))]
+    #[instr(code = "e316", fmt = "UNTILBRK", args(brk = true))]
+    fn exec_until(st: &mut VmState, brk: bool) -> Result<i32> {
+        let body = ok!(Rc::make_mut(&mut st.stack).pop_cont_owned());
+        let cc = ok!(st.extract_cc(SaveCr::C0, None, None));
+        let after = st.c1_envelope_if(brk, cc, true);
+        st.until(body, after)
+    }
+
+    #[instr(code = "e7", fmt = "UNTILEND", args(brk = false))]
+    #[instr(code = "e317", fmt = "UNTILENDBRK", args(brk = true))]
+    fn exec_until_end(st: &mut VmState, brk: bool) -> Result<i32> {
+        let body = ok!(st.extract_cc(SaveCr::NONE, None, None));
+        let Some(c0) = st.cr.c[0].clone() else {
+            anyhow::bail!(VmError::InvalidOpcode);
+        };
+        let after = st.c1_envelope_if(brk, c0, true);
+        st.until(body, after)
+    }
+
+    #[instr(code = "e8", fmt = "WHILE", args(brk = false))]
+    #[instr(code = "e318", fmt = "WHILEBRK", args(brk = true))]
+    fn exec_while(st: &mut VmState, brk: bool) -> Result<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let body = ok!(stack.pop_cont_owned());
+        let cond = ok!(stack.pop_cont_owned());
+
+        let cc = ok!(st.extract_cc(SaveCr::C0, None, None));
+        let after = st.c1_envelope_if(brk, cc, true);
+        st.loop_while(cond, body, after)
+    }
+
+    #[instr(code = "e9", fmt = "WHILEEND", args(brk = false))]
+    #[instr(code = "e319", fmt = "WHILEENDBRK", args(brk = true))]
+    fn exec_while_end(st: &mut VmState, brk: bool) -> Result<i32> {
+        let cond = ok!(Rc::make_mut(&mut st.stack).pop_cont_owned());
+        let body = ok!(st.extract_cc(SaveCr::NONE, None, None));
+        let Some(c0) = st.cr.c[0].clone() else {
+            anyhow::bail!(VmError::InvalidOpcode);
+        };
+        let after = st.c1_envelope_if(brk, c0, true);
+        st.loop_while(cond, body, after)
+    }
+
+    #[instr(code = "ea", fmt = "AGAIN", args(brk = false))]
+    #[instr(code = "e31a", fmt = "AGAINBRK", args(brk = true))]
+    fn exec_again(st: &mut VmState, brk: bool) -> Result<i32> {
+        if brk {
+            let cc = ok!(st.extract_cc(SaveCr::C0_C1, None, None));
+            st.cr.c[1] = Some(cc);
+        }
+        let body = ok!(Rc::make_mut(&mut st.stack).pop_cont_owned());
+        st.again(body)
+    }
+
+    #[instr(code = "eb", fmt = "AGAINEND", args(brk = false))]
+    #[instr(code = "e31b", fmt = "AGAINENDBRK", args(brk = true))]
+    fn exec_again_end(st: &mut VmState, brk: bool) -> Result<i32> {
+        if brk {
+            st.c1_save_set();
+        }
+        let cc = ok!(st.extract_cc(SaveCr::NONE, None, None));
+        st.again(cc)
+    }
 }
 
 fn exec_ref_prefix(st: &mut VmState, bits: u16, name: &str) -> Result<Rc<OrdCont>> {
