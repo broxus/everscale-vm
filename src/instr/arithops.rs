@@ -1,8 +1,11 @@
+use std::cmp::Ordering;
 use std::rc::Rc;
 
 use anyhow::Result;
 use everscale_vm_proc::vm_module;
 use num_bigint::BigInt;
+use num_integer::Integer;
+use num_traits::Zero;
 
 use crate::dispatch::Opcodes;
 use crate::error::VmError;
@@ -228,5 +231,170 @@ impl Arithops {
             _ => anyhow::bail!(VmError::IntegerOverflow),
         }
         Ok(0)
+    }
+
+    // === Division instructions ===
+    #[instr(code = "a90m", fmt = "DIV/MOD {m}", args(quiet = false))]
+    fn exec_divmod(st: &mut VmState, m: u32, quiet: bool) -> Result<i32> {
+        enum Operation {
+            Div,
+            Mod,
+            Divmod,
+        }
+
+        fn nearest_rounding_required(r: &BigInt, x: &BigInt, y: &BigInt) -> bool {
+            if r.is_zero() {
+                return false;
+            }
+
+            let r_x2: BigInt = r << 1;
+            match r_x2.magnitude().cmp(y.magnitude()) {
+                Ordering::Greater => true,
+                Ordering::Equal if x.sign() == y.sign() => true,
+                _ => false,
+            }
+        }
+
+        fn ceil_rounding_required(r: &BigInt, y: &BigInt) -> bool {
+            !r.is_zero() && r.sign() == y.sign()
+        }
+
+        let round_mode = ok!(RoundMode::from_args(m & 0b11));
+        let operation = match (m >> 2) & 0b11 {
+            1 => Operation::Div,
+            2 => Operation::Mod,
+            3 => Operation::Divmod,
+            _ => anyhow::bail!(VmError::InvalidOpcode),
+        };
+
+        let stack = Rc::make_mut(&mut st.stack);
+        let y = ok!(stack.pop_int_or_nan());
+        let x = ok!(stack.pop_int_or_nan());
+        match (x, y) {
+            (Some(x), Some(y)) if !y.is_zero() => match operation {
+                Operation::Div => {
+                    let res = match round_mode {
+                        RoundMode::Floor => x.div_floor(&y),
+                        RoundMode::Nearest => {
+                            let (mut q, r) = x.div_rem(&y);
+                            if nearest_rounding_required(&r, &x, &y) {
+                                if x.sign() == y.sign() {
+                                    q += 1;
+                                } else {
+                                    q -= 1;
+                                }
+                            }
+                            q
+                        }
+                        RoundMode::Ceiling => {
+                            let (mut q, r) = x.div_rem(&y);
+                            if ceil_rounding_required(&r, &y) {
+                                if x.sign() == y.sign() {
+                                    q += 1;
+                                } else {
+                                    q -= 1;
+                                }
+                            }
+                            q
+                        }
+                    };
+                    ok!(stack.push_raw_int(update_or_new_rc(x, res), quiet));
+                }
+                Operation::Mod => {
+                    let res = match round_mode {
+                        RoundMode::Floor => x.mod_floor(y.as_ref()),
+                        RoundMode::Nearest => {
+                            let (_, mut r) = x.div_rem(&y);
+                            if nearest_rounding_required(&r, &x, &y) {
+                                if r.sign() == y.sign() {
+                                    r -= y.as_ref();
+                                } else {
+                                    r += y.as_ref();
+                                }
+                            }
+                            r
+                        }
+                        RoundMode::Ceiling => {
+                            let (_, mut r) = x.div_rem(&y);
+                            if ceil_rounding_required(&r, &y) {
+                                r -= y.as_ref();
+                            }
+                            r
+                        }
+                    };
+                    ok!(stack.push_raw_int(update_or_new_rc(x, res), quiet));
+                }
+                Operation::Divmod => {
+                    let (q, r) = match round_mode {
+                        RoundMode::Floor => x.div_mod_floor(&y),
+                        RoundMode::Nearest => {
+                            let (mut q, mut r) = x.div_rem(&y);
+                            if nearest_rounding_required(&r, &x, &y) {
+                                if x.sign() == y.sign() {
+                                    q += 1;
+                                } else {
+                                    q -= 1;
+                                }
+                                if r.sign() == y.sign() {
+                                    r -= y.as_ref();
+                                } else {
+                                    r += y.as_ref();
+                                }
+                            }
+                            (q, r)
+                        }
+                        RoundMode::Ceiling => {
+                            let (mut q, mut r) = x.div_rem(&y);
+                            if ceil_rounding_required(&r, &y) {
+                                r -= y.as_ref();
+                                if x.sign() == y.sign() {
+                                    q += 1;
+                                } else {
+                                    q -= 1;
+                                }
+                            }
+                            (q, r)
+                        }
+                    };
+                    ok!(stack.push_raw_int(update_or_new_rc(x, q), quiet));
+                    ok!(stack.push_raw_int(update_or_new_rc(y, r), quiet));
+                }
+            },
+            _ if quiet => {
+                ok!(stack.push_nan());
+                if let Operation::Divmod = operation {
+                    ok!(stack.push_nan());
+                }
+            }
+            _ => anyhow::bail!(VmError::IntegerOverflow),
+        }
+        Ok(0)
+    }
+}
+
+enum RoundMode {
+    Floor,
+    Nearest,
+    Ceiling,
+}
+
+impl RoundMode {
+    fn from_args(args: u32) -> Result<Self> {
+        Ok(match args {
+            0 => Self::Floor,
+            1 => Self::Nearest,
+            2 => Self::Ceiling,
+            _ => anyhow::bail!(VmError::InvalidOpcode),
+        })
+    }
+}
+
+fn update_or_new_rc(mut rc: Rc<BigInt>, value: BigInt) -> Rc<BigInt> {
+    match Rc::get_mut(&mut rc) {
+        None => Rc::new(value),
+        Some(x) => {
+            *x = value;
+            rc
+        }
     }
 }
