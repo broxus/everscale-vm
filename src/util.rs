@@ -1,5 +1,4 @@
 use std::rc::Rc;
-use std::sync::OnceLock;
 
 use everscale_types::dict::DictKey;
 use everscale_types::error::Error;
@@ -149,16 +148,12 @@ pub fn store_int_to_builder(
 }
 
 pub fn bitsize(int: &BigInt, signed: bool) -> u16 {
-    fn minus_one() -> &'static BigInt {
-        static MINUS_ONE: OnceLock<BigInt> = OnceLock::new();
-        MINUS_ONE.get_or_init(|| BigInt::from_biguint(Sign::Minus, BigUint::one()))
-    }
-
     let mut bits = int.bits() as u16;
     if signed {
-        if int.is_zero() || int == minus_one() {
+        let sign = int.sign();
+        if sign == Sign::NoSign || sign == Sign::Minus && int.magnitude().is_one() {
             return 1;
-        } else if int.sign() == Sign::Plus {
+        } else if sign == Sign::Plus {
             return bits + 1;
         }
 

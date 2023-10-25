@@ -14,6 +14,8 @@ pub enum VmError {
         max: isize,
         actual: String,
     },
+    #[error("integer overflow")]
+    IntegerOverflow,
     #[error("invalid opcode")]
     InvalidOpcode,
     #[error("expected type {expected:?}, found {actual:?}")]
@@ -96,6 +98,7 @@ impl From<&anyhow::Error> for VmException {
                 VmError::StackUnderflow(_) => Self::StackUnderflow,
                 VmError::TooManyArguments(_) => Self::StackOverflow,
                 VmError::IntegerOutOfRange { .. } => Self::RangeCheck,
+                VmError::IntegerOverflow => Self::IntOverflow,
                 VmError::InvalidOpcode => Self::InvalidOpcode,
                 VmError::InvalidType { .. } => Self::TypeCheck,
                 VmError::OutOfGas => Self::OutOfGas,

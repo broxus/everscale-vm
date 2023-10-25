@@ -17,7 +17,7 @@ num-traits = "0.2"
 thiserror = "1.0"
 tracing = { version = "0.1", optional = true }
 
-everscale-types = { version = "0.1.0-rc.5", default-features = false, features = [
+everscale-types = { version = "0.1.0-rc.6", default-features = false, features = [
     "sync",
     "models",
 ] }
@@ -25,13 +25,10 @@ everscale-types = { version = "0.1.0-rc.5", default-features = false, features =
 everscale-vm-proc = { path = "./proc" }
 
 [dev-dependencies]
-everscale-types = { version = "0.1.0-rc.5", default-features = false, features = [
+everscale-types = { version = "0.1.0-rc.6", default-features = false, features = [
     "sync",
     "models",
     "base64",
 ] }
 tracing = "0.1"
 tracing-test = "0.2"
-
-[patch."crates-io"]
-everscale-types = { path = "../everscale-types" }

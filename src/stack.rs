@@ -9,7 +9,7 @@ use num_traits::{One, ToPrimitive, Zero};
 
 use crate::cont::{load_cont, RcCont};
 use crate::error::VmError;
-use crate::util::{ensure_empty_slice, store_int_to_builder, OwnedCellSlice};
+use crate::util::{bitsize, ensure_empty_slice, store_int_to_builder, OwnedCellSlice};
 
 #[derive(Debug, Default, Clone)]
 pub struct Stack {
@@ -96,6 +96,16 @@ impl Stack {
         self.push(value.into())
     }
 
+    pub fn push_raw_int(&mut self, value: Rc<BigInt>, quiet: bool) -> Result<()> {
+        if bitsize(&value, true) <= 257 {
+            self.push_raw(value)
+        } else if quiet {
+            self.push_nan()
+        } else {
+            anyhow::bail!(VmError::IntegerOverflow)
+        }
+    }
+
     pub fn move_from_stack(&mut self, other: &mut Self, n: usize) -> Result<()> {
         let Some(new_other_len) = other.depth().checked_sub(n) else {
             anyhow::bail!(VmError::StackUnderflow(n));
@@ -137,6 +147,15 @@ impl Stack {
 
     pub fn pop_int(&mut self) -> Result<Rc<BigInt>> {
         self.pop()?.into_int()
+    }
+
+    pub fn pop_int_or_nan(&mut self) -> Result<Option<Rc<BigInt>>> {
+        let value = self.pop()?;
+        if value.ty() == StackValueType::Int && value.as_int().is_none() {
+            Ok(None)
+        } else {
+            value.into_int().map(Some)
+        }
     }
 
     pub fn pop_smallint_range(&mut self, min: u32, max: u32) -> Result<u32> {
