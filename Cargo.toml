@@ -31,5 +31,7 @@ everscale-types = { version = "0.1.0-rc.6", default-features = false, features =
     "models",
     "base64",
 ] }
+#everscale-asm-macros = "0.0.1"
+everscale-asm-macros = { git = "https://github.com/broxus/everscale-asm.git" }
 tracing = "0.1"
 tracing-test = "0.2"

@@ -398,3 +398,25 @@ fn update_or_new_rc(mut rc: Rc<BigInt>, value: BigInt) -> Rc<BigInt> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn op_divmod() {
+        assert_run_vm!("DIV", [int 5, int 5] => [int 1]);
+        assert_run_vm!("DIV", [int 5, int 2] => [int 2]);
+        assert_run_vm!("DIVR", [int 10, int 3] => [int 3]);
+        assert_run_vm!("DIVC", [int 10, int 3] => [int 4]);
+
+        assert_run_vm!("MOD", [int 5, int 5] => [int 0]);
+        assert_run_vm!("MOD", [int 5, int 2] => [int 1]);
+        assert_run_vm!("MODR", [int 10, int 3] => [int 1]);
+        assert_run_vm!("MODC", [int 10, int 3] => [int -2]);
+
+        assert_run_vm!("DIVMOD", [int 5, int 5] => [int 1, int 0]);
+        assert_run_vm!("DIVMOD", [int 5, int 2] => [int 2, int 1]);
+        assert_run_vm!("DIVMODR", [int 10, int 3] => [int 3, int 1]);
+        assert_run_vm!("DIVMODC", [int 10, int 3] => [int 4, int -2]);
+    }
+}
