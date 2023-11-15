@@ -24,33 +24,45 @@ macro_rules! vm_log {
 #[macro_export]
 macro_rules! stack {
     ($($item_ty:tt $($value:expr)?),*$(,)?) => {
-        vec![$(crate::stack!(@$item_ty $($value)?)),*]
+        vec![$(crate::stack!(@v $item_ty $($value)?)),*]
     };
-    (@null) => {
+    (@v null) => {
         crate::stack::Stack::make_null()
     };
-    (@nan) => {
+    (@v nan) => {
         crate::stack::Stack::make_nan()
     };
-    (@int $value:expr) => {
+    (@v int $value:expr) => {
         ::std::rc::Rc::new(num_bigint::BigInt::from($value)) as crate::stack::RcStackValue
     };
 }
 
 #[cfg(test)]
+#[macro_export]
 macro_rules! assert_run_vm {
-    ($($code:literal),+, [$($origin_stack:tt)*] => [$($expected_stack:tt)*]) => {{
+    (
+        $($code:literal),+,
+        [$($origin_stack:tt)*] => [$($expected_stack:tt)*]
+        $(, exit_code: $exit_code:literal)?
+        $(,)?
+    ) => {{
         let (exit_code, vm) = crate::tests::run_vm_with_stack(
             tvmasm!($($code),+),
             crate::stack![$($origin_stack)*],
         );
+        crate::assert_run_vm!(@check_exit_code exit_code $($exit_code)?);
 
-        assert_eq!(exit_code, 0, "non-zero exit code");
         let expected_stack = format!("{}", (&crate::stack![$($expected_stack)*] as &dyn crate::stack::StackValue).display_list());
         let vm_stack = format!("{}", (&vm.stack.items as &dyn crate::stack::StackValue).display_list());
 
         assert_eq!(vm_stack, expected_stack);
     }};
+    (@check_exit_code $ident:ident) => {
+        assert_eq!($ident, 0, "non-zero exit code")
+    };
+    (@check_exit_code $ident:ident $exit_code:literal) => {
+        assert_eq!($ident, $exit_code, "exit code mismatch")
+    };
 }
 
 pub use self::state::VmState;

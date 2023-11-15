@@ -401,6 +401,87 @@ fn update_or_new_rc(mut rc: Rc<BigInt>, value: BigInt) -> Rc<BigInt> {
 
 #[cfg(test)]
 mod tests {
+    use tracing_test::traced_test;
+
+    use super::*;
+
+    #[test]
+    #[traced_test]
+    fn op_pushconst() {
+        assert_run_vm!("PUSHINT 1", [] => [int 1]);
+        assert_run_vm!("PUSHINT 127", [] => [int 127]);
+        assert_run_vm!("PUSHINT 32767", [] => [int 32767]);
+        assert_run_vm!("PUSHINT 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", [] => [int 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFi128]);
+        assert_run_vm!("PUSHPOW2 1", [] => [int 2]);
+        assert_run_vm!("PUSHPOW2 10", [] => [int (1 << 10)]);
+        assert_run_vm!("PUSHPOW2 255", [] => [int (BigInt::from(1) << 255)]);
+        assert_run_vm!("PUSHNAN", [] => [nan]);
+        assert_run_vm!("PUSHPOW2DEC 1", [] => [int 1]);
+        assert_run_vm!("PUSHPOW2DEC 10", [] => [int (1 << 10) - 1]);
+        assert_run_vm!("PUSHPOW2DEC 256", [] => [int (BigInt::from(1) << 256) - 1]);
+        assert_run_vm!("PUSHNEGPOW2 1", [] => [int -2]);
+        assert_run_vm!("PUSHNEGPOW2 10", [] => [int (-1 << 10)]);
+        assert_run_vm!("PUSHNEGPOW2 255", [] => [int (BigInt::from(-1) << 255)]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn op_simple_math() {
+        // pos
+        assert_run_vm!("ADD", [int 2, int 5] => [int 7]);
+        assert_run_vm!("ADD", [int -5, int 5] => [int 0]);
+        // neg
+        assert_run_vm!("ADD", [] => [int 0], exit_code: 2);
+        assert_run_vm!("ADD", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("ADD", [null, int 5] => [int 0], exit_code: 7);
+        assert_run_vm!("ADD", [int (BigInt::from(1) << 256) - 1, int 1] => [int 0], exit_code: 4);
+
+        // pos
+        assert_run_vm!("QADD", [int 2, int 5] => [int 7]);
+        assert_run_vm!("QADD", [int -5, int 5] => [int 0]);
+        assert_run_vm!("QADD", [int (BigInt::from(1) << 256) - 1, int 0] => [int (BigInt::from(1) << 256) - 1]);
+        assert_run_vm!("QADD", [int (BigInt::from(1) << 256) - 1, int 1] => [nan]);
+        assert_run_vm!("QADD", [int (BigInt::from(1) << 256), int 0] => [nan]);
+        // neg
+        assert_run_vm!("QADD", [] => [int 0], exit_code: 2);
+        assert_run_vm!("QADD", [int 123] => [int 0], exit_code: 2);
+
+        // pos
+        assert_run_vm!("SUB", [int 2, int 5] => [int -3]);
+        assert_run_vm!("SUB", [int -5, int 5] => [int -10]);
+        // neg
+        assert_run_vm!("SUB", [int -5, null] => [int 0], exit_code: 7);
+        assert_run_vm!("SUB", [int (BigInt::from(-1) << 256), int 1] => [int 0], exit_code: 4);
+
+        // pos
+        assert_run_vm!("QSUB", [int 2, int 5] => [int -3]);
+        assert_run_vm!("QSUB", [int -5, int 5] => [int -10]);
+        assert_run_vm!("QSUB", [int (BigInt::from(1) << 256) - 1, int 0] => [int (BigInt::from(1) << 256) - 1]);
+        assert_run_vm!("QSUB", [int (BigInt::from(-1) << 256) + 1, int 1] => [int (BigInt::from(-1) << 256)]);
+        assert_run_vm!("QSUB", [int (BigInt::from(-1) << 256), int 1] => [nan]);
+        // neg
+        assert_run_vm!("QSUB", [] => [int 0], exit_code: 2);
+        assert_run_vm!("QSUB", [int 123] => [int 0], exit_code: 2);
+
+        // pos
+        assert_run_vm!("SUBR", [int 5, int 2] => [int -3]);
+        assert_run_vm!("SUBR", [int 5, int -5] => [int -10]);
+        // neg
+        assert_run_vm!("SUBR", [] => [int 0], exit_code: 2);
+        assert_run_vm!("SUBR", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("SUBR", [int 5, null] => [int 0], exit_code: 7);
+        assert_run_vm!("SUBR", [int (BigInt::from(1) << 256), int -1] => [int 0], exit_code: 4);
+
+        // pos
+        assert_run_vm!("QSUBR", [int 5, int 2] => [int -3]);
+        assert_run_vm!("QSUBR", [int 5, int -5] => [int -10]);
+        assert_run_vm!("QSUBR", [int 0, int (BigInt::from(1) << 256) - 1] => [int (BigInt::from(1) << 256) - 1]);
+        assert_run_vm!("QSUBR", [int 1, int (BigInt::from(-1) << 256) + 1] => [int (BigInt::from(-1) << 256)]);
+        assert_run_vm!("QSUBR", [int 1, int (BigInt::from(-1) << 256)] => [nan]);
+        // neg
+        assert_run_vm!("QSUBR", [] => [int 0], exit_code: 2);
+        assert_run_vm!("QSUBR", [int 123] => [int 0], exit_code: 2);
+    }
 
     #[test]
     fn op_divmod() {
