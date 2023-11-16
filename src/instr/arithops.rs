@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::ops::Shr;
 use std::rc::Rc;
 
 use anyhow::Result;
@@ -234,29 +235,13 @@ impl Arithops {
     }
 
     // === Division instructions ===
-    #[instr(code = "a90m", fmt = "DIV/MOD {m}", args(quiet = false))]
+    #[instr(code = "a90m", fmt = ("{}", DumpDivmod(m)), args(quiet = false))]
+    #[instr(code = "b7a90m", fmt = ("Q{}", DumpDivmod(m)), args(quiet = true))]
     fn exec_divmod(st: &mut VmState, m: u32, quiet: bool) -> Result<i32> {
         enum Operation {
             Div,
             Mod,
             Divmod,
-        }
-
-        fn nearest_rounding_required(r: &BigInt, x: &BigInt, y: &BigInt) -> bool {
-            if r.is_zero() {
-                return false;
-            }
-
-            let r_x2: BigInt = r << 1;
-            match r_x2.magnitude().cmp(y.magnitude()) {
-                Ordering::Greater => true,
-                Ordering::Equal if x.sign() == y.sign() => true,
-                _ => false,
-            }
-        }
-
-        fn ceil_rounding_required(r: &BigInt, y: &BigInt) -> bool {
-            !r.is_zero() && r.sign() == y.sign()
         }
 
         let round_mode = ok!(RoundMode::from_args(m & 0b11));
@@ -370,12 +355,124 @@ impl Arithops {
         }
         Ok(0)
     }
+
+    #[instr(code = "a92m", fmt = ("{}", DumpShrmod(m, false)), args(imm = false, q = false))]
+    #[instr(code = "a93mmm", fmt = ("{}", DumpShrmod(m, true)), args(imm = true, q = false))]
+    #[instr(code = "b7a92m", fmt = ("Q{}", DumpShrmod(m, false)), args(imm = false, q = false))]
+    fn exec_shrmod(st: &mut VmState, mut m: u32, imm: bool, q: bool) -> Result<i32> {
+        enum Operation {
+            RShift,
+            ModPow2,
+            RShiftMod,
+        }
+
+        let y = if imm {
+            let y = (m & 0xff) + 1;
+            m >>= 8;
+            Some(y)
+        } else {
+            None
+        };
+
+        let mut round_mode = ok!(RoundMode::from_args(m & 0b11));
+        let operation = match (m >> 2) & 0b11 {
+            1 => Operation::RShift,
+            2 => Operation::ModPow2,
+            3 => Operation::RShiftMod,
+            _ => anyhow::bail!(VmError::InvalidOpcode),
+        };
+
+        let stack = Rc::make_mut(&mut st.stack);
+        let y = match y {
+            Some(y) => y,
+            None => ok!(stack.pop_smallint_range(0, 256)),
+        };
+
+        if y == 0 {
+            round_mode = RoundMode::Floor;
+        }
+
+        match ok!(stack.pop_int_or_nan()) {
+            Some(x) => match operation {
+                Operation::RShift => {
+                    let res = match round_mode {
+                        RoundMode::Floor => x.as_ref().shr(y),
+                        RoundMode::Nearest => todo!(),
+                        RoundMode::Ceiling => todo!(),
+                    };
+                    ok!(stack.push_raw_int(update_or_new_rc(x, res), q));
+                }
+                Operation::ModPow2 => todo!(),
+                Operation::RShiftMod => todo!(),
+            },
+            _ if q => {
+                ok!(stack.push_nan());
+                if let Operation::RShiftMod = operation {
+                    ok!(stack.push_nan());
+                }
+            }
+            _ => anyhow::bail!(VmError::IntegerOverflow),
+        }
+
+        Ok(0)
+    }
+}
+
+struct DumpDivmod(u32);
+
+impl std::fmt::Display for DumpDivmod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match (self.0 >> 2) & 0b11 {
+            1 => "DIV",
+            2 => "MOD",
+            3 => "DIVMOD",
+            _ => return f.write_str("DIV/MOD"),
+        })?;
+        f.write_str(match self.0 & 0b11 {
+            1 => "R",
+            2 => "C",
+            _ => "",
+        })
+    }
+}
+
+struct DumpShrmod(u32, bool);
+
+impl std::fmt::Display for DumpShrmod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut m = self.0;
+        let y = if self.1 {
+            let y = (m & 0xff) + 1;
+            m >>= 8;
+            Some(y)
+        } else {
+            None
+        };
+
+        f.write_str(match (m >> 2) & 0b11 {
+            1 => "RSHIFT",
+            2 => "MODPOW2",
+            3 => "RSHIFTMOD",
+            _ => return f.write_str("SHR/MOD"),
+        })?;
+        f.write_str(match m & 0b11 {
+            1 => "R",
+            2 => "C",
+            _ => "",
+        })?;
+
+        if let Some(y) = y {
+            write!(f, " {y}")
+        } else {
+            Ok(())
+        }
+    }
 }
 
 enum RoundMode {
-    Floor,
-    Nearest,
-    Ceiling,
+    Floor = 0,
+    Nearest = 1,
+    Ceiling = 2,
 }
 
 impl RoundMode {
@@ -387,6 +484,23 @@ impl RoundMode {
             _ => anyhow::bail!(VmError::InvalidOpcode),
         })
     }
+}
+
+fn nearest_rounding_required(r: &BigInt, x: &BigInt, y: &BigInt) -> bool {
+    if r.is_zero() {
+        return false;
+    }
+
+    let r_x2: BigInt = r << 1;
+    match r_x2.magnitude().cmp(y.magnitude()) {
+        Ordering::Greater => true,
+        Ordering::Equal if x.sign() == y.sign() => true,
+        _ => false,
+    }
+}
+
+fn ceil_rounding_required(r: &BigInt, y: &BigInt) -> bool {
+    !r.is_zero() && r.sign() == y.sign()
 }
 
 fn update_or_new_rc(mut rc: Rc<BigInt>, value: BigInt) -> Rc<BigInt> {
@@ -484,20 +598,41 @@ mod tests {
     }
 
     #[test]
+    #[traced_test]
     fn op_divmod() {
+        // pos
         assert_run_vm!("DIV", [int 5, int 5] => [int 1]);
         assert_run_vm!("DIV", [int 5, int 2] => [int 2]);
         assert_run_vm!("DIVR", [int 10, int 3] => [int 3]);
         assert_run_vm!("DIVC", [int 10, int 3] => [int 4]);
+        // neg
+        assert_run_vm!("DIV", [] => [int 0], exit_code: 2);
+        assert_run_vm!("DIV", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("DIV", [int 1, int 0] => [int 0], exit_code: 4);
 
+        // pos
         assert_run_vm!("MOD", [int 5, int 5] => [int 0]);
         assert_run_vm!("MOD", [int 5, int 2] => [int 1]);
         assert_run_vm!("MODR", [int 10, int 3] => [int 1]);
         assert_run_vm!("MODC", [int 10, int 3] => [int -2]);
+        // neg
+        assert_run_vm!("MOD", [] => [int 0], exit_code: 2);
+        assert_run_vm!("MOD", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("MOD", [int 1, int 0] => [int 0], exit_code: 4);
 
         assert_run_vm!("DIVMOD", [int 5, int 5] => [int 1, int 0]);
         assert_run_vm!("DIVMOD", [int 5, int 2] => [int 2, int 1]);
         assert_run_vm!("DIVMODR", [int 10, int 3] => [int 3, int 1]);
         assert_run_vm!("DIVMODC", [int 10, int 3] => [int 4, int -2]);
+        // neg
+        assert_run_vm!("DIVMOD", [] => [int 0], exit_code: 2);
+        assert_run_vm!("DIVMOD", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("DIVMOD", [int 1, int 0] => [int 0], exit_code: 4);
+    }
+
+    #[test]
+    #[traced_test]
+    fn op_shrmod() {
+        assert_run_vm!("@inline x{a924}", [int 5, int 2] => [int 1]);
     }
 }
