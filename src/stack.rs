@@ -1,6 +1,5 @@
 use std::rc::Rc;
 
-use anyhow::Result;
 use everscale_types::cell::LoadMode;
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
@@ -8,7 +7,7 @@ use num_bigint::BigInt;
 use num_traits::{One, ToPrimitive, Zero};
 
 use crate::cont::{load_cont, RcCont};
-use crate::error::VmError;
+use crate::error::{VmError, VmResult};
 use crate::util::{bitsize, ensure_empty_slice, store_int_to_builder, OwnedCellSlice};
 
 #[derive(Debug, Default, Clone)]
@@ -44,46 +43,44 @@ impl Stack {
         self.items.len()
     }
 
-    pub fn push<T: StackValue + 'static>(&mut self, item: T) -> Result<()> {
+    pub fn push<T: StackValue + 'static>(&mut self, item: T) -> VmResult<()> {
         self.push_raw(Rc::new(item))
     }
 
-    pub fn push_raw(&mut self, item: Rc<dyn StackValue>) -> Result<()> {
-        anyhow::ensure!(
+    pub fn push_raw(&mut self, item: Rc<dyn StackValue>) -> VmResult<()> {
+        vm_ensure!(
             self.depth() < Self::MAX_DEPTH,
-            VmError::StackUnderflow(Self::MAX_DEPTH)
+            StackUnderflow(Self::MAX_DEPTH)
         );
+
         self.items.push(item);
         Ok(())
     }
 
-    pub fn push_opt<T: StackValue + 'static>(&mut self, value: Option<T>) -> Result<()> {
+    pub fn push_opt<T: StackValue + 'static>(&mut self, value: Option<T>) -> VmResult<()> {
         match value {
             None => self.push_null(),
             Some(value) => self.push(value),
         }
     }
 
-    pub fn push_nth(&mut self, idx: usize) -> Result<()> {
+    pub fn push_nth(&mut self, idx: usize) -> VmResult<()> {
         let depth = self.depth();
-        anyhow::ensure!(idx < depth, VmError::StackUnderflow(idx));
-        anyhow::ensure!(
-            depth + 1 < Self::MAX_DEPTH,
-            VmError::StackUnderflow(Self::MAX_DEPTH)
-        );
+        vm_ensure!(idx < depth, StackUnderflow(idx));
+        vm_ensure!(depth + 1 < Self::MAX_DEPTH, StackUnderflow(Self::MAX_DEPTH));
         self.items.push(self.items[depth - idx - 1].clone());
         Ok(())
     }
 
-    pub fn push_null(&mut self) -> Result<()> {
+    pub fn push_null(&mut self) -> VmResult<()> {
         self.push_raw(Self::make_null())
     }
 
-    pub fn push_nan(&mut self) -> Result<()> {
+    pub fn push_nan(&mut self) -> VmResult<()> {
         self.push_raw(Self::make_nan())
     }
 
-    pub fn push_bool(&mut self, value: bool) -> Result<()> {
+    pub fn push_bool(&mut self, value: bool) -> VmResult<()> {
         // TODO: replace with thread-local?
         self.push(if value {
             -BigInt::one()
@@ -92,40 +89,40 @@ impl Stack {
         })
     }
 
-    pub fn push_int<T: Into<BigInt>>(&mut self, value: T) -> Result<()> {
+    pub fn push_int<T: Into<BigInt>>(&mut self, value: T) -> VmResult<()> {
         self.push(value.into())
     }
 
-    pub fn push_raw_int(&mut self, value: Rc<BigInt>, quiet: bool) -> Result<()> {
+    pub fn push_raw_int(&mut self, value: Rc<BigInt>, quiet: bool) -> VmResult<()> {
         if bitsize(&value, true) <= 257 {
             self.push_raw(value)
         } else if quiet {
             self.push_nan()
         } else {
-            anyhow::bail!(VmError::IntegerOverflow)
+            vm_bail!(IntegerOverflow)
         }
     }
 
-    pub fn move_from_stack(&mut self, other: &mut Self, n: usize) -> Result<()> {
+    pub fn move_from_stack(&mut self, other: &mut Self, n: usize) -> VmResult<()> {
         let Some(new_other_len) = other.depth().checked_sub(n) else {
-            anyhow::bail!(VmError::StackUnderflow(n));
+            vm_bail!(StackUnderflow(n));
         };
         self.items.extend(other.items.drain(new_other_len..));
         Ok(())
     }
 
-    pub fn split_top(&mut self, n: usize) -> Result<Rc<Self>> {
+    pub fn split_top(&mut self, n: usize) -> VmResult<Rc<Self>> {
         let Some(new_depth) = self.depth().checked_sub(n) else {
-            anyhow::bail!(VmError::StackUnderflow(n));
+            vm_bail!(StackUnderflow(n));
         };
         Ok(Rc::new(Self {
             items: self.items.drain(new_depth..).collect(),
         }))
     }
 
-    pub fn split_top_ext(&mut self, n: usize, drop: usize) -> Result<Rc<Self>> {
+    pub fn split_top_ext(&mut self, n: usize, drop: usize) -> VmResult<Rc<Self>> {
         let Some(new_depth) = self.depth().checked_sub(n + drop) else {
-            anyhow::bail!(VmError::StackUnderflow(n + drop));
+            vm_bail!(StackUnderflow(n + drop));
         };
         let res = Rc::new(Self {
             items: self.items.drain(new_depth + drop..).collect(),
@@ -134,23 +131,23 @@ impl Stack {
         Ok(res)
     }
 
-    pub fn pop(&mut self) -> Result<Rc<dyn StackValue>> {
-        self.items
-            .pop()
-            .ok_or(VmError::StackUnderflow(0))
-            .map_err(From::from)
+    pub fn pop(&mut self) -> VmResult<Rc<dyn StackValue>> {
+        let Some(item) = self.items.pop() else {
+            vm_bail!(StackUnderflow(0));
+        };
+        Ok(item)
     }
 
-    pub fn pop_bool(&mut self) -> Result<bool> {
-        Ok(!self.pop_int()?.is_zero())
+    pub fn pop_bool(&mut self) -> VmResult<bool> {
+        Ok(!ok!(self.pop_int()).is_zero())
     }
 
-    pub fn pop_int(&mut self) -> Result<Rc<BigInt>> {
-        self.pop()?.into_int()
+    pub fn pop_int(&mut self) -> VmResult<Rc<BigInt>> {
+        ok!(self.pop()).into_int()
     }
 
-    pub fn pop_int_or_nan(&mut self) -> Result<Option<Rc<BigInt>>> {
-        let value = self.pop()?;
+    pub fn pop_int_or_nan(&mut self) -> VmResult<Option<Rc<BigInt>>> {
+        let value = ok!(self.pop());
         if value.ty() == StackValueType::Int && value.as_int().is_none() {
             Ok(None)
         } else {
@@ -158,43 +155,43 @@ impl Stack {
         }
     }
 
-    pub fn pop_smallint_range(&mut self, min: u32, max: u32) -> Result<u32> {
+    pub fn pop_smallint_range(&mut self, min: u32, max: u32) -> VmResult<u32> {
         let item = self.pop_int()?;
         if let Some(item) = item.to_u32() {
             if item >= min && item <= max {
                 return Ok(item);
             }
         }
-        anyhow::bail!(VmError::IntegerOutOfRange {
+        vm_bail!(IntegerOutOfRange {
             min: min as isize,
             max: max as isize,
             actual: item.to_string(),
         })
     }
 
-    pub fn pop_smallint_signed_range(&mut self, min: i32, max: i32) -> Result<i32> {
+    pub fn pop_smallint_signed_range(&mut self, min: i32, max: i32) -> VmResult<i32> {
         let item = self.pop_int()?;
         if let Some(item) = item.to_i32() {
             if item >= min && item <= max {
                 return Ok(item);
             }
         }
-        anyhow::bail!(VmError::IntegerOutOfRange {
+        vm_bail!(IntegerOutOfRange {
             min: min as isize,
             max: max as isize,
             actual: item.to_string(),
         })
     }
 
-    pub fn pop_tuple(&mut self) -> Result<Rc<Tuple>> {
+    pub fn pop_tuple(&mut self) -> VmResult<Rc<Tuple>> {
         self.pop()?.into_tuple()
     }
 
-    pub fn pop_tuple_range(&mut self, min_len: u32, max_len: u32) -> Result<Rc<Tuple>> {
+    pub fn pop_tuple_range(&mut self, min_len: u32, max_len: u32) -> VmResult<Rc<Tuple>> {
         let tuple = self.pop()?.into_tuple()?;
-        anyhow::ensure!(
+        vm_ensure!(
             (min_len as usize..=max_len as usize).contains(&tuple.len()),
-            VmError::InvalidType {
+            InvalidType {
                 expected: StackValueType::Tuple,
                 actual: StackValueType::Tuple,
             }
@@ -202,7 +199,11 @@ impl Stack {
         Ok(tuple)
     }
 
-    pub fn pop_opt_tuple_range(&mut self, min_len: u32, max_len: u32) -> Result<Option<Rc<Tuple>>> {
+    pub fn pop_opt_tuple_range(
+        &mut self,
+        min_len: u32,
+        max_len: u32,
+    ) -> VmResult<Option<Rc<Tuple>>> {
         let tuple = {
             let value = self.pop()?;
             if value.is_null() {
@@ -211,9 +212,9 @@ impl Stack {
             value.into_tuple()?
         };
 
-        anyhow::ensure!(
+        vm_ensure!(
             (min_len as usize..=max_len as usize).contains(&tuple.len()),
-            VmError::InvalidType {
+            InvalidType {
                 expected: StackValueType::Tuple,
                 actual: StackValueType::Tuple,
             }
@@ -221,51 +222,51 @@ impl Stack {
         Ok(Some(tuple))
     }
 
-    pub fn pop_cont(&mut self) -> Result<Rc<RcCont>> {
+    pub fn pop_cont(&mut self) -> VmResult<Rc<RcCont>> {
         self.pop()?.into_cont()
     }
 
-    pub fn pop_cont_owned(&mut self) -> Result<RcCont> {
+    pub fn pop_cont_owned(&mut self) -> VmResult<RcCont> {
         Ok(match Rc::try_unwrap(self.pop()?.into_cont()?) {
             Ok(cont) => cont,
             Err(e) => e.as_ref().clone(),
         })
     }
 
-    pub fn pop_many(&mut self, n: usize) -> Result<()> {
+    pub fn pop_many(&mut self, n: usize) -> VmResult<()> {
         let Some(new_len) = self.depth().checked_sub(n) else {
-            anyhow::bail!(VmError::StackUnderflow(n));
+            vm_bail!(StackUnderflow(n));
         };
         self.items.truncate(new_len);
         Ok(())
     }
 
-    pub fn drop_bottom(&mut self, n: usize) -> Result<()> {
-        anyhow::ensure!(n <= self.depth(), VmError::StackUnderflow(n));
+    pub fn drop_bottom(&mut self, n: usize) -> VmResult<()> {
+        vm_ensure!(n <= self.depth(), StackUnderflow(n));
         self.items.drain(..n);
         Ok(())
     }
 
-    pub fn swap(&mut self, lhs: usize, rhs: usize) -> Result<()> {
+    pub fn swap(&mut self, lhs: usize, rhs: usize) -> VmResult<()> {
         let depth = self.depth();
-        anyhow::ensure!(lhs < depth, VmError::StackUnderflow(lhs));
-        anyhow::ensure!(rhs < depth, VmError::StackUnderflow(rhs));
+        vm_ensure!(lhs < depth, StackUnderflow(lhs));
+        vm_ensure!(rhs < depth, StackUnderflow(rhs));
         self.items.swap(depth - lhs - 1, depth - rhs - 1);
         //eprintln!("AFTER SWAP: {}", self.display_dump());
         Ok(())
     }
 
-    pub fn reverse_range(&mut self, offset: usize, n: usize) -> Result<()> {
+    pub fn reverse_range(&mut self, offset: usize, n: usize) -> VmResult<()> {
         let depth = self.depth();
-        anyhow::ensure!(offset < depth, VmError::StackUnderflow(offset));
-        anyhow::ensure!(offset + n <= depth, VmError::StackUnderflow(offset + n));
+        vm_ensure!(offset < depth, StackUnderflow(offset));
+        vm_ensure!(offset + n <= depth, StackUnderflow(offset + n));
         self.items[depth - offset - n..depth - offset].reverse();
         Ok(())
     }
 
-    pub fn fetch(&self, idx: usize) -> Result<Rc<dyn StackValue>> {
+    pub fn fetch(&self, idx: usize) -> VmResult<Rc<dyn StackValue>> {
         let depth = self.depth();
-        anyhow::ensure!(idx < depth, VmError::StackUnderflow(idx));
+        vm_ensure!(idx < depth, StackUnderflow(idx));
         Ok(self.items[depth - idx - 1].clone())
     }
 }
@@ -358,7 +359,7 @@ pub trait StackValue: std::fmt::Debug {
         None
     }
 
-    fn into_int(self: Rc<Self>) -> Result<Rc<BigInt>> {
+    fn into_int(self: Rc<Self>) -> VmResult<Rc<BigInt>> {
         Err(invalid_type(self.ty(), StackValueType::Int))
     }
 
@@ -366,7 +367,7 @@ pub trait StackValue: std::fmt::Debug {
         None
     }
 
-    fn into_cell(self: Rc<Self>) -> Result<Rc<Cell>> {
+    fn into_cell(self: Rc<Self>) -> VmResult<Rc<Cell>> {
         Err(invalid_type(self.ty(), StackValueType::Cell))
     }
 
@@ -374,7 +375,7 @@ pub trait StackValue: std::fmt::Debug {
         None
     }
 
-    fn into_slice(self: Rc<Self>) -> Result<Rc<OwnedCellSlice>> {
+    fn into_slice(self: Rc<Self>) -> VmResult<Rc<OwnedCellSlice>> {
         Err(invalid_type(self.ty(), StackValueType::Slice))
     }
 
@@ -382,7 +383,7 @@ pub trait StackValue: std::fmt::Debug {
         None
     }
 
-    fn into_builder(self: Rc<Self>) -> Result<Rc<CellBuilder>> {
+    fn into_builder(self: Rc<Self>) -> VmResult<Rc<CellBuilder>> {
         Err(invalid_type(self.ty(), StackValueType::Builder))
     }
 
@@ -390,7 +391,7 @@ pub trait StackValue: std::fmt::Debug {
         None
     }
 
-    fn into_cont(self: Rc<Self>) -> Result<Rc<RcCont>> {
+    fn into_cont(self: Rc<Self>) -> VmResult<Rc<RcCont>> {
         Err(invalid_type(self.ty(), StackValueType::Cont))
     }
 
@@ -398,7 +399,7 @@ pub trait StackValue: std::fmt::Debug {
         None
     }
 
-    fn into_tuple(self: Rc<Self>) -> Result<Rc<Tuple>> {
+    fn into_tuple(self: Rc<Self>) -> VmResult<Rc<Tuple>> {
         Err(invalid_type(self.ty(), StackValueType::Tuple))
     }
 }
@@ -494,8 +495,8 @@ impl dyn StackValue + '_ {
     }
 }
 
-fn invalid_type(actual: StackValueType, expected: StackValueType) -> anyhow::Error {
-    anyhow::Error::from(VmError::InvalidType { expected, actual })
+fn invalid_type(actual: StackValueType, expected: StackValueType) -> Box<VmError> {
+    Box::new(VmError::InvalidType { expected, actual })
 }
 
 pub type RcStackValue = Rc<dyn StackValue>;
@@ -640,7 +641,7 @@ impl StackValue for BigInt {
         Some(self)
     }
 
-    fn into_int(self: Rc<Self>) -> Result<Rc<BigInt>> {
+    fn into_int(self: Rc<Self>) -> VmResult<Rc<BigInt>> {
         Ok(self)
     }
 }
@@ -667,7 +668,7 @@ impl StackValue for Cell {
         Some(self)
     }
 
-    fn into_cell(self: Rc<Self>) -> Result<Rc<Cell>> {
+    fn into_cell(self: Rc<Self>) -> VmResult<Rc<Cell>> {
         Ok(self)
     }
 }
@@ -704,7 +705,7 @@ impl StackValue for OwnedCellSlice {
         Some(self)
     }
 
-    fn into_slice(self: Rc<Self>) -> Result<Rc<OwnedCellSlice>> {
+    fn into_slice(self: Rc<Self>) -> VmResult<Rc<OwnedCellSlice>> {
         Ok(self)
     }
 }
@@ -731,7 +732,7 @@ impl StackValue for CellBuilder {
         Some(self)
     }
 
-    fn into_builder(self: Rc<Self>) -> Result<Rc<CellBuilder>> {
+    fn into_builder(self: Rc<Self>) -> VmResult<Rc<CellBuilder>> {
         Ok(self)
     }
 }
@@ -758,7 +759,7 @@ impl StackValue for RcCont {
         Some(self)
     }
 
-    fn into_cont(self: Rc<Self>) -> Result<Rc<RcCont>> {
+    fn into_cont(self: Rc<Self>) -> VmResult<Rc<RcCont>> {
         Ok(self)
     }
 }
@@ -824,7 +825,7 @@ impl StackValue for Tuple {
         Some(self)
     }
 
-    fn into_tuple(self: Rc<Self>) -> Result<Rc<Tuple>> {
+    fn into_tuple(self: Rc<Self>) -> VmResult<Rc<Tuple>> {
         Ok(self)
     }
 }

@@ -1,13 +1,12 @@
 use std::rc::Rc;
 
-use anyhow::Result;
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
 
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use crate::error::{VmError, VmException};
+use crate::error::VmResult;
 use crate::stack::{
     load_slice_as_stack_value, load_stack, load_stack_value, store_slice_as_stack_value, Stack,
     StackValue, Tuple,
@@ -150,13 +149,13 @@ impl ControlRegs {
 
     pub fn define_c0(&mut self, cont: &Option<RcCont>) {
         if self.c[0].is_none() {
-            self.c[0] = cont.clone()
+            self.c[0].clone_from(cont)
         }
     }
 
     pub fn define_c1(&mut self, cont: &Option<RcCont>) {
         if self.c[1].is_none() {
-            self.c[1] = cont.clone()
+            self.c[1].clone_from(cont)
         }
     }
 
@@ -247,7 +246,7 @@ fn load_control_regs(
 }
 
 pub trait Cont: Store + dyn_clone::DynClone + std::fmt::Debug {
-    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32>;
+    fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32>;
 
     fn get_control_data(&self) -> Option<&ControlData> {
         None
@@ -331,7 +330,7 @@ impl Cont for QuitCont {
         feature = "tracing",
         instrument(level = "trace", name = "quit_cont", skip_all)
     )]
-    fn jump(self: Rc<Self>, _: &mut VmState) -> Result<i32> {
+    fn jump(self: Rc<Self>, _: &mut VmState) -> VmResult<i32> {
         Ok(!self.exit_code)
     }
 }
@@ -370,10 +369,10 @@ impl Cont for ExcQuitCont {
         feature = "tracing",
         instrument(level = "trace", name = "exc_quit_cont", skip_all)
     )]
-    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+    fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
         let n = Rc::make_mut(&mut state.stack)
             .pop_smallint_range(0, 0xffff)
-            .unwrap_or_else(|e| VmException::from(e) as u32);
+            .unwrap_or_else(|e| e.as_exception() as u32);
         vm_log!(n, "terminating vm in the default exception handler");
         Ok(!(n as i32))
     }
@@ -419,7 +418,7 @@ impl Cont for PushIntCont {
             skip_all,
         )
     )]
-    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+    fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
         ok!(Rc::make_mut(&mut state.stack).push_int(self.value));
         state.jump(match Rc::try_unwrap(self) {
             Ok(this) => this.next,
@@ -478,7 +477,7 @@ impl Cont for RepeatCont {
             skip_all,
         )
     )]
-    fn jump(mut self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+    fn jump(mut self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
         if self.count == 0 {
             return state.jump(self.after.clone());
         }
@@ -550,7 +549,7 @@ impl Cont for AgainCont {
         feature = "tracing",
         instrument(level = "trace", name = "again_cont", skip_all)
     )]
-    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+    fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
         if !self.body.has_c0() {
             state.set_c0(self.clone())
         }
@@ -599,7 +598,7 @@ impl Cont for UntilCont {
         feature = "tracing",
         instrument(level = "trace", name = "until_cont", skip_all)
     )]
-    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+    fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
         vm_log!("until loop condition end");
         let terminated = ok!(Rc::make_mut(&mut state.stack).pop_bool());
         if terminated {
@@ -663,7 +662,7 @@ impl Cont for WhileCont {
             skip_all,
         )
     )]
-    fn jump(mut self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+    fn jump(mut self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
         let next = if self.check_cond {
             vm_log!("while loop condition end");
             if !ok!(Rc::make_mut(&mut state.stack).pop_bool()) {
@@ -742,7 +741,7 @@ impl Cont for ArgContExt {
         feature = "tracing",
         instrument(level = "trace", name = "arg_cont", skip_all)
     )]
-    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+    fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
         state.adjust_cr(&self.data.save);
         if let Some(cp) = self.data.cp {
             ok!(state.force_cp(cp));
@@ -816,10 +815,10 @@ impl Cont for OrdCont {
         feature = "tracing",
         instrument(level = "trace", name = "ord_cont", skip_all)
     )]
-    fn jump(self: Rc<Self>, state: &mut VmState) -> Result<i32> {
+    fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
         state.adjust_cr(&self.data.save);
         let Some(cp) = self.data.cp else {
-            anyhow::bail!(VmError::InvalidOpcode);
+            vm_bail!(InvalidOpcode);
         };
         ok!(state.set_code(self.code.clone(), cp));
         Ok(0)

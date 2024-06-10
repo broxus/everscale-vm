@@ -2,6 +2,8 @@ use everscale_types::error::Error;
 
 use crate::stack::StackValueType;
 
+pub type VmResult<T> = Result<T, Box<VmError>>;
+
 #[derive(Debug, thiserror::Error)]
 pub enum VmError {
     #[error("stack underflow at depth {0}")]
@@ -25,6 +27,37 @@ pub enum VmError {
     },
     #[error("out of gas")]
     OutOfGas,
+    #[error(transparent)]
+    CellError(#[from] Error),
+}
+
+impl VmError {
+    pub fn as_exception(&self) -> VmException {
+        match self {
+            Self::StackUnderflow(_) => VmException::StackUnderflow,
+            Self::TooManyArguments(_) => VmException::StackOverflow,
+            Self::IntegerOutOfRange { .. } => VmException::RangeCheck,
+            Self::IntegerOverflow => VmException::IntOverflow,
+            Self::InvalidOpcode => VmException::InvalidOpcode,
+            Self::InvalidType { .. } => VmException::TypeCheck,
+            Self::OutOfGas => VmException::OutOfGas,
+            Self::CellError(e) => match e {
+                Error::CellUnderflow => VmException::CellUnderflow,
+                Error::CellOverflow => VmException::CellOverflow,
+                Error::PrunedBranchAccess => VmException::VirtError,
+                Error::Cancelled => VmException::OutOfGas, // ?
+                Error::IntOverflow => VmException::IntOverflow,
+                _ => VmException::Fatal, // ?
+            },
+        }
+    }
+}
+
+impl From<Error> for Box<VmError> {
+    #[inline]
+    fn from(e: Error) -> Self {
+        Box::new(VmError::CellError(e))
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
@@ -72,39 +105,5 @@ impl std::fmt::Display for VmException {
             Self::OutOfGas => "out of gas",
             Self::VirtError => "virtualization error",
         })
-    }
-}
-
-impl From<anyhow::Error> for VmException {
-    #[inline]
-    fn from(value: anyhow::Error) -> Self {
-        Self::from(&value)
-    }
-}
-
-impl From<&anyhow::Error> for VmException {
-    fn from(value: &anyhow::Error) -> Self {
-        if let Some(e) = value.downcast_ref::<Error>() {
-            match e {
-                Error::CellUnderflow => Self::CellUnderflow,
-                Error::CellOverflow => Self::CellOverflow,
-                Error::PrunedBranchAccess => Self::VirtError,
-                Error::Cancelled => Self::OutOfGas, // ?
-                Error::IntOverflow => Self::IntOverflow,
-                _ => Self::Fatal, // ?
-            }
-        } else if let Some(e) = value.downcast_ref::<VmError>() {
-            match e {
-                VmError::StackUnderflow(_) => Self::StackUnderflow,
-                VmError::TooManyArguments(_) => Self::StackOverflow,
-                VmError::IntegerOutOfRange { .. } => Self::RangeCheck,
-                VmError::IntegerOverflow => Self::IntOverflow,
-                VmError::InvalidOpcode => Self::InvalidOpcode,
-                VmError::InvalidType { .. } => Self::TypeCheck,
-                VmError::OutOfGas => Self::OutOfGas,
-            }
-        } else {
-            Self::Unknown
-        }
     }
 }

@@ -9,7 +9,7 @@ use num_integer::Integer;
 use num_traits::Zero;
 
 use crate::dispatch::Opcodes;
-use crate::error::VmError;
+use crate::error::VmResult;
 use crate::VmState;
 
 pub struct Arithops;
@@ -27,17 +27,17 @@ impl Arithops {
     #[instr(code = "7x", fmt = "PUSHINT {x}", args(x = ((args as i32 + 5) & 0xf) - 5))]
     #[instr(code = "80xx", fmt = "PUSHINT {x}", args(x = args as i8 as i32))]
     #[instr(code = "81xxxx", fmt = "PUSHINT {x}", args(x = args as i16 as i32))]
-    fn exec_push_tinyint4(st: &mut VmState, x: i32) -> Result<i32> {
+    fn exec_push_tinyint4(st: &mut VmState, x: i32) -> VmResult<i32> {
         ok!(Rc::make_mut(&mut st.stack).push_int(x));
         Ok(0)
     }
 
-    fn exec_push_int(st: &mut VmState, args: u32, bits: u16) -> Result<i32> {
+    fn exec_push_int(st: &mut VmState, args: u32, bits: u16) -> VmResult<i32> {
         let l = (args as u16 & 0b11111) + 2;
         let value_len = 3 + l * 8;
-        anyhow::ensure!(
+        vm_ensure!(
             st.code.range().has_remaining(bits + value_len, 0),
-            VmError::InvalidOpcode
+            InvalidOpcode
         );
         st.code.range_mut().try_advance(bits, 0);
 
@@ -60,20 +60,20 @@ impl Arithops {
     }
 
     #[instr(code = "83xx", range_to = "83ff", fmt = "PUSHPOW2 {x}", args(x = (args & 0xff) + 1))]
-    pub fn exec_push_pow2(st: &mut VmState, x: u32) -> Result<i32> {
+    pub fn exec_push_pow2(st: &mut VmState, x: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         ok!(stack.push_int(BigInt::from(1) << x));
         Ok(0)
     }
 
     #[instr(code = "83ff", fmt = "PUSHNAN")]
-    fn exec_push_nan(st: &mut VmState) -> Result<i32> {
+    fn exec_push_nan(st: &mut VmState) -> VmResult<i32> {
         ok!(Rc::make_mut(&mut st.stack).push_nan());
         Ok(0)
     }
 
     #[instr(code = "84xx", fmt = "PUSHPOW2DEC {x}", args(x = (args & 0xff) + 1))]
-    fn exec_push_pow2dec(st: &mut VmState, x: u32) -> Result<i32> {
+    fn exec_push_pow2dec(st: &mut VmState, x: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut value = BigInt::from(1) << x;
         value -= 1;
@@ -82,7 +82,7 @@ impl Arithops {
     }
 
     #[instr(code = "85xx", fmt = "PUSHNEGPOW2 {x}", args(x = (args & 0xff) + 1))]
-    fn exec_push_negpow2(st: &mut VmState, x: u32) -> Result<i32> {
+    fn exec_push_negpow2(st: &mut VmState, x: u32) -> VmResult<i32> {
         ok!(Rc::make_mut(&mut st.stack).push_int(-(BigInt::from(1) << x)));
         Ok(0)
     }
@@ -90,7 +90,7 @@ impl Arithops {
     // === Simple math instructions ===
     #[instr(code = "a0", fmt = "ADD", args(quiet = false))]
     #[instr(code = "b7a0", fmt = "QADD", args(quiet = true))]
-    fn exec_add(st: &mut VmState, quiet: bool) -> Result<i32> {
+    fn exec_add(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
         let x = ok!(stack.pop_int_or_nan());
@@ -100,14 +100,14 @@ impl Arithops {
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
-            _ => anyhow::bail!(VmError::IntegerOverflow),
+            _ => vm_bail!(IntegerOverflow),
         }
         Ok(0)
     }
 
     #[instr(code = "a1", fmt = "SUB", args(quiet = false))]
     #[instr(code = "b7a1", fmt = "QSUB", args(quiet = true))]
-    fn exec_sub(st: &mut VmState, quiet: bool) -> Result<i32> {
+    fn exec_sub(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
         let x = ok!(stack.pop_int_or_nan());
@@ -117,14 +117,14 @@ impl Arithops {
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
-            _ => anyhow::bail!(VmError::IntegerOverflow),
+            _ => vm_bail!(IntegerOverflow),
         }
         Ok(0)
     }
 
     #[instr(code = "a2", fmt = "SUBR", args(quiet = false))]
     #[instr(code = "b7a2", fmt = "QSUBR", args(quiet = true))]
-    fn exec_subr(st: &mut VmState, quiet: bool) -> Result<i32> {
+    fn exec_subr(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
         let x = ok!(stack.pop_int_or_nan());
@@ -134,14 +134,14 @@ impl Arithops {
                 ok!(stack.push_raw_int(y, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
-            _ => anyhow::bail!(VmError::IntegerOverflow),
+            _ => vm_bail!(IntegerOverflow),
         }
         Ok(0)
     }
 
     #[instr(code = "a3", fmt = "NEGATE", args(quiet = false))]
     #[instr(code = "b7a3", fmt = "QNEGATE", args(quiet = true))]
-    fn exec_negate(st: &mut VmState, quiet: bool) -> Result<i32> {
+    fn exec_negate(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
@@ -152,14 +152,14 @@ impl Arithops {
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
-            _ => anyhow::bail!(VmError::IntegerOverflow),
+            _ => vm_bail!(IntegerOverflow),
         }
         Ok(0)
     }
 
     #[instr(code = "a4", fmt = "INC", args(quiet = false))]
     #[instr(code = "b7a4", fmt = "QINC", args(quiet = true))]
-    fn exec_inc(st: &mut VmState, quiet: bool) -> Result<i32> {
+    fn exec_inc(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
@@ -167,14 +167,14 @@ impl Arithops {
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
-            _ => anyhow::bail!(VmError::IntegerOverflow),
+            _ => vm_bail!(IntegerOverflow),
         }
         Ok(0)
     }
 
     #[instr(code = "a5", fmt = "DEC", args(quiet = false))]
     #[instr(code = "b7a5", fmt = "QDEC", args(quiet = true))]
-    fn exec_dec(st: &mut VmState, quiet: bool) -> Result<i32> {
+    fn exec_dec(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
@@ -182,14 +182,14 @@ impl Arithops {
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
-            _ => anyhow::bail!(VmError::IntegerOverflow),
+            _ => vm_bail!(IntegerOverflow),
         }
         Ok(0)
     }
 
     #[instr(code = "a6yy", fmt = "ADDINT {y}", args(y = args as i8, quiet = false))]
     #[instr(code = "b7a6yy", fmt = "QADDINT {y}", args(y = args as i8, quiet = true))]
-    fn exec_addint(st: &mut VmState, y: i8, quiet: bool) -> Result<i32> {
+    fn exec_addint(st: &mut VmState, y: i8, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
@@ -197,14 +197,14 @@ impl Arithops {
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
-            _ => anyhow::bail!(VmError::IntegerOverflow),
+            _ => vm_bail!(IntegerOverflow),
         }
         Ok(0)
     }
 
     #[instr(code = "a7yy", fmt = "MULINT {y}", args(y = args as i8, quiet = false))]
     #[instr(code = "b7a7yy", fmt = "QMULINT {y}", args(y = args as i8, quiet = true))]
-    fn exec_mulint(st: &mut VmState, y: i8, quiet: bool) -> Result<i32> {
+    fn exec_mulint(st: &mut VmState, y: i8, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
@@ -212,14 +212,14 @@ impl Arithops {
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
-            _ => anyhow::bail!(VmError::IntegerOverflow),
+            _ => vm_bail!(IntegerOverflow),
         }
         Ok(0)
     }
 
     #[instr(code = "a8", fmt = "MUL", args(quiet = false))]
     #[instr(code = "b7a8", fmt = "QMUL", args(quiet = true))]
-    fn exec_mul(st: &mut VmState, quiet: bool) -> Result<i32> {
+    fn exec_mul(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
         let x = ok!(stack.pop_int_or_nan());
@@ -229,7 +229,7 @@ impl Arithops {
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
-            _ => anyhow::bail!(VmError::IntegerOverflow),
+            _ => vm_bail!(IntegerOverflow),
         }
         Ok(0)
     }
@@ -237,7 +237,7 @@ impl Arithops {
     // === Division instructions ===
     #[instr(code = "a90m", fmt = ("{}", DumpDivmod(m)), args(quiet = false))]
     #[instr(code = "b7a90m", fmt = ("Q{}", DumpDivmod(m)), args(quiet = true))]
-    fn exec_divmod(st: &mut VmState, m: u32, quiet: bool) -> Result<i32> {
+    fn exec_divmod(st: &mut VmState, m: u32, quiet: bool) -> VmResult<i32> {
         enum Operation {
             Div,
             Mod,
@@ -249,7 +249,7 @@ impl Arithops {
             1 => Operation::Div,
             2 => Operation::Mod,
             3 => Operation::Divmod,
-            _ => anyhow::bail!(VmError::InvalidOpcode),
+            _ => vm_bail!(InvalidOpcode),
         };
 
         let stack = Rc::make_mut(&mut st.stack);
@@ -351,7 +351,7 @@ impl Arithops {
                     ok!(stack.push_nan());
                 }
             }
-            _ => anyhow::bail!(VmError::IntegerOverflow),
+            _ => vm_bail!(IntegerOverflow),
         }
         Ok(0)
     }
@@ -359,7 +359,7 @@ impl Arithops {
     #[instr(code = "a92m", fmt = ("{}", DumpShrmod(m, false)), args(imm = false, q = false))]
     #[instr(code = "a93mmm", fmt = ("{}", DumpShrmod(m, true)), args(imm = true, q = false))]
     #[instr(code = "b7a92m", fmt = ("Q{}", DumpShrmod(m, false)), args(imm = false, q = false))]
-    fn exec_shrmod(st: &mut VmState, mut m: u32, imm: bool, q: bool) -> Result<i32> {
+    fn exec_shrmod(st: &mut VmState, mut m: u32, imm: bool, q: bool) -> VmResult<i32> {
         enum Operation {
             RShift,
             ModPow2,
@@ -379,7 +379,7 @@ impl Arithops {
             1 => Operation::RShift,
             2 => Operation::ModPow2,
             3 => Operation::RShiftMod,
-            _ => anyhow::bail!(VmError::InvalidOpcode),
+            _ => vm_bail!(InvalidOpcode),
         };
 
         let stack = Rc::make_mut(&mut st.stack);
@@ -411,7 +411,7 @@ impl Arithops {
                     ok!(stack.push_nan());
                 }
             }
-            _ => anyhow::bail!(VmError::IntegerOverflow),
+            _ => vm_bail!(IntegerOverflow),
         }
 
         Ok(0)
@@ -476,12 +476,12 @@ enum RoundMode {
 }
 
 impl RoundMode {
-    fn from_args(args: u32) -> Result<Self> {
+    fn from_args(args: u32) -> VmResult<Self> {
         Ok(match args {
             0 => Self::Floor,
             1 => Self::Nearest,
             2 => Self::Ceiling,
-            _ => anyhow::bail!(VmError::InvalidOpcode),
+            _ => vm_bail!(InvalidOpcode),
         })
     }
 }

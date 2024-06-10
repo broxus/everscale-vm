@@ -413,7 +413,7 @@ fn process_instr_definition(
             }
 
             quote! {
-                fn #wrapper_func_name(st: &mut ::everscale_vm::state::VmState) -> ::anyhow::Result<i32> {
+                fn #wrapper_func_name(st: &mut ::everscale_vm::state::VmState) -> ::everscale_vm::error::VmResult<i32> {
                     #(#arg_definitions)*
                     vm_log!("execute {}", format_args!(#fmt));
                     #function_name(st, #(#arg_idents),*)
@@ -422,13 +422,11 @@ fn process_instr_definition(
         }
         OpcodeTy::Fixed { .. } | OpcodeTy::FixedRange { .. } => {
             let cond = instr.cond.map(|cond| {
-                quote! {
-                    ::anyhow::ensure!(#cond, crate::error::VmError::InvalidOpcode);
-                }
+                quote! { vm_ensure!(#cond, InvalidOpcode); }
             });
 
             quote! {
-                fn #wrapper_func_name(st: &mut ::everscale_vm::state::VmState, args: u32) -> ::anyhow::Result<i32> {
+                fn #wrapper_func_name(st: &mut ::everscale_vm::state::VmState, args: u32) -> ::everscale_vm::error::VmResult<i32> {
                     #(#arg_definitions)*
                     #cond
                     vm_log!("execute {}", format_args!(#fmt));

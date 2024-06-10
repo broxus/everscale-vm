@@ -14,26 +14,43 @@ macro_rules! ok {
     };
 }
 
+#[cfg(feature = "tracing")]
 macro_rules! vm_log {
+    ($($tt:tt)*) => { tracing::trace!($($tt)*) };
+}
+
+#[cfg(not(feature = "tracing"))]
+macro_rules! vm_log {
+    ($($tt:tt)*) => {{}};
+}
+
+macro_rules! vm_ensure {
+    ($cond:expr, $($tt:tt)+) => {
+        if $crate::__private::not($cond) {
+            return Err(Box::new($crate::error::VmError::$($tt)+));
+        }
+    };
+}
+
+macro_rules! vm_bail {
     ($($tt:tt)*) => {
-        #[cfg(feature = "tracing")]
-        tracing::trace!($($tt)*)
+        return Err(Box::new($crate::error::VmError::$($tt)*))
     };
 }
 
 #[macro_export]
 macro_rules! stack {
     ($($item_ty:tt $($value:expr)?),*$(,)?) => {
-        vec![$(crate::stack!(@v $item_ty $($value)?)),*]
+        vec![$($crate::stack!(@v $item_ty $($value)?)),*]
     };
     (@v null) => {
-        crate::stack::Stack::make_null()
+        $crate::stack::Stack::make_null()
     };
     (@v nan) => {
-        crate::stack::Stack::make_nan()
+        $crate::stack::Stack::make_nan()
     };
     (@v int $value:expr) => {
-        ::std::rc::Rc::new(num_bigint::BigInt::from($value)) as crate::stack::RcStackValue
+        ::std::rc::Rc::new(num_bigint::BigInt::from($value)) as $crate::stack::RcStackValue
     };
 }
 
@@ -74,6 +91,38 @@ pub mod instr;
 pub mod stack;
 pub mod state;
 pub mod util;
+
+#[doc(hidden)]
+mod __private {
+    use self::not::Bool;
+
+    #[doc(hidden)]
+    #[inline]
+    pub fn not(cond: impl Bool) -> bool {
+        cond.not()
+    }
+
+    mod not {
+        #[doc(hidden)]
+        pub trait Bool {
+            fn not(self) -> bool;
+        }
+
+        impl Bool for bool {
+            #[inline]
+            fn not(self) -> bool {
+                !self
+            }
+        }
+
+        impl Bool for &bool {
+            #[inline]
+            fn not(self) -> bool {
+                !*self
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

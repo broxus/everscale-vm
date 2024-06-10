@@ -3,13 +3,13 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use everscale_types::prelude::*;
 
-use crate::error::VmError;
+use crate::error::VmResult;
 use crate::state::VmState;
 
 pub trait Opcode: Send + Sync {
     fn range(&self) -> (u32, u32);
 
-    fn dispatch(&self, st: &mut VmState, opcode: u32, bits: u16) -> Result<i32>;
+    fn dispatch(&self, st: &mut VmState, opcode: u32, bits: u16) -> VmResult<i32>;
 }
 
 pub struct DispatchTable {
@@ -46,7 +46,7 @@ impl DispatchTable {
         self.opcodes[i].1.as_ref()
     }
 
-    pub fn dispatch(&self, st: &mut VmState) -> Result<i32> {
+    pub fn dispatch(&self, st: &mut VmState) -> VmResult<i32> {
         let (opcode, bits) = Self::get_opcode_from_slice(&st.code.apply()?);
         let op = self.lookup(opcode);
         op.dispatch(st, opcode, bits)
@@ -217,9 +217,9 @@ impl Opcode for DummyOpcode {
         (self.opcode_min, self.opcode_max)
     }
 
-    fn dispatch(&self, _: &mut VmState, _: u32, _: u16) -> Result<i32> {
+    fn dispatch(&self, _: &mut VmState, _: u32, _: u16) -> VmResult<i32> {
         // TODO: consume gas_per_instr
-        anyhow::bail!(VmError::InvalidOpcode);
+        vm_bail!(InvalidOpcode);
     }
 }
 
@@ -235,9 +235,9 @@ impl Opcode for SimpleOpcode {
         (self.opcode_min, self.opcode_max)
     }
 
-    fn dispatch(&self, st: &mut VmState, _: u32, bits: u16) -> Result<i32> {
+    fn dispatch(&self, st: &mut VmState, _: u32, bits: u16) -> VmResult<i32> {
         // TODO: consume gas_per_instr + opcode_bits * gas_per_bit
-        anyhow::ensure!(bits >= self.opcode_bits, VmError::InvalidOpcode);
+        vm_ensure!(bits >= self.opcode_bits, InvalidOpcode);
         st.code.range_mut().advance(self.opcode_bits, 0)?;
         (self.exec)(st)
     }
@@ -255,9 +255,9 @@ impl Opcode for FixedOpcode {
         (self.opcode_min, self.opcode_max)
     }
 
-    fn dispatch(&self, st: &mut VmState, opcode: u32, bits: u16) -> Result<i32> {
+    fn dispatch(&self, st: &mut VmState, opcode: u32, bits: u16) -> VmResult<i32> {
         // TODO: consume gas_per_instr + total_bits * gas_per_bit
-        anyhow::ensure!(bits >= self.total_bits, VmError::InvalidOpcode);
+        vm_ensure!(bits >= self.total_bits, InvalidOpcode);
         st.code.range_mut().advance(self.total_bits, 0)?;
         (self.exec)(st, opcode >> (MAX_OPCODE_BITS - self.total_bits))
     }
@@ -275,9 +275,9 @@ impl Opcode for ExtOpcode {
         (self.opcode_min, self.opcode_max)
     }
 
-    fn dispatch(&self, st: &mut VmState, opcode: u32, bits: u16) -> Result<i32> {
+    fn dispatch(&self, st: &mut VmState, opcode: u32, bits: u16) -> VmResult<i32> {
         // TODO: consume gas_per_instr + total_bits * gas_per_bit
-        anyhow::ensure!(bits >= self.total_bits, VmError::InvalidOpcode);
+        vm_ensure!(bits >= self.total_bits, InvalidOpcode);
         (self.exec)(
             st,
             opcode >> (MAX_OPCODE_BITS - self.total_bits),
@@ -286,11 +286,11 @@ impl Opcode for ExtOpcode {
     }
 }
 
-pub type FnExecInstrSimple = fn(&mut VmState) -> Result<i32>;
+pub type FnExecInstrSimple = fn(&mut VmState) -> VmResult<i32>;
 
-pub type FnExecInstrArg = fn(&mut VmState, u32) -> Result<i32>;
+pub type FnExecInstrArg = fn(&mut VmState, u32) -> VmResult<i32>;
 
-pub type FnExecInstrFull = fn(&mut VmState, u32, u16) -> Result<i32>;
+pub type FnExecInstrFull = fn(&mut VmState, u32, u16) -> VmResult<i32>;
 
 const MAX_OPCODE_BITS: u16 = 24;
 const MAX_OPCODE: u32 = 1 << MAX_OPCODE_BITS;

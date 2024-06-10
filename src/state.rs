@@ -16,7 +16,7 @@ use crate::cont::{
     RepeatCont, UntilCont, WhileCont,
 };
 use crate::dispatch::DispatchTable;
-use crate::error::{VmError, VmException};
+use crate::error::{VmException, VmResult};
 use crate::instr::{codepage, codepage0};
 use crate::stack::{RcStackValue, Stack, StackValue};
 use crate::util::OwnedCellSlice;
@@ -156,7 +156,7 @@ impl VmState {
             skip_all,
         )
     )]
-    pub fn step(&mut self) -> Result<i32> {
+    pub fn step(&mut self) -> VmResult<i32> {
         self.steps += 1;
         if !self.code.range().is_data_empty() {
             // TODO: dispatch
@@ -188,14 +188,15 @@ impl VmState {
             let res = match self.step() {
                 Ok(res) => res,
                 Err(e) => {
-                    vm_log!(e = ?VmException::from(&e), "handling exception: {e:?}");
+                    let exception = e.as_exception();
+                    vm_log!(e = ?exception, "handling exception: {e:?}");
 
                     self.steps += 1;
-                    match self.throw_exception(VmException::from(&e) as i32) {
+                    match self.throw_exception(exception as i32) {
                         Ok(res) => res,
                         Err(e) => {
-                            vm_log!(e = ?VmException::from(&e), "double exception: {e:?}");
-                            break VmException::from(&e).as_exit_code();
+                            vm_log!(e = ?exception, "double exception: {e:?}");
+                            break exception.as_exit_code();
                         }
                     }
                 }
@@ -235,11 +236,11 @@ impl VmState {
         false
     }
 
-    pub fn force_commit(&mut self) -> Result<()> {
+    pub fn force_commit(&mut self) -> Result<(), Error> {
         if self.try_commit() {
             Ok(())
         } else {
-            anyhow::bail!(Error::CellOverflow)
+            Err(Error::CellOverflow)
         }
     }
 
@@ -247,7 +248,7 @@ impl VmState {
         std::mem::replace(&mut self.stack, Self::EMPTY_STACK.with(Rc::clone))
     }
 
-    pub fn ref_to_cont(&mut self, code: Cell) -> Result<Rc<OrdCont>> {
+    pub fn ref_to_cont(&mut self, code: Cell) -> VmResult<Rc<OrdCont>> {
         let code = self.gas.context().load_cell(code, LoadMode::Full)?;
         Ok(Rc::new(OrdCont::simple(code.into(), self.cp.id())))
     }
@@ -302,7 +303,7 @@ impl VmState {
             }
         }
 
-        *c1 = c0.clone();
+        c1.clone_from(c0);
     }
 
     pub fn extract_cc(
@@ -310,7 +311,7 @@ impl VmState {
         mode: SaveCr,
         stack_copy: Option<u16>,
         nargs: Option<u16>,
-    ) -> Result<Rc<OrdCont>> {
+    ) -> VmResult<Rc<OrdCont>> {
         let new_stack = match stack_copy {
             Some(0) => None,
             Some(n) if (n as usize) != self.stack.depth() => {
@@ -345,31 +346,31 @@ impl VmState {
         Ok(Rc::new(res))
     }
 
-    pub fn throw_exception(&mut self, n: i32) -> Result<i32> {
+    pub fn throw_exception(&mut self, n: i32) -> VmResult<i32> {
         self.stack = Rc::new(Stack {
             items: vec![Rc::new(BigInt::zero()), Rc::new(BigInt::from(n))],
         });
         self.code = Default::default();
         // TODO: try consume exception_gas_price
         let Some(c2) = self.cr.c[2].clone() else {
-            anyhow::bail!(VmError::InvalidOpcode);
+            vm_bail!(InvalidOpcode);
         };
         self.jump(c2)
     }
 
-    pub fn throw_exception_with_arg(&mut self, n: i32, arg: RcStackValue) -> Result<i32> {
+    pub fn throw_exception_with_arg(&mut self, n: i32, arg: RcStackValue) -> VmResult<i32> {
         self.stack = Rc::new(Stack {
             items: vec![arg, Rc::new(BigInt::from(n))],
         });
         self.code = Default::default();
         // TODO: try consume exception_gas_price
         let Some(c2) = self.cr.c[2].clone() else {
-            anyhow::bail!(VmError::InvalidOpcode);
+            vm_bail!(InvalidOpcode);
         };
         self.jump(c2)
     }
 
-    pub fn call(&mut self, cont: RcCont) -> Result<i32> {
+    pub fn call(&mut self, cont: RcCont) -> VmResult<i32> {
         if let Some(control_data) = cont.get_control_data() {
             if control_data.save.c[0].is_some() {
                 // If cont has c0 then call reduces to a jump
@@ -396,7 +397,7 @@ impl VmState {
         mut cont: RcCont,
         pass_args: Option<u16>,
         ret_args: Option<u16>,
-    ) -> Result<i32> {
+    ) -> VmResult<i32> {
         let (new_stack, c0) = if let Some(control_data) = cont.get_control_data() {
             if control_data.save.c[0].is_some() {
                 // If cont has c0 then call reduces to a jump
@@ -404,19 +405,19 @@ impl VmState {
             }
 
             let current_depth = self.stack.depth();
-            anyhow::ensure!(
+            vm_ensure!(
                 pass_args.unwrap_or_default() as usize <= current_depth
                     && control_data.nargs.unwrap_or_default() as usize <= current_depth,
-                VmError::StackUnderflow(std::cmp::max(
+                StackUnderflow(std::cmp::max(
                     pass_args.unwrap_or_default(),
                     control_data.nargs.unwrap_or_default()
-                ) as usize)
+                ) as _)
             );
 
             if let Some(pass_args) = pass_args {
-                anyhow::ensure!(
+                vm_ensure!(
                     control_data.nargs.unwrap_or_default() <= pass_args,
-                    VmError::StackUnderflow(pass_args as usize)
+                    StackUnderflow(pass_args as _)
                 );
             }
 
@@ -488,7 +489,7 @@ impl VmState {
         cont.jump(self)
     }
 
-    pub fn jump(&mut self, cont: RcCont) -> Result<i32> {
+    pub fn jump(&mut self, cont: RcCont) -> VmResult<i32> {
         if let Some(cont_data) = cont.get_control_data() {
             if cont_data.stack.is_some() || cont_data.nargs.is_some() {
                 // Cont has a non-empty stack or expects a fixed number of arguments
@@ -504,7 +505,7 @@ impl VmState {
         cont.jump(self)
     }
 
-    pub fn jump_ext(&mut self, mut cont: RcCont, pass_args: Option<u16>) -> Result<i32> {
+    pub fn jump_ext(&mut self, mut cont: RcCont, pass_args: Option<u16>) -> VmResult<i32> {
         // Either all values or the top n values in the current stack are
         // moved to the stack of the continuation, and only then is the
         // remainder of the current stack discarded.
@@ -525,19 +526,19 @@ impl VmState {
             // - n' (or n) of args are passed to the continuation
 
             let current_depth = self.stack.depth();
-            anyhow::ensure!(
+            vm_ensure!(
                 pass_args.unwrap_or_default() as usize <= current_depth
                     && control_data.nargs.unwrap_or_default() as usize <= current_depth,
-                VmError::StackUnderflow(std::cmp::max(
+                StackUnderflow(std::cmp::max(
                     pass_args.unwrap_or_default(),
                     control_data.nargs.unwrap_or_default()
                 ) as usize)
             );
 
             if let Some(pass_args) = pass_args {
-                anyhow::ensure!(
+                vm_ensure!(
                     control_data.nargs.unwrap_or_default() <= pass_args,
-                    VmError::StackUnderflow(pass_args as usize)
+                    StackUnderflow(pass_args as usize)
                 );
             }
 
@@ -582,7 +583,7 @@ impl VmState {
         } else if let Some(pass_args) = pass_args {
             // Try to leave only `pass_args` number of arguments in the current stack
             let Some(depth_diff) = self.stack.depth().checked_sub(pass_args as _) else {
-                anyhow::bail!(VmError::StackUnderflow(pass_args as _));
+                vm_bail!(StackUnderflow(pass_args as _));
             };
 
             if depth_diff > 0 {
@@ -596,27 +597,27 @@ impl VmState {
         cont.jump(self)
     }
 
-    pub fn ret(&mut self) -> Result<i32> {
+    pub fn ret(&mut self) -> VmResult<i32> {
         let cont = ok!(self.take_c0());
         self.jump(cont)
     }
 
-    pub fn ret_ext(&mut self, ret_args: Option<u16>) -> Result<i32> {
+    pub fn ret_ext(&mut self, ret_args: Option<u16>) -> VmResult<i32> {
         let cont = ok!(self.take_c0());
         self.jump_ext(cont, ret_args)
     }
 
-    pub fn ret_alt(&mut self) -> Result<i32> {
+    pub fn ret_alt(&mut self) -> VmResult<i32> {
         let cont = ok!(self.take_c1());
         self.jump(cont)
     }
 
-    pub fn ret_alt_ext(&mut self, ret_args: Option<u16>) -> Result<i32> {
+    pub fn ret_alt_ext(&mut self, ret_args: Option<u16>) -> VmResult<i32> {
         let cont = ok!(self.take_c1());
         self.jump_ext(cont, ret_args)
     }
 
-    pub fn repeat(&mut self, body: RcCont, after: RcCont, n: u32) -> Result<i32> {
+    pub fn repeat(&mut self, body: RcCont, after: RcCont, n: u32) -> VmResult<i32> {
         self.jump(if n == 0 {
             drop(body);
             after
@@ -629,7 +630,7 @@ impl VmState {
         })
     }
 
-    pub fn until(&mut self, body: RcCont, after: RcCont) -> Result<i32> {
+    pub fn until(&mut self, body: RcCont, after: RcCont) -> VmResult<i32> {
         if !body.has_c0() {
             self.cr.c[0] = Some(Rc::new(UntilCont {
                 body: body.clone(),
@@ -639,7 +640,7 @@ impl VmState {
         self.jump(body)
     }
 
-    pub fn loop_while(&mut self, cond: RcCont, body: RcCont, after: RcCont) -> Result<i32> {
+    pub fn loop_while(&mut self, cond: RcCont, body: RcCont, after: RcCont) -> VmResult<i32> {
         if !cond.has_c0() {
             self.cr.c[0] = Some(Rc::new(WhileCont {
                 check_cond: true,
@@ -651,7 +652,7 @@ impl VmState {
         self.jump(cond)
     }
 
-    pub fn again(&mut self, body: RcCont) -> Result<i32> {
+    pub fn again(&mut self, body: RcCont) -> VmResult<i32> {
         self.jump(Rc::new(AgainCont { body }))
     }
 
@@ -667,29 +668,29 @@ impl VmState {
         self.cr.c[0] = Some(cont);
     }
 
-    pub fn set_code(&mut self, code: OwnedCellSlice, cp: u16) -> Result<()> {
+    pub fn set_code(&mut self, code: OwnedCellSlice, cp: u16) -> VmResult<()> {
         self.code = code;
         self.force_cp(cp)
     }
 
-    pub fn force_cp(&mut self, cp: u16) -> Result<()> {
+    pub fn force_cp(&mut self, cp: u16) -> VmResult<()> {
         let Some(cp) = codepage(cp) else {
-            anyhow::bail!(VmError::InvalidOpcode);
+            vm_bail!(InvalidOpcode);
         };
         self.cp = cp;
         Ok(())
     }
 
-    fn take_c0(&mut self) -> Result<RcCont> {
+    fn take_c0(&mut self) -> VmResult<RcCont> {
         let Some(cont) = std::mem::replace(&mut self.cr.c[0], Some(self.quit0.clone())) else {
-            anyhow::bail!(VmError::InvalidOpcode);
+            vm_bail!(InvalidOpcode);
         };
         Ok(cont)
     }
 
-    fn take_c1(&mut self) -> Result<RcCont> {
+    fn take_c1(&mut self) -> VmResult<RcCont> {
         let Some(cont) = std::mem::replace(&mut self.cr.c[1], Some(self.quit1.clone())) else {
-            anyhow::bail!(VmError::InvalidOpcode);
+            vm_bail!(InvalidOpcode);
         };
         Ok(cont)
     }
