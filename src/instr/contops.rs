@@ -4,7 +4,7 @@ use anyhow::Result;
 use everscale_types::prelude::Cell;
 use everscale_vm_proc::vm_module;
 
-use crate::cont::{OrdCont, RcCont};
+use crate::cont::{ArgContExt, Cont, ControlData, ControlRegs, OrdCont, RcCont};
 use crate::dispatch::Opcodes;
 use crate::error::VmResult;
 use crate::state::{SaveCr, VmState};
@@ -17,31 +17,31 @@ impl Contops {
 
     #[instr(code = "d8", fmt = "EXECUTE")]
     fn exec_execute(st: &mut VmState) -> VmResult<i32> {
-        let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont_owned());
+        let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         st.call(cont)
     }
 
     #[instr(code = "d9", fmt = "JMPX")]
     fn exec_jmpx(st: &mut VmState) -> VmResult<i32> {
-        let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont_owned());
+        let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         st.jump(cont)
     }
 
     #[instr(code = "dapr", fmt = "CALLXARGS {p},{r}")]
     fn exec_callx_args(st: &mut VmState, p: u32, r: u32) -> VmResult<i32> {
-        let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont_owned());
+        let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         st.call_ext(cont, Some(p as _), Some(r as _))
     }
 
     #[instr(code = "db0p", fmt = "CALLXARGS {p},-1")]
     fn exec_callx_args_p(st: &mut VmState, p: u32) -> VmResult<i32> {
-        let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont_owned());
+        let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         st.call_ext(cont, Some(p as _), None)
     }
 
     #[instr(code = "db1p", fmt = "JMPXARGS {p}")]
     fn exec_jmpx_args(st: &mut VmState, p: u32) -> VmResult<i32> {
-        let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont_owned());
+        let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         st.jump_ext(cont, Some(p as _))
     }
 
@@ -71,25 +71,25 @@ impl Contops {
 
     #[instr(code = "db34", fmt = "CALLCC")]
     fn exec_callcc(st: &mut VmState) -> VmResult<i32> {
-        let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont_owned());
+        let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         let cc = ok!(st.extract_cc(SaveCr::C0_C1, None, None));
-        ok!(Rc::make_mut(&mut st.stack).push(cc as RcCont));
+        ok!(Rc::make_mut(&mut st.stack).push_raw(cc.into_stack_value()));
         st.jump(cont)
     }
 
     #[instr(code = "db35", fmt = "JMPXDATA")]
     fn exec_jmpx_data(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let cont = ok!(stack.pop_cont_owned());
+        let cont = ok!(stack.pop_cont());
         ok!(stack.push(st.code.clone()));
         st.jump(cont)
     }
 
     #[instr(code = "db36pr", fmt = "CALLCCARGS {p},{r}", args(r = ((args as i32 + 1) & 0xf) - 1))]
     fn exec_callcc_args(st: &mut VmState, p: u32, r: i32) -> VmResult<i32> {
-        let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont_owned());
+        let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         let cc = ok!(st.extract_cc(SaveCr::C0_C1, Some(p as _), (r >= 0).then_some(r as _)));
-        ok!(Rc::make_mut(&mut st.stack).push(cc as RcCont));
+        ok!(Rc::make_mut(&mut st.stack).push_raw(cc.into_stack_value()));
         st.jump(cont)
     }
 
@@ -98,7 +98,7 @@ impl Contops {
         let stack = Rc::make_mut(&mut st.stack);
         let r = ok!(stack.pop_smallint_signed_range(-1, 254));
         let p = ok!(stack.pop_smallint_signed_range(-1, 254));
-        let cont = ok!(stack.pop_cont_owned());
+        let cont = ok!(stack.pop_cont());
         st.call_ext(cont, (p >= 0).then_some(p as _), (r >= 0).then_some(r as _))
     }
 
@@ -112,7 +112,7 @@ impl Contops {
     fn exec_jmpx_varargs(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let p = ok!(stack.pop_smallint_signed_range(-1, 254));
-        let cont = ok!(stack.pop_cont_owned());
+        let cont = ok!(stack.pop_cont());
         st.jump_ext(cont, (p >= 0).then_some(p as _))
     }
 
@@ -121,13 +121,13 @@ impl Contops {
         let stack = Rc::make_mut(&mut st.stack);
         let r = ok!(stack.pop_smallint_signed_range(-1, 254));
         let p = ok!(stack.pop_smallint_signed_range(-1, 254));
-        let cont = ok!(stack.pop_cont_owned());
+        let cont = ok!(stack.pop_cont());
         let cc = ok!(st.extract_cc(
             SaveCr::C0_C1,
             (p >= 0).then_some(p as _),
             (r >= 0).then_some(r as _)
         ));
-        ok!(Rc::make_mut(&mut st.stack).push(cc as RcCont));
+        ok!(Rc::make_mut(&mut st.stack).push_raw(cc.into_stack_value()));
         st.jump(cont)
     }
 
@@ -183,7 +183,7 @@ impl Contops {
     #[instr(code = "de", fmt = "IF")]
     fn exec_if(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let cont = ok!(stack.pop_cont_owned());
+        let cont = ok!(stack.pop_cont());
         if ok!(stack.pop_bool()) {
             st.call(cont)
         } else {
@@ -194,7 +194,7 @@ impl Contops {
     #[instr(code = "df", fmt = "IFNOT")]
     fn exec_ifnot(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let cont = ok!(stack.pop_cont_owned());
+        let cont = ok!(stack.pop_cont());
         if ok!(stack.pop_bool()) {
             Ok(0)
         } else {
@@ -205,7 +205,7 @@ impl Contops {
     #[instr(code = "e0", fmt = "IFJMP")]
     fn exec_if_jmp(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let cont = ok!(stack.pop_cont_owned());
+        let cont = ok!(stack.pop_cont());
         if ok!(stack.pop_bool()) {
             st.jump(cont)
         } else {
@@ -216,7 +216,7 @@ impl Contops {
     #[instr(code = "e1", fmt = "IFNOTJMP")]
     fn exec_ifnot_jmp(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let cont = ok!(stack.pop_cont_owned());
+        let cont = ok!(stack.pop_cont());
         if ok!(stack.pop_bool()) {
             Ok(0)
         } else {
@@ -228,8 +228,8 @@ impl Contops {
     fn exec_if_else(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let cont = {
-            let cont0 = ok!(stack.pop_cont_owned());
-            let cont1 = ok!(stack.pop_cont_owned());
+            let cont0 = ok!(stack.pop_cont());
+            let cont1 = ok!(stack.pop_cont());
             match ok!(stack.pop_bool()) {
                 false => cont0,
                 true => cont1,
@@ -389,7 +389,7 @@ impl Contops {
         let negate = n != 0;
         let (cont, bit) = {
             let stack = Rc::make_mut(&mut st.stack);
-            let cont = ok!(stack.pop_cont_owned());
+            let cont = ok!(stack.pop_cont());
             let value = ok!(stack.pop_int());
             let bit = value.bit(x as _);
             ok!(stack.push_raw(value));
@@ -441,7 +441,7 @@ impl Contops {
     #[instr(code = "e314", fmt = "REPEATBRK", args(brk = true))]
     fn exec_repeat(st: &mut VmState, brk: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let body = ok!(stack.pop_cont_owned());
+        let body = ok!(stack.pop_cont());
         let n = ok!(stack.pop_smallint_signed_range(i32::MIN, i32::MAX));
         if n <= 0 {
             return Ok(0);
@@ -470,7 +470,7 @@ impl Contops {
     #[instr(code = "e6", fmt = "UNTIL", args(brk = false))]
     #[instr(code = "e316", fmt = "UNTILBRK", args(brk = true))]
     fn exec_until(st: &mut VmState, brk: bool) -> VmResult<i32> {
-        let body = ok!(Rc::make_mut(&mut st.stack).pop_cont_owned());
+        let body = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         let cc = ok!(st.extract_cc(SaveCr::C0, None, None));
         let after = st.c1_envelope_if(brk, cc, true);
         st.until(body, after)
@@ -491,8 +491,8 @@ impl Contops {
     #[instr(code = "e318", fmt = "WHILEBRK", args(brk = true))]
     fn exec_while(st: &mut VmState, brk: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let body = ok!(stack.pop_cont_owned());
-        let cond = ok!(stack.pop_cont_owned());
+        let body = ok!(stack.pop_cont());
+        let cond = ok!(stack.pop_cont());
 
         let cc = ok!(st.extract_cc(SaveCr::C0, None, None));
         let after = st.c1_envelope_if(brk, cc, true);
@@ -502,7 +502,7 @@ impl Contops {
     #[instr(code = "e9", fmt = "WHILEEND", args(brk = false))]
     #[instr(code = "e319", fmt = "WHILEENDBRK", args(brk = true))]
     fn exec_while_end(st: &mut VmState, brk: bool) -> VmResult<i32> {
-        let cond = ok!(Rc::make_mut(&mut st.stack).pop_cont_owned());
+        let cond = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         let body = ok!(st.extract_cc(SaveCr::NONE, None, None));
         let Some(c0) = st.cr.c[0].clone() else {
             vm_bail!(InvalidOpcode);
@@ -518,7 +518,7 @@ impl Contops {
             let cc = ok!(st.extract_cc(SaveCr::C0_C1, None, None));
             st.cr.c[1] = Some(cc);
         }
-        let body = ok!(Rc::make_mut(&mut st.stack).pop_cont_owned());
+        let body = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         st.again(body)
     }
 
@@ -530,6 +530,53 @@ impl Contops {
         }
         let cc = ok!(st.extract_cc(SaveCr::NONE, None, None));
         st.again(cc)
+    }
+
+    // === Continuation change ===
+
+    // TODO: Add all preceding instructions
+
+    #[instr(code = "ede0", fmt = "PUSHCTRX")]
+    fn exec_push_ctr_var(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let idx = ok!(stack.pop_smallint_range(0, 16)) as usize;
+        let Some(value) = st.cr.get_as_stack_value(idx) else {
+            vm_bail!(ControlRegisterOutOfRange(idx));
+        };
+        ok!(stack.push_raw(value));
+        Ok(0)
+    }
+
+    #[instr(code = "ede1", fmt = "POPCTRX")]
+    fn exec_pop_ctr_var(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let idx = ok!(stack.pop_smallint_range(0, 16)) as usize;
+        vm_ensure!(
+            ControlRegs::is_valid_idx(idx),
+            ControlRegisterOutOfRange(idx)
+        );
+
+        let value = ok!(stack.pop());
+        vm_ensure!(st.cr.set(idx, value), ControlRegisterOutOfRange(idx));
+        Ok(0)
+    }
+
+    #[instr(code = "ede2", fmt = "SETCONTCTRX")]
+    fn exec_setcont_ctr_var(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let idx = ok!(stack.pop_smallint_range(0, 16)) as usize;
+        vm_ensure!(
+            ControlRegs::is_valid_idx(idx),
+            ControlRegisterOutOfRange(idx)
+        );
+        let mut cont = ok!(stack.pop_cont());
+        let value = ok!(stack.pop());
+        vm_ensure!(
+            force_cdata(&mut cont).save.define(idx, value),
+            ControlRegisterOutOfRange(idx)
+        );
+        ok!(stack.push_raw(cont.into_stack_value()));
+        Ok(0)
     }
 }
 
@@ -580,7 +627,7 @@ fn exec_ifelse_ref_impl(st: &mut VmState, bits: u16, ref_first: bool) -> VmResul
         vm_log!("execute {name} ({})", cell.repr_hash());
 
         let stack = Rc::make_mut(&mut st.stack);
-        let cont = ok!(stack.pop_cont_owned());
+        let cont = ok!(stack.pop_cont());
 
         if ok!(stack.pop_bool()) == ref_first {
             ok!(st.ref_to_cont(cell))
@@ -589,4 +636,22 @@ fn exec_ifelse_ref_impl(st: &mut VmState, bits: u16, ref_first: bool) -> VmResul
         }
     };
     st.call(cont)
+}
+
+fn force_cdata(cont: &mut RcCont) -> &mut ControlData {
+    if cont.get_control_data().is_some() {
+        return dyn_clone::rc_make_mut(cont)
+            .get_control_data_mut()
+            .expect("always has control data");
+    }
+
+    *cont = Rc::new(ArgContExt {
+        data: Default::default(),
+        ext: cont.clone(), // TODO: Somehow reduce this `clone`
+    });
+
+    Rc::get_mut(cont)
+        .expect("only one instance")
+        .get_control_data_mut()
+        .expect("always has control data")
 }

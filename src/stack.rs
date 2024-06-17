@@ -6,7 +6,7 @@ use everscale_types::prelude::*;
 use num_bigint::BigInt;
 use num_traits::{One, ToPrimitive, Zero};
 
-use crate::cont::{load_cont, RcCont};
+use crate::cont::{load_cont, DynCont, RcCont};
 use crate::error::{VmError, VmResult};
 use crate::util::{bitsize, ensure_empty_slice, store_int_to_builder, OwnedCellSlice};
 
@@ -222,15 +222,8 @@ impl Stack {
         Ok(Some(tuple))
     }
 
-    pub fn pop_cont(&mut self) -> VmResult<Rc<RcCont>> {
+    pub fn pop_cont(&mut self) -> VmResult<RcCont> {
         self.pop()?.into_cont()
-    }
-
-    pub fn pop_cont_owned(&mut self) -> VmResult<RcCont> {
-        Ok(match Rc::try_unwrap(self.pop()?.into_cont()?) {
-            Ok(cont) => cont,
-            Err(e) => e.as_ref().clone(),
-        })
     }
 
     pub fn pop_many(&mut self, n: usize) -> VmResult<()> {
@@ -387,11 +380,11 @@ pub trait StackValue: std::fmt::Debug {
         Err(invalid_type(self.ty(), StackValueType::Builder))
     }
 
-    fn as_cont(&self) -> Option<&RcCont> {
+    fn as_cont(&self) -> Option<&DynCont> {
         None
     }
 
-    fn into_cont(self: Rc<Self>) -> VmResult<Rc<RcCont>> {
+    fn into_cont(self: Rc<Self>) -> VmResult<RcCont> {
         Err(invalid_type(self.ty(), StackValueType::Cont))
     }
 
@@ -529,7 +522,7 @@ pub fn load_stack_value(
             ok!(builder.store_slice(cell));
             Rc::new(builder)
         }
-        6 => Rc::new(ok!(load_cont(slice, context))),
+        6 => ok!(load_cont(slice, context)).into_stack_value(),
         7 => {
             let len = ok!(slice.load_u16()) as usize;
             let mut tuple = Vec::with_capacity(std::cmp::min(len, 128));
@@ -737,7 +730,7 @@ impl StackValue for CellBuilder {
     }
 }
 
-impl StackValue for RcCont {
+impl StackValue for DynCont {
     fn ty(&self) -> StackValueType {
         StackValueType::Cont
     }
@@ -748,18 +741,18 @@ impl StackValue for RcCont {
         context: &mut dyn CellContext,
     ) -> Result<(), Error> {
         ok!(builder.store_u8(0x06));
-        self.as_ref().store_into(builder, context)
+        self.store_into(builder, context)
     }
 
     fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Cont{{{:?}}}", Rc::as_ptr(self))
+        write!(f, "Cont{{{:?}}}", self as *const _ as *const ())
     }
 
-    fn as_cont(&self) -> Option<&RcCont> {
+    fn as_cont(&self) -> Option<&DynCont> {
         Some(self)
     }
 
-    fn into_cont(self: Rc<Self>) -> VmResult<Rc<RcCont>> {
+    fn into_cont(self: Rc<Self>) -> VmResult<RcCont> {
         Ok(self)
     }
 }

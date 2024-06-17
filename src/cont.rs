@@ -9,7 +9,7 @@ use tracing::instrument;
 use crate::error::VmResult;
 use crate::stack::{
     load_slice_as_stack_value, load_stack, load_stack_value, store_slice_as_stack_value, Stack,
-    StackValue, Tuple,
+    StackValue, StackValueType, Tuple,
 };
 use crate::state::VmState;
 use crate::util::{ensure_empty_slice, rc_ptr_eq, OwnedCellSlice, Uint4};
@@ -73,7 +73,12 @@ impl ControlRegs {
     const CONT_REG_COUNT: usize = 4;
     const DATA_REG_OFFSET: usize = Self::CONT_REG_COUNT;
     const DATA_REG_COUNT: usize = 2;
-    const DATA_REG_RANGE: std::ops::Range<usize> = Self::DATA_REG_OFFSET..Self::DATA_REG_OFFSET;
+    const DATA_REG_RANGE: std::ops::Range<usize> =
+        Self::DATA_REG_OFFSET..Self::DATA_REG_OFFSET + Self::DATA_REG_COUNT;
+
+    pub fn is_valid_idx(i: usize) -> bool {
+        i < Self::CONT_REG_COUNT || Self::DATA_REG_RANGE.contains(&i) || i == 7
+    }
 
     pub fn merge(&mut self, other: &ControlRegs) {
         for (c, other_c) in std::iter::zip(&mut self.c, &other.c) {
@@ -104,8 +109,8 @@ impl ControlRegs {
     // TODO: use `&dyn StackValue` for value?
     pub fn set(&mut self, i: usize, value: Rc<dyn StackValue>) -> bool {
         if i < Self::CONT_REG_COUNT {
-            if let Some(cont) = value.as_cont() {
-                self.c[i] = Some(cont.clone());
+            if let Ok(cont) = value.into_cont() {
+                self.c[i] = Some(cont);
                 return true;
             }
         } else if Self::DATA_REG_RANGE.contains(&i) {
@@ -147,6 +152,20 @@ impl ControlRegs {
         self.c7 = Some(tuple);
     }
 
+    pub fn get_as_stack_value(&self, i: usize) -> Option<Rc<dyn StackValue>> {
+        if i < Self::CONT_REG_COUNT {
+            self.c.get(i)?.clone().map(|cont| cont.into_stack_value())
+        } else if Self::DATA_REG_RANGE.contains(&i) {
+            self.d[i - Self::DATA_REG_OFFSET]
+                .clone()
+                .map(|cell| Rc::new(cell) as _)
+        } else if i == 7 {
+            self.c7.clone().map(|tuple| tuple.clone() as _)
+        } else {
+            None
+        }
+    }
+
     pub fn define_c0(&mut self, cont: &Option<RcCont>) {
         if self.c[0].is_none() {
             self.c[0].clone_from(cont)
@@ -157,6 +176,37 @@ impl ControlRegs {
         if self.c[1].is_none() {
             self.c[1].clone_from(cont)
         }
+    }
+
+    pub fn define(&mut self, i: usize, value: Rc<dyn StackValue>) -> bool {
+        if i < Self::CONT_REG_COUNT {
+            if let Ok(cont) = value.into_cont() {
+                if self.c[i].is_none() {
+                    self.c[i] = Some(cont);
+                    return true;
+                }
+            }
+        } else if Self::DATA_REG_RANGE.contains(&i) {
+            if let Some(cell) = value.as_cell() {
+                let d = &mut self.d[i - Self::DATA_REG_OFFSET];
+                if d.is_none() {
+                    *d = Some(cell.clone());
+                    return true;
+                }
+            }
+        } else if i == 7 {
+            // TODO: add `as_tuple_ref` to `StackValue`?
+            if let Ok(tuple) = value.into_tuple() {
+                if self.c7.is_none() {
+                    self.c7 = Some(tuple);
+                }
+
+                // NOTE: `true` is returned even if the value was not updated
+                return true;
+            }
+        }
+
+        false
     }
 
     fn merge_cell_value(lhs: &mut Option<Cell>, rhs: &Option<Cell>) {
@@ -210,7 +260,7 @@ impl Store for ControlRegs {
 
         for (i, c) in self.c.iter().enumerate() {
             if let Some(c) = c {
-                ok!(dict.set_ext(Uint4(i), AsDictValue(c), context));
+                ok!(dict.set_ext(Uint4(i), AsDictValue(c.as_stack_value()), context));
             }
         }
         for (i, d) in self.d.iter().enumerate() {
@@ -245,7 +295,13 @@ fn load_control_regs(
     Ok(result)
 }
 
+pub type DynCont = dyn Cont;
+
 pub trait Cont: Store + dyn_clone::DynClone + std::fmt::Debug {
+    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue>;
+
+    fn as_stack_value(&self) -> &dyn StackValue;
+
     fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32>;
 
     fn get_control_data(&self) -> Option<&ControlData> {
@@ -257,9 +313,36 @@ pub trait Cont: Store + dyn_clone::DynClone + std::fmt::Debug {
     }
 }
 
-pub type RcCont = Rc<dyn Cont>;
+impl<T: Cont + 'static> StackValue for T {
+    fn ty(&self) -> StackValueType {
+        StackValueType::Cont
+    }
 
-impl<'a> dyn Cont + 'a {
+    fn store_as_stack_value(
+        &self,
+        builder: &mut CellBuilder,
+        context: &mut dyn CellContext,
+    ) -> Result<(), Error> {
+        ok!(builder.store_u8(0x06));
+        self.store_into(builder, context)
+    }
+
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Cont{{{:?}}}", self as *const _ as *const ())
+    }
+
+    fn as_cont(&self) -> Option<&DynCont> {
+        Some(self)
+    }
+
+    fn into_cont(self: Rc<Self>) -> VmResult<RcCont> {
+        Ok(self)
+    }
+}
+
+pub type RcCont = Rc<DynCont>;
+
+impl DynCont {
     pub fn has_c0(&self) -> bool {
         if let Some(control) = self.get_control_data() {
             control.save.c[0].is_some()
@@ -326,6 +409,14 @@ impl QuitCont {
 }
 
 impl Cont for QuitCont {
+    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
+    fn as_stack_value(&self) -> &dyn StackValue {
+        self
+    }
+
     #[cfg_attr(
         feature = "tracing",
         instrument(level = "trace", name = "quit_cont", skip_all)
@@ -365,6 +456,14 @@ impl ExcQuitCont {
 }
 
 impl Cont for ExcQuitCont {
+    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
+    fn as_stack_value(&self) -> &dyn StackValue {
+        self
+    }
+
     #[cfg_attr(
         feature = "tracing",
         instrument(level = "trace", name = "exc_quit_cont", skip_all)
@@ -401,7 +500,7 @@ impl LoadWithContext<'_> for ExcQuitCont {
 #[derive(Debug, Clone)]
 pub struct PushIntCont {
     pub value: i32,
-    pub next: Rc<dyn Cont>,
+    pub next: Rc<DynCont>,
 }
 
 impl PushIntCont {
@@ -409,6 +508,14 @@ impl PushIntCont {
 }
 
 impl Cont for PushIntCont {
+    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
+    fn as_stack_value(&self) -> &dyn StackValue {
+        self
+    }
+
     #[cfg_attr(
         feature = "tracing",
         instrument(
@@ -458,8 +565,8 @@ impl LoadWithContext<'_> for PushIntCont {
 #[derive(Debug, Clone)]
 pub struct RepeatCont {
     pub count: u64,
-    pub body: Rc<dyn Cont>,
-    pub after: Rc<dyn Cont>,
+    pub body: Rc<DynCont>,
+    pub after: Rc<DynCont>,
 }
 
 impl RepeatCont {
@@ -468,6 +575,14 @@ impl RepeatCont {
 }
 
 impl Cont for RepeatCont {
+    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
+    fn as_stack_value(&self) -> &dyn StackValue {
+        self
+    }
+
     #[cfg_attr(
         feature = "tracing",
         instrument(
@@ -537,7 +652,7 @@ impl LoadWithContext<'_> for RepeatCont {
 
 #[derive(Debug, Clone)]
 pub struct AgainCont {
-    pub body: Rc<dyn Cont>,
+    pub body: Rc<DynCont>,
 }
 
 impl AgainCont {
@@ -545,6 +660,14 @@ impl AgainCont {
 }
 
 impl Cont for AgainCont {
+    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
+    fn as_stack_value(&self) -> &dyn StackValue {
+        self
+    }
+
     #[cfg_attr(
         feature = "tracing",
         instrument(level = "trace", name = "again_cont", skip_all)
@@ -585,8 +708,8 @@ impl LoadWithContext<'_> for AgainCont {
 
 #[derive(Debug, Clone)]
 pub struct UntilCont {
-    pub body: Rc<dyn Cont>,
-    pub after: Rc<dyn Cont>,
+    pub body: Rc<DynCont>,
+    pub after: Rc<DynCont>,
 }
 
 impl UntilCont {
@@ -594,6 +717,14 @@ impl UntilCont {
 }
 
 impl Cont for UntilCont {
+    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
+    fn as_stack_value(&self) -> &dyn StackValue {
+        self
+    }
+
     #[cfg_attr(
         feature = "tracing",
         instrument(level = "trace", name = "until_cont", skip_all)
@@ -643,9 +774,9 @@ impl LoadWithContext<'_> for UntilCont {
 #[derive(Debug, Clone)]
 pub struct WhileCont {
     pub check_cond: bool,
-    pub cond: Rc<dyn Cont>,
-    pub body: Rc<dyn Cont>,
-    pub after: Rc<dyn Cont>,
+    pub cond: Rc<DynCont>,
+    pub body: Rc<DynCont>,
+    pub after: Rc<DynCont>,
 }
 
 impl WhileCont {
@@ -653,6 +784,14 @@ impl WhileCont {
 }
 
 impl Cont for WhileCont {
+    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
+    fn as_stack_value(&self) -> &dyn StackValue {
+        self
+    }
+
     #[cfg_attr(
         feature = "tracing",
         instrument(
@@ -737,6 +876,14 @@ impl ArgContExt {
 }
 
 impl Cont for ArgContExt {
+    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
+    fn as_stack_value(&self) -> &dyn StackValue {
+        self
+    }
+
     #[cfg_attr(
         feature = "tracing",
         instrument(level = "trace", name = "arg_cont", skip_all)
@@ -811,6 +958,14 @@ impl OrdCont {
 }
 
 impl Cont for OrdCont {
+    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
+    fn as_stack_value(&self) -> &dyn StackValue {
+        self
+    }
+
     #[cfg_attr(
         feature = "tracing",
         instrument(level = "trace", name = "ord_cont", skip_all)
