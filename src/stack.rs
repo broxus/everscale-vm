@@ -64,6 +64,13 @@ impl Stack {
         }
     }
 
+    pub fn push_opt_raw(&mut self, item: Option<Rc<dyn StackValue>>) -> VmResult<()> {
+        match item {
+            None => self.push_null(),
+            Some(item) => self.push_raw(item),
+        }
+    }
+
     pub fn push_nth(&mut self, idx: usize) -> VmResult<()> {
         let depth = self.depth();
         vm_ensure!(idx < depth, StackUnderflow(idx));
@@ -224,6 +231,10 @@ impl Stack {
 
     pub fn pop_cont(&mut self) -> VmResult<RcCont> {
         self.pop()?.into_cont()
+    }
+
+    pub fn pop_cs(&mut self) -> VmResult<Rc<OwnedCellSlice>> {
+        self.pop()?.into_slice()
     }
 
     pub fn pop_many(&mut self, n: usize) -> VmResult<()> {

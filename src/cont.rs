@@ -22,6 +22,15 @@ pub struct ControlData {
     pub cp: Option<u16>,
 }
 
+impl ControlData {
+    pub fn require_nargs(&self, copy: usize) -> VmResult<()> {
+        if matches!(self.nargs, Some(nargs) if (nargs as usize) < copy) {
+            vm_bail!(StackUnderflow(copy as _))
+        }
+        Ok(())
+    }
+}
+
 impl Store for ControlData {
     fn store_into(
         &self,
@@ -107,26 +116,17 @@ impl ControlRegs {
     }
 
     // TODO: use `&dyn StackValue` for value?
-    pub fn set(&mut self, i: usize, value: Rc<dyn StackValue>) -> bool {
-        if i < Self::CONT_REG_COUNT {
-            if let Ok(cont) = value.into_cont() {
-                self.c[i] = Some(cont);
-                return true;
-            }
+    pub fn set(&mut self, i: usize, value: Rc<dyn StackValue>) -> VmResult<()> {
+        Ok(if i < Self::CONT_REG_COUNT {
+            self.c[i] = Some(ok!(value.into_cont()));
         } else if Self::DATA_REG_RANGE.contains(&i) {
-            if let Some(cell) = value.as_cell() {
-                self.d[i - Self::DATA_REG_OFFSET] = Some(cell.clone());
-                return true;
-            }
+            let cell = ok!(value.into_cell());
+            self.d[i - Self::DATA_REG_OFFSET] = Some(Rc::unwrap_or_clone(cell));
         } else if i == 7 {
-            // TODO: add `as_tuple_ref` to `StackValue`?
-            if let Ok(tuple) = value.into_tuple() {
-                self.c7 = Some(tuple);
-                return true;
-            }
-        }
-
-        false
+            self.c7 = Some(ok!(value.into_tuple()));
+        } else {
+            vm_bail!(ControlRegisterOutOfRange(i))
+        })
     }
 
     pub fn set_c(&mut self, i: usize, cont: RcCont) -> bool {
@@ -178,35 +178,26 @@ impl ControlRegs {
         }
     }
 
-    pub fn define(&mut self, i: usize, value: Rc<dyn StackValue>) -> bool {
-        if i < Self::CONT_REG_COUNT {
-            if let Ok(cont) = value.into_cont() {
-                if self.c[i].is_none() {
-                    self.c[i] = Some(cont);
-                    return true;
-                }
-            }
+    pub fn define(&mut self, i: usize, value: Rc<dyn StackValue>) -> VmResult<()> {
+        Ok(if i < Self::CONT_REG_COUNT {
+            let cont = ok!(value.into_cont());
+            vm_ensure!(self.c[i].is_none(), ControlRegisterRedefined);
+            self.c[i] = Some(cont);
         } else if Self::DATA_REG_RANGE.contains(&i) {
-            if let Some(cell) = value.as_cell() {
-                let d = &mut self.d[i - Self::DATA_REG_OFFSET];
-                if d.is_none() {
-                    *d = Some(cell.clone());
-                    return true;
-                }
-            }
+            let cell = ok!(value.into_cell());
+            let d = &mut self.d[i - Self::DATA_REG_OFFSET];
+            vm_ensure!(d.is_none(), ControlRegisterRedefined);
+            *d = Some(Rc::unwrap_or_clone(cell));
         } else if i == 7 {
-            // TODO: add `as_tuple_ref` to `StackValue`?
-            if let Ok(tuple) = value.into_tuple() {
-                if self.c7.is_none() {
-                    self.c7 = Some(tuple);
-                }
+            let tuple = ok!(value.into_tuple());
 
-                // NOTE: `true` is returned even if the value was not updated
-                return true;
+            // NOTE: Value is ignored on redefinition
+            if self.c7.is_none() {
+                self.c7 = Some(tuple);
             }
-        }
-
-        false
+        } else {
+            vm_bail!(ControlRegisterOutOfRange(i))
+        })
     }
 
     fn merge_cell_value(lhs: &mut Option<Cell>, rhs: &Option<Cell>) {
@@ -287,7 +278,7 @@ fn load_control_regs(
         let (key, ref mut slice) = ok!(entry);
         let value = ok!(load_stack_value(slice, context));
         ok!(ensure_empty_slice(slice));
-        if !result.set(key.0, value) {
+        if result.set(key.0, value).is_err() {
             return Err(Error::InvalidData);
         }
     }

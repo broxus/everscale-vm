@@ -18,6 +18,8 @@ pub enum VmError {
     },
     #[error("control register index out of range: {0}")]
     ControlRegisterOutOfRange(usize),
+    #[error("control register redefined")]
+    ControlRegisterRedefined,
     #[error("integer overflow")]
     IntegerOverflow,
     #[error("invalid opcode")]
@@ -40,6 +42,7 @@ impl VmError {
             Self::TooManyArguments(_) => VmException::StackOverflow,
             Self::IntegerOutOfRange { .. } => VmException::RangeCheck,
             Self::ControlRegisterOutOfRange(_) => VmException::RangeCheck,
+            Self::ControlRegisterRedefined => VmException::TypeCheck,
             Self::IntegerOverflow => VmException::IntOverflow,
             Self::InvalidOpcode => VmException::InvalidOpcode,
             Self::InvalidType { .. } => VmException::TypeCheck,

@@ -4,7 +4,7 @@ use anyhow::Result;
 use everscale_types::prelude::Cell;
 use everscale_vm_proc::vm_module;
 
-use crate::cont::{ArgContExt, Cont, ControlData, ControlRegs, OrdCont, RcCont};
+use crate::cont::{ArgContExt, Cont, ControlData, ControlRegs, OrdCont, PushIntCont, RcCont};
 use crate::dispatch::Opcodes;
 use crate::error::VmResult;
 use crate::state::{SaveCr, VmState};
@@ -534,6 +534,104 @@ impl Contops {
 
     // === Continuation change ===
 
+    #[instr(code = "ecrn", fmt = "SETCONTARGS {r},{n}", args(n = ((args as i32 + 1) & 0xf) - 1))]
+    fn exec_setcontargs(st: &mut VmState, r: u32, n: i32) -> VmResult<i32> {
+        ok!(exec_setcontargs_common(st, r, n));
+        Ok(0)
+    }
+
+    #[instr(code = "ed0p", fmt = "RETURNARGS {p}")]
+    fn exec_return_args(st: &mut VmState, p: u32) -> VmResult<i32> {
+        ok!(exec_return_args_common(st, p));
+        Ok(0)
+    }
+
+    #[instr(code = "ed10", fmt = "RETURNVARARGS")]
+    fn exec_return_varargs(st: &mut VmState) -> VmResult<i32> {
+        let count = ok!(Rc::make_mut(&mut st.stack).pop_smallint_range(0, 255));
+        ok!(exec_return_args_common(st, count));
+        Ok(0)
+    }
+
+    #[instr(code = "ed11", fmt = "SETCONTVARARGS")]
+    fn exec_setcont_varargs(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let more = ok!(stack.pop_smallint_signed_range(-1, 255));
+        let copy = ok!(stack.pop_smallint_range(0, 255));
+        ok!(exec_setcontargs_common(st, copy, more));
+        Ok(0)
+    }
+
+    #[instr(code = "ed12", fmt = "SETNUMVARARGS")]
+    fn exec_setnum_varargs(st: &mut VmState) -> VmResult<i32> {
+        let more = ok!(Rc::make_mut(&mut st.stack).pop_smallint_signed_range(-1, 255));
+        ok!(exec_setcontargs_common(st, 0, more));
+        Ok(0)
+    }
+
+    #[instr(code = "ed1e", fmt = "BLESS")]
+    fn exec_bless(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let code = ok!(stack.pop_cs());
+        let cont = Rc::new(OrdCont::simple(Rc::unwrap_or_clone(code), st.cp.id()));
+        ok!(stack.push_raw(cont.into_stack_value()));
+        Ok(0)
+    }
+
+    #[instr(code = "ed1f", fmt = "BLESSVARARGS")]
+    fn exec_bless_varargs(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let more = ok!(stack.pop_smallint_signed_range(-1, 255));
+        let copy = ok!(stack.pop_smallint_range(0, 255));
+        ok!(exec_bless_args_common(st, copy, more));
+        Ok(0)
+    }
+
+    #[instr(code = "ed4i", fmt = "PUSH c{i}")]
+    fn exec_push_ctr(st: &mut VmState, i: u32) -> VmResult<i32> {
+        vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
+        ok!(Rc::make_mut(&mut st.stack).push_opt_raw(st.cr.get_as_stack_value(i as _)));
+        Ok(0)
+    }
+
+    #[instr(code = "ed5i", fmt = "POP c{i}")]
+    fn exec_pop_ctr(st: &mut VmState, i: u32) -> VmResult<i32> {
+        vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
+        let value = ok!(Rc::make_mut(&mut st.stack).pop());
+        ok!(st.cr.set(i as _, value));
+        Ok(0)
+    }
+
+    #[instr(code = "ed6i", fmt = "SETCONTCTR c{i}")]
+    fn exec_setcont_ctr(st: &mut VmState, i: u32) -> VmResult<i32> {
+        vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
+        let stack = Rc::make_mut(&mut st.stack);
+        let mut cont = ok!(stack.pop_cont());
+        let value = ok!(stack.pop());
+        ok!(force_cdata(&mut cont).save.define(i as _, value));
+        ok!(stack.push_raw(cont.into_stack_value()));
+        Ok(0)
+    }
+
+    #[instr(code = "ed7i", fmt = "SETRETCTR c{i}")]
+    fn exec_setret_ctr(st: &mut VmState, i: u32) -> VmResult<i32> {
+        vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
+        let cont = st.cr.c[0].as_mut().expect("c0 should always be set");
+        let value = ok!(Rc::make_mut(&mut st.stack).pop());
+        ok!(force_cdata(cont).save.define(i as _, value));
+        Ok(0)
+    }
+
+    #[instr(code = "ed8i", fmt = "SETALTCTR c{i}")]
+    fn exec_setalt_ctr(st: &mut VmState, i: u32) -> VmResult<i32> {
+        vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
+        // TODO: Check if c1 is always set
+        let cont = st.cr.c[1].as_mut().expect("c1 should always be set");
+        let value = ok!(Rc::make_mut(&mut st.stack).pop());
+        ok!(force_cdata(cont).save.define(i as _, value));
+        Ok(0)
+    }
+
     // TODO: Add all preceding instructions
 
     #[instr(code = "ede0", fmt = "PUSHCTRX")]
@@ -557,7 +655,7 @@ impl Contops {
         );
 
         let value = ok!(stack.pop());
-        vm_ensure!(st.cr.set(idx, value), ControlRegisterOutOfRange(idx));
+        ok!(st.cr.set(idx, value));
         Ok(0)
     }
 
@@ -571,11 +669,113 @@ impl Contops {
         );
         let mut cont = ok!(stack.pop_cont());
         let value = ok!(stack.pop());
-        vm_ensure!(
-            force_cdata(&mut cont).save.define(idx, value),
-            ControlRegisterOutOfRange(idx)
-        );
+        ok!(force_cdata(&mut cont).save.define(idx, value));
         ok!(stack.push_raw(cont.into_stack_value()));
+        Ok(0)
+    }
+
+    #[instr(code = "edf0", fmt = "BOOLAND", args(op = Compose::And))]
+    #[instr(code = "edf1", fmt = "BOOLOR", args(op = Compose::Or))]
+    #[instr(code = "edf2", fmt = "BOOLBOTH", args(op = Compose::Both))]
+    fn exec_compos(st: &mut VmState, op: Compose) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let value = ok!(stack.pop_cont());
+        let mut cont = ok!(stack.pop_cont());
+        let refs = &mut force_cdata(&mut cont).save;
+        match op {
+            Compose::And => refs.define_c0(&Some(value)),
+            Compose::Or => refs.define_c1(&Some(value)),
+            Compose::Both => {
+                refs.define_c0(&Some(value.clone()));
+                refs.define_c1(&Some(value));
+            }
+        }
+        ok!(stack.push_raw(cont.into_stack_value()));
+        Ok(0)
+    }
+
+    #[instr(code = "edf3", fmt = "ATEXIT")]
+    fn exec_atexit(st: &mut VmState) -> VmResult<i32> {
+        let mut cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
+        force_cdata(&mut cont).save.define_c0(&st.cr.c[0]);
+        st.cr.c[0] = Some(cont);
+        Ok(0)
+    }
+
+    #[instr(code = "edf4", fmt = "ATEXITALT")]
+    fn exec_atexit_alt(st: &mut VmState) -> VmResult<i32> {
+        let mut cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
+        force_cdata(&mut cont).save.define_c1(&st.cr.c[1]);
+        st.cr.c[1] = Some(cont);
+        Ok(0)
+    }
+
+    #[instr(code = "edf5", fmt = "SETEXITALT")]
+    fn exec_setexit_alt(st: &mut VmState) -> VmResult<i32> {
+        let mut cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
+        let cr = force_cdata(&mut cont);
+        cr.save.define_c0(&st.cr.c[0]);
+        cr.save.define_c1(&st.cr.c[1]);
+        st.cr.c[1] = Some(cont);
+        Ok(0)
+    }
+
+    #[instr(code = "edf6", fmt = "THENRET")]
+    fn exec_thenret(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let mut cont = ok!(stack.pop_cont());
+        force_cdata(&mut cont).save.define_c0(&st.cr.c[0]);
+        ok!(stack.push_raw(cont.into_stack_value()));
+        Ok(0)
+    }
+
+    #[instr(code = "edf7", fmt = "THENRETALT")]
+    fn exec_thenret_alt(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let mut cont = ok!(stack.pop_cont());
+        force_cdata(&mut cont).save.define_c1(&st.cr.c[1]);
+        ok!(stack.push_raw(cont.into_stack_value()));
+        Ok(0)
+    }
+
+    #[instr(code = "edf8", fmt = "INVERT")]
+    fn exec_invert(st: &mut VmState) -> VmResult<i32> {
+        st.cr.c.swap(0, 1);
+        Ok(0)
+    }
+
+    #[instr(code = "edf9", fmt = "BOOLEVAL")]
+    fn exec_booleval(st: &mut VmState) -> VmResult<i32> {
+        let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
+
+        let next = ok!(st.extract_cc(SaveCr::C0_C1, None, None));
+        st.cr.c[0] = Some(Rc::new(PushIntCont {
+            value: -1,
+            next: next.clone(),
+        }));
+        st.cr.c[1] = Some(Rc::new(PushIntCont { value: 0, next }));
+
+        st.jump(cont)
+    }
+
+    #[instr(code = "edfa", fmt = "SAMEALT", args(save = false))]
+    #[instr(code = "edfb", fmt = "SAMEALTSAVE", args(save = true))]
+    fn exec_samealt(st: &mut VmState, save: bool) -> VmResult<i32> {
+        let [c0, c1, ..] = &mut st.cr.c;
+
+        // TODO: Check if there are no ways to leave `None` in c0
+        let c0 = c0.as_mut().expect("c0 should be always set");
+        if save {
+            force_cdata(c0).save.define_c1(c1);
+        }
+
+        *c1 = Some(c0.clone());
+        Ok(0)
+    }
+
+    #[instr(code = "eern", fmt = "BLESSARGS {r},{n}", args(n = ((args as i32 + 1) & 0xf) - 1))]
+    fn exec_bless_args(st: &mut VmState, r: u32, n: i32) -> VmResult<i32> {
+        ok!(exec_bless_args_common(st, r, n));
         Ok(0)
     }
 }
@@ -638,6 +838,89 @@ fn exec_ifelse_ref_impl(st: &mut VmState, bits: u16, ref_first: bool) -> VmResul
     st.call(cont)
 }
 
+fn exec_setcontargs_common(st: &mut VmState, copy: u32, more: i32) -> VmResult<()> {
+    let stack = Rc::make_mut(&mut st.stack);
+    let mut cont = ok!(stack.pop_cont());
+    if copy > 0 || more >= 0 {
+        let cdata = force_cdata(&mut cont);
+
+        if copy > 0 {
+            ok!(cdata.require_nargs(copy as _));
+            if let Some(cdata_stack) = &mut cdata.stack {
+                ok!(Rc::make_mut(cdata_stack).move_from_stack(stack, copy as _));
+            } else {
+                cdata.stack = Some(ok!(stack.split_top(copy as _)));
+            }
+            // TODO: Consume stack gas for `cdata.stack`
+            if let Some(n) = &mut cdata.nargs {
+                *n -= copy as u16;
+            }
+        }
+
+        if more >= 0 {
+            match &mut cdata.nargs {
+                Some(n) => {
+                    if *n as i32 > more {
+                        *n = u16::MAX; // will throw an exception if run
+                    }
+                }
+                None => cdata.nargs = Some(more as _),
+            }
+        }
+    }
+
+    ok!(stack.push_raw(cont.into_stack_value()));
+    Ok(())
+}
+
+fn exec_return_args_common(st: &mut VmState, count: u32) -> VmResult<()> {
+    let (copy, alt_stack) = {
+        let stack = Rc::make_mut(&mut st.stack);
+        if stack.depth() == count as usize {
+            return Ok(());
+        }
+
+        let copy = stack.depth() - count as usize;
+        let new_stack = ok!(stack.split_top(count as _));
+
+        (copy, std::mem::replace(&mut st.stack, new_stack))
+    };
+
+    let cont = st.cr.c[0].as_mut().expect("c0 should always be set");
+    let cdata = force_cdata(cont);
+    ok!(cdata.require_nargs(copy));
+
+    if let Some(cdata_stack) = &mut cdata.stack {
+        ok!(Rc::make_mut(cdata_stack).move_from_stack(&mut Rc::unwrap_or_clone(alt_stack), copy))
+    } else {
+        cdata.stack = Some(alt_stack);
+    }
+
+    // TODO: Consume stack gas for `cdata.stack`
+    if let Some(n) = &mut cdata.nargs {
+        *n -= copy as u16;
+    }
+    Ok(())
+}
+
+fn exec_bless_args_common(st: &mut VmState, copy: u32, more: i32) -> VmResult<()> {
+    let stack = Rc::make_mut(&mut st.stack);
+    let cs = ok!(stack.pop_cs());
+    let new_stack = ok!(stack.split_top(copy as _));
+    // TODO: Consume stack gas for `new_stack`
+    let cont = Rc::new(OrdCont {
+        data: ControlData {
+            nargs: (more >= 0).then_some(more as _),
+            stack: Some(new_stack),
+            save: Default::default(),
+            cp: Some(st.cp.id()),
+        },
+        code: Rc::unwrap_or_clone(cs),
+    });
+    ok!(stack.push_raw(cont.into_stack_value()));
+    Ok(())
+}
+
 fn force_cdata(cont: &mut RcCont) -> &mut ControlData {
     if cont.get_control_data().is_some() {
         return dyn_clone::rc_make_mut(cont)
@@ -654,4 +937,11 @@ fn force_cdata(cont: &mut RcCont) -> &mut ControlData {
         .expect("only one instance")
         .get_control_data_mut()
         .expect("always has control data")
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Compose {
+    And,
+    Or,
+    Both,
 }
