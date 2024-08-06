@@ -7,6 +7,7 @@ use everscale_vm_proc::vm_module;
 use crate::cont::{ArgContExt, Cont, ControlData, ControlRegs, OrdCont, PushIntCont, RcCont};
 use crate::dispatch::Opcodes;
 use crate::error::VmResult;
+use crate::stack::{Stack, StackValueType};
 use crate::state::{SaveCr, VmState};
 
 pub struct Contops;
@@ -632,7 +633,91 @@ impl Contops {
         Ok(0)
     }
 
-    // TODO: Add all preceding instructions
+    #[instr(code = "ed9i", fmt = "POPSAVE c{i}")]
+    fn exec_popsave(st: &mut VmState, i: u32) -> VmResult<i32> {
+        vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
+        let stack = Rc::make_mut(&mut st.stack);
+        let value = ok!(stack.pop());
+        let mut c0 = st.cr.c[0].clone().expect("c0 should always be set");
+
+        vm_ensure!(
+            i > 0 || value.ty() == StackValueType::Cont,
+            InvalidType {
+                expected: StackValueType::Cont,
+                actual: value.ty(),
+            }
+        );
+
+        // NOTE: Is it ok to ignore redefinition errors?
+        let prev = st
+            .cr
+            .get_as_stack_value(i as _)
+            .unwrap_or_else(Stack::make_null);
+        force_cdata(&mut c0).save.define(i as _, prev).ok();
+
+        // TODO: Check if the order of setting c0 and `cr.set(..)` really matters
+        if i == 0 {
+            st.cr.c[0] = Some(c0);
+            ok!(st.cr.set(i as _, value));
+        } else {
+            ok!(st.cr.set(i as _, value));
+            st.cr.c[0] = Some(c0);
+        }
+
+        Ok(0)
+    }
+
+    #[instr(code = "edai", fmt = "SAVECTR c{i}")]
+    fn exec_savectr(st: &mut VmState, i: u32) -> VmResult<i32> {
+        vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
+
+        let mut c0 = st.cr.c[0].clone().expect("c0 should always be set");
+
+        let value = st
+            .cr
+            .get_as_stack_value(i as _)
+            .unwrap_or_else(Stack::make_null);
+
+        ok!(force_cdata(&mut c0).save.define(i as _, value));
+        st.cr.c[0] = Some(c0);
+        Ok(0)
+    }
+
+    #[instr(code = "edbi", fmt = "SAVEALTCTR c{i}")]
+    fn exec_savealt_ctr(st: &mut VmState, i: u32) -> VmResult<i32> {
+        vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
+
+        // TODO: Check if c1 is always set
+        let mut c1 = st.cr.c[1].clone().expect("c1 should always be set");
+
+        let value = st
+            .cr
+            .get_as_stack_value(i as _)
+            .unwrap_or_else(Stack::make_null);
+
+        ok!(force_cdata(&mut c1).save.define(i as _, value));
+        st.cr.c[1] = Some(c1);
+        Ok(0)
+    }
+
+    #[instr(code = "edci", fmt = "SAVEBOTHCTR c{i}")]
+    fn exec_saveboth_ctr(st: &mut VmState, i: u32) -> VmResult<i32> {
+        vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
+
+        let mut c0 = st.cr.c[0].clone().expect("c0 should always be set");
+        let mut c1 = st.cr.c[1].clone().expect("c1 should always be set");
+
+        let value = st
+            .cr
+            .get_as_stack_value(i as _)
+            .unwrap_or_else(Stack::make_null);
+
+        ok!(force_cdata(&mut c0).save.define(i as _, value.clone()));
+        ok!(force_cdata(&mut c1).save.define(i as _, value));
+        st.cr.c[0] = Some(c0);
+        st.cr.c[1] = Some(c1);
+        Ok(0)
+    }
 
     #[instr(code = "ede0", fmt = "PUSHCTRX")]
     fn exec_push_ctr_var(st: &mut VmState) -> VmResult<i32> {
@@ -676,7 +761,7 @@ impl Contops {
 
     #[instr(code = "edf0", fmt = "BOOLAND", args(op = Compose::And))]
     #[instr(code = "edf1", fmt = "BOOLOR", args(op = Compose::Or))]
-    #[instr(code = "edf2", fmt = "BOOLBOTH", args(op = Compose::Both))]
+    #[instr(code = "edf2", fmt = "COMPOSBOTH", args(op = Compose::Both))]
     fn exec_compos(st: &mut VmState, op: Compose) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let value = ok!(stack.pop_cont());
@@ -777,6 +862,116 @@ impl Contops {
     fn exec_bless_args(st: &mut VmState, r: u32, n: i32) -> VmResult<i32> {
         ok!(exec_bless_args_common(st, r, n));
         Ok(0)
+    }
+
+    // === Dictjump ===
+
+    #[instr(code = "f0nn", fmt = "CALLDICT {n}")]
+    #[instr(code = "f1$00nn#n", fmt = "CALLDICT {n}")]
+    fn exec_calldict_short(st: &mut VmState, n: u32) -> VmResult<i32> {
+        ok!(Rc::make_mut(&mut st.stack).push_int(n));
+        let Some(c3) = st.cr.c[3].clone() else {
+            vm_bail!(InvalidType {
+                expected: StackValueType::Cont,
+                actual: StackValueType::Null,
+            });
+        };
+        st.call(c3)
+    }
+
+    #[instr(code = "f1$01nn#n", fmt = "JMPDICT {n}")]
+    fn exec_jmpdict(st: &mut VmState, n: u32) -> VmResult<i32> {
+        ok!(Rc::make_mut(&mut st.stack).push_int(n));
+        let Some(c3) = st.cr.c[3].clone() else {
+            vm_bail!(InvalidType {
+                expected: StackValueType::Cont,
+                actual: StackValueType::Null,
+            });
+        };
+        st.jump(c3)
+    }
+
+    #[instr(code = "f1$10nn#n", fmt = "PREPAREDICT {n}")]
+    fn exec_preparedict(st: &mut VmState, n: u32) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        ok!(stack.push_int(n));
+
+        let c3 = match st.cr.c[3].clone() {
+            Some(c3) => c3.into_stack_value(),
+            None => Stack::make_null(),
+        };
+        ok!(stack.push_raw(c3));
+        Ok(0)
+    }
+
+    // === Exceptions ===
+
+    #[instr(code = "f2$00nn#n", fmt = "THROW {n}", args(mode = ThrowMode::Direct))]
+    #[instr(code = "f2$01nn#n", fmt = "THROWIF {n}", args(mode = ThrowMode::Cond(true)))]
+    #[instr(code = "f2$10nn#n", fmt = "THROWIFNOT {n}", args(mode = ThrowMode::Cond(false)))]
+    #[instr(code = "f2c$0nnn#n", fmt = "THROW {n}", args(mode = ThrowMode::Direct))]
+    #[instr(code = "f2d$0nnn#n", fmt = "THROWIF {n}", args(mode = ThrowMode::Cond(true)))]
+    #[instr(code = "f2e$0nnn#n", fmt = "THROWIFNOT {n}", args(mode = ThrowMode::Cond(false)))]
+    fn exec_throw_fixed(st: &mut VmState, n: u32, mode: ThrowMode) -> VmResult<i32> {
+        if let ThrowMode::Cond(cond) = mode {
+            if ok!(Rc::make_mut(&mut st.stack).pop_bool()) != cond {
+                return Ok(0);
+            }
+        }
+
+        st.throw_exception(n as i32)
+    }
+
+    #[instr(code = "f2c$1nnn#n", fmt = "THROWARG {n}", args(mode = ThrowMode::Direct))]
+    #[instr(code = "f2d$1nnn#n", fmt = "THROWARGIF {n}", args(mode = ThrowMode::Cond(true)))]
+    #[instr(code = "f2e$1nnn#n", fmt = "THROWARGIFNOT {n}", args(mode = ThrowMode::Cond(false)))]
+    fn exec_throw_arg_fixed(st: &mut VmState, n: u32, mode: ThrowMode) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+
+        if let ThrowMode::Cond(cond) = mode {
+            if ok!(stack.pop_bool()) != cond {
+                ok!(stack.pop());
+                return Ok(0);
+            }
+        }
+
+        let arg = ok!(stack.pop());
+        st.throw_exception_with_arg(n as i32, arg)
+    }
+
+    #[instr(code = "f2fx", range_to = "f2f6", fmt = ("{}", ThrowAnyArgs(x)))]
+    fn exec_throw_any(st: &mut VmState, x: u32) -> VmResult<i32> {
+        let args = ThrowAnyArgs(x);
+
+        let stack = Rc::make_mut(&mut st.stack);
+        let cond = if args.has_cond() {
+            ok!(stack.pop_bool())
+        } else {
+            args.throw_cond()
+        };
+
+        let n = ok!(stack.pop_smallint_range(0, 0xffff));
+        if cond != args.throw_cond() {
+            if args.has_param() {
+                ok!(stack.pop());
+            }
+            Ok(0)
+        } else if args.has_param() {
+            let arg = ok!(stack.pop());
+            st.throw_exception_with_arg(n as i32, arg)
+        } else {
+            st.throw_exception(n as i32)
+        }
+    }
+
+    #[instr(code = "f2ff", fmt = "TRY")]
+    fn exec_try(s: &mut VmState) -> VmResult<i32> {
+        exec_try_common(s, None)
+    }
+
+    #[instr(code = "f3pr", fmt = "TRYARGS {p},{r}")]
+    fn exec_tryargs(s: &mut VmState, p: u32, r: u32) -> VmResult<i32> {
+        exec_try_common(s, Some((p as u16, r as u16)))
     }
 }
 
@@ -921,6 +1116,26 @@ fn exec_bless_args_common(st: &mut VmState, copy: u32, more: i32) -> VmResult<()
     Ok(())
 }
 
+fn exec_try_common(st: &mut VmState, args: Option<(u16, u16)>) -> VmResult<i32> {
+    let stack = Rc::make_mut(&mut st.stack);
+    let mut handler_cont = ok!(stack.pop_cont());
+    let cont = ok!(stack.pop_cont());
+    let old_c2 = st.cr.c[2].clone();
+
+    let (stack_copy, nargs) = args.unzip();
+    let cc = ok!(st.extract_cc(SaveCr::FULL, stack_copy, nargs));
+
+    let handler_cr = &mut force_cdata(&mut handler_cont).save;
+    handler_cr.define_c2(&old_c2);
+    if handler_cr.c[0].is_none() {
+        handler_cr.c[0] = Some(cc.clone());
+    }
+
+    st.cr.c[0] = Some(cc);
+    st.cr.c[2] = Some(handler_cont);
+    st.jump(cont)
+}
+
 fn force_cdata(cont: &mut RcCont) -> &mut ControlData {
     if cont.get_control_data().is_some() {
         return dyn_clone::rc_make_mut(cont)
@@ -944,4 +1159,44 @@ enum Compose {
     And,
     Or,
     Both,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ThrowMode {
+    Direct,
+    Cond(bool),
+}
+
+#[derive(Clone, Copy)]
+struct ThrowAnyArgs(u32);
+
+impl ThrowAnyArgs {
+    const fn has_param(self) -> bool {
+        self.0 & 0b001 != 0
+    }
+
+    const fn has_cond(self) -> bool {
+        self.0 & 0b110 != 0
+    }
+
+    const fn throw_cond(self) -> bool {
+        self.0 & 0b010 != 0
+    }
+}
+
+impl std::fmt::Display for ThrowAnyArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let arg = if self.has_param() { "ARG" } else { "" };
+        let cond = if self.has_cond() {
+            if self.throw_cond() {
+                "IF"
+            } else {
+                "IFNOT"
+            }
+        } else {
+            ""
+        };
+
+        write!(f, "THROW{arg}ANY{cond}")
+    }
 }

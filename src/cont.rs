@@ -117,7 +117,7 @@ impl ControlRegs {
 
     // TODO: use `&dyn StackValue` for value?
     pub fn set(&mut self, i: usize, value: Rc<dyn StackValue>) -> VmResult<()> {
-        Ok(if i < Self::CONT_REG_COUNT {
+        if i < Self::CONT_REG_COUNT {
             self.c[i] = Some(ok!(value.into_cont()));
         } else if Self::DATA_REG_RANGE.contains(&i) {
             let cell = ok!(value.into_cell());
@@ -126,7 +126,8 @@ impl ControlRegs {
             self.c7 = Some(ok!(value.into_tuple()));
         } else {
             vm_bail!(ControlRegisterOutOfRange(i))
-        })
+        }
+        Ok(())
     }
 
     pub fn set_c(&mut self, i: usize, cont: RcCont) -> bool {
@@ -178,8 +179,14 @@ impl ControlRegs {
         }
     }
 
+    pub fn define_c2(&mut self, cont: &Option<RcCont>) {
+        if self.c[2].is_none() {
+            self.c[2].clone_from(cont)
+        }
+    }
+
     pub fn define(&mut self, i: usize, value: Rc<dyn StackValue>) -> VmResult<()> {
-        Ok(if i < Self::CONT_REG_COUNT {
+        if i < Self::CONT_REG_COUNT {
             let cont = ok!(value.into_cont());
             vm_ensure!(self.c[i].is_none(), ControlRegisterRedefined);
             self.c[i] = Some(cont);
@@ -197,7 +204,8 @@ impl ControlRegs {
             }
         } else {
             vm_bail!(ControlRegisterOutOfRange(i))
-        })
+        }
+        Ok(())
     }
 
     fn merge_cell_value(lhs: &mut Option<Cell>, rhs: &Option<Cell>) {
