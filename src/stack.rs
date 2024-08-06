@@ -88,15 +88,20 @@ impl Stack {
     }
 
     pub fn push_bool(&mut self, value: bool) -> VmResult<()> {
-        // TODO: replace with thread-local?
-        self.push(if value {
-            -BigInt::one()
+        thread_local! {
+            static TRUE: RcStackValue = Rc::new(-BigInt::one());
+            static FALSE: RcStackValue = Rc::new(BigInt::zero());
+        }
+
+        self.push_raw(if value {
+            TRUE.with(Rc::clone)
         } else {
-            BigInt::zero()
+            FALSE.with(Rc::clone)
         })
     }
 
     pub fn push_int<T: Into<BigInt>>(&mut self, value: T) -> VmResult<()> {
+        // TODO: Inline some numbers as thread-local constants to avoid some allocations
         self.push(value.into())
     }
 
@@ -235,6 +240,14 @@ impl Stack {
 
     pub fn pop_cs(&mut self) -> VmResult<Rc<OwnedCellSlice>> {
         self.pop()?.into_slice()
+    }
+
+    pub fn pop_builder(&mut self) -> VmResult<Rc<CellBuilder>> {
+        self.pop()?.into_builder()
+    }
+
+    pub fn pop_cell(&mut self) -> VmResult<Rc<Cell>> {
+        self.pop()?.into_cell()
     }
 
     pub fn pop_many(&mut self, n: usize) -> VmResult<()> {

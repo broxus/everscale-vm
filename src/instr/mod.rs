@@ -9,6 +9,7 @@ use self::tupleops::Tupleops;
 use crate::dispatch::{DispatchTable, Opcodes};
 
 mod arithops;
+mod cellops;
 mod contops;
 mod debugops;
 mod stackops;

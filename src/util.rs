@@ -44,6 +44,13 @@ impl OwnedCellSlice {
     pub fn set_range(&mut self, range: CellSliceRange) {
         self.0 .1 = range
     }
+
+    pub fn fits_into(&self, builder: &CellBuilder) -> bool {
+        let range = self.range();
+        let bits = range.remaining_bits();
+        let refs = range.remaining_refs();
+        builder.has_capacity(bits, refs)
+    }
 }
 
 impl From<Cell> for OwnedCellSlice {
