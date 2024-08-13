@@ -97,13 +97,17 @@ impl Debugops {
             st.code.range().has_remaining(bits + data_bits, 0),
             InvalidOpcode
         );
-        st.code.range_mut().try_advance(bits, 0);
+        let ok = st.code.range_mut().skip_first(bits, 0).is_ok();
+        debug_assert!(ok);
+
         let prefix = st.code.apply_allow_special().get_prefix(data_bits, 0);
 
-        println!("{}", prefix.remaining_bits());
+        println!("{}", prefix.size_bits());
         vm_log!("execute DEBUGSTR {}", prefix.display_data());
 
-        st.code.range_mut().try_advance(data_bits, 0);
+        let ok = st.code.range_mut().skip_first(data_bits, 0).is_ok();
+        debug_assert!(ok);
+
         Ok(0)
     }
 }

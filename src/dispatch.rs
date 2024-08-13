@@ -53,7 +53,7 @@ impl DispatchTable {
     }
 
     fn get_opcode_from_slice(slice: &CellSlice<'_>) -> (u32, u16) {
-        let bits = std::cmp::min(MAX_OPCODE_BITS, slice.remaining_bits());
+        let bits = std::cmp::min(MAX_OPCODE_BITS, slice.size_bits());
         let opcode = (slice.get_uint(0, bits).unwrap() as u32) << (MAX_OPCODE_BITS - bits);
         (opcode, bits)
     }
@@ -238,7 +238,7 @@ impl Opcode for SimpleOpcode {
     fn dispatch(&self, st: &mut VmState, _: u32, bits: u16) -> VmResult<i32> {
         // TODO: consume gas_per_instr + opcode_bits * gas_per_bit
         vm_ensure!(bits >= self.opcode_bits, InvalidOpcode);
-        st.code.range_mut().advance(self.opcode_bits, 0)?;
+        st.code.range_mut().skip_first(self.opcode_bits, 0)?;
         (self.exec)(st)
     }
 }
@@ -258,7 +258,7 @@ impl Opcode for FixedOpcode {
     fn dispatch(&self, st: &mut VmState, opcode: u32, bits: u16) -> VmResult<i32> {
         // TODO: consume gas_per_instr + total_bits * gas_per_bit
         vm_ensure!(bits >= self.total_bits, InvalidOpcode);
-        st.code.range_mut().advance(self.total_bits, 0)?;
+        st.code.range_mut().skip_first(self.total_bits, 0)?;
         (self.exec)(st, opcode >> (MAX_OPCODE_BITS - self.total_bits))
     }
 }

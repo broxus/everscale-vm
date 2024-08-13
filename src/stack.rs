@@ -705,15 +705,15 @@ impl StackValue for OwnedCellSlice {
     }
 
     fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let bits_end = self.range().bits_offset() + self.range().remaining_bits();
-        let refs_end = self.range().refs_offset() + self.range().remaining_refs();
+        let bits_end = self.range().offset_bits() + self.range().size_bits();
+        let refs_end = self.range().offset_refs() + self.range().size_refs();
         write!(
             f,
             "CS{{Cell {{{}}} bits: {}..{}; refs: {}..{}}}",
             self.cell().repr_hash(),
-            self.range().bits_offset(),
+            self.range().offset_bits(),
             bits_end,
-            self.range().refs_offset(),
+            self.range().offset_refs(),
             refs_end
         )
     }
@@ -854,10 +854,10 @@ pub fn store_slice_as_stack_value(
     ok!(builder.store_reference(slice.cell().clone()));
 
     let range = slice.range();
-    let value = ((range.bits_offset() as u64) << 16)
-        | (((range.bits_offset() + range.remaining_bits()) as u64) << 6)
-        | ((range.refs_offset() as u64) << 3)
-        | (range.refs_offset() + range.remaining_refs()) as u64;
+    let value = ((range.offset_bits() as u64) << 16)
+        | (((range.offset_bits() + range.size_bits()) as u64) << 6)
+        | ((range.offset_refs() as u64) << 3)
+        | (range.offset_refs() + range.size_refs()) as u64;
     builder.store_uint(value, 26)
 }
 
@@ -884,9 +884,14 @@ pub fn load_slice_as_stack_value(
         return Err(Error::InvalidData);
     }
 
-    let mut range = CellSliceRange::empty();
-    range.try_advance(bits_start, refs_end);
-    range = range.get_prefix(bits_end - bits_start, refs_end - refs_start);
+    let mut range = CellSliceRange::full(cell.as_ref());
+    let ok = range.skip_first(bits_start, refs_end).is_ok();
+    debug_assert!(ok);
+
+    let bits = bits_end - bits_start;
+    let refs = refs_end - refs_start;
+    let ok = range.only_first(bits, refs).is_ok();
+    debug_assert!(ok);
 
     Ok(OwnedCellSlice::from((cell, range)))
 }

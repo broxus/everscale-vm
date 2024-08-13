@@ -358,17 +358,20 @@ impl Contops {
         let cell = {
             let code = &mut st.code;
             vm_ensure!(code.range().has_remaining(bits, 2), InvalidOpcode);
-            code.range_mut().try_advance(bits, 0);
+            let ok = code.range_mut().skip_first(bits, 0).is_ok();
+            debug_assert!(ok);
 
-            let Some(cell1) = code.cell().reference_cloned(code.range().refs_offset()) else {
+            let Some(cell1) = code.cell().reference_cloned(code.range().offset_refs()) else {
                 vm_bail!(CellError(everscale_types::error::Error::CellUnderflow));
             };
-            code.range_mut().try_advance(0, 1);
+            let ok = code.range_mut().skip_first(0, 1).is_ok();
+            debug_assert!(ok);
 
-            let Some(cell0) = code.cell().reference_cloned(code.range().refs_offset()) else {
+            let Some(cell0) = code.cell().reference_cloned(code.range().offset_refs()) else {
                 vm_bail!(CellError(everscale_types::error::Error::CellUnderflow));
             };
-            code.range_mut().try_advance(0, 1);
+            let ok = code.range_mut().skip_first(0, 1).is_ok();
+            debug_assert!(ok);
 
             vm_log!(
                 "execute IFREFELSEREF ({}) ({})",
@@ -407,12 +410,14 @@ impl Contops {
     fn exec_if_bit_jmpref(st: &mut VmState, args: u32, bits: u16) -> VmResult<i32> {
         let code_range = st.code.range();
         vm_ensure!(code_range.has_remaining(bits, 1), InvalidOpcode);
-        st.code.range_mut().try_advance(bits, 0);
+        let ok = st.code.range_mut().skip_first(bits, 0).is_ok();
+        debug_assert!(ok);
 
-        let Some(cell) = st.code.cell().reference_cloned(code_range.refs_offset()) else {
+        let Some(cell) = st.code.cell().reference_cloned(code_range.offset_refs()) else {
             vm_bail!(CellError(everscale_types::error::Error::CellUnderflow));
         };
-        st.code.range_mut().try_advance(0, 1);
+        let ok = st.code.range_mut().skip_first(0, 1).is_ok();
+        debug_assert!(ok);
 
         let negate = (args & 0x20) != 0;
         let bit = args & 0x1f;
@@ -978,12 +983,14 @@ impl Contops {
 fn exec_ref_prefix(st: &mut VmState, bits: u16, name: &str) -> VmResult<Rc<OrdCont>> {
     let code_range = st.code.range();
     vm_ensure!(code_range.has_remaining(bits, 1), InvalidOpcode);
-    st.code.range_mut().try_advance(bits, 0);
+    let ok = st.code.range_mut().skip_first(bits, 0).is_ok();
+    debug_assert!(ok);
 
-    let Some(code) = st.code.cell().reference_cloned(code_range.refs_offset()) else {
+    let Some(code) = st.code.cell().reference_cloned(code_range.offset_refs()) else {
         vm_bail!(CellError(everscale_types::error::Error::CellUnderflow));
     };
-    st.code.range_mut().try_advance(0, 1);
+    let ok = st.code.range_mut().skip_first(0, 1).is_ok();
+    debug_assert!(ok);
 
     vm_log!("execute {name} ({})", code.repr_hash());
     st.ref_to_cont(code)
@@ -992,12 +999,14 @@ fn exec_ref_prefix(st: &mut VmState, bits: u16, name: &str) -> VmResult<Rc<OrdCo
 fn exec_cell_prefix(st: &mut VmState, bits: u16, name: &str) -> VmResult<Cell> {
     let code_range = st.code.range();
     vm_ensure!(code_range.has_remaining(bits, 1), InvalidOpcode);
-    st.code.range_mut().try_advance(bits, 0);
+    let ok = st.code.range_mut().skip_first(bits, 0).is_ok();
+    debug_assert!(ok);
 
-    let Some(cell) = st.code.cell().reference_cloned(code_range.refs_offset()) else {
+    let Some(cell) = st.code.cell().reference_cloned(code_range.offset_refs()) else {
         vm_bail!(CellError(everscale_types::error::Error::CellUnderflow));
     };
-    st.code.range_mut().try_advance(0, 1);
+    let ok = st.code.range_mut().skip_first(0, 1).is_ok();
+    debug_assert!(ok);
 
     vm_log!("execute {name} ({})", cell.repr_hash());
     Ok(cell)
@@ -1007,12 +1016,14 @@ fn exec_ifelse_ref_impl(st: &mut VmState, bits: u16, ref_first: bool) -> VmResul
     let cont = {
         let code_range = st.code.range();
         vm_ensure!(code_range.has_remaining(bits, 1), InvalidOpcode);
-        st.code.range_mut().try_advance(bits, 0);
+        let ok = st.code.range_mut().skip_first(bits, 0).is_ok();
+        debug_assert!(ok);
 
-        let Some(cell) = st.code.cell().reference_cloned(code_range.refs_offset()) else {
+        let Some(cell) = st.code.cell().reference_cloned(code_range.offset_refs()) else {
             vm_bail!(CellError(everscale_types::error::Error::CellUnderflow));
         };
-        st.code.range_mut().try_advance(0, 1);
+        let ok = st.code.range_mut().skip_first(0, 1).is_ok();
+        debug_assert!(ok);
 
         let name = match ref_first {
             true => "IFREFELSE",

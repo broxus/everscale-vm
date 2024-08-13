@@ -739,14 +739,22 @@ impl GasConsumer {
         }
     }
 
-    pub fn context(&mut self) -> GasConsumerContext<'_> {
-        GasConsumerContext(self)
+    #[inline]
+    pub fn context(&mut self) -> &mut GasConsumerContext {
+        GasConsumerContext::wrap(self)
     }
 }
 
-pub struct GasConsumerContext<'a>(&'a mut GasConsumer);
+#[repr(transparent)]
+pub struct GasConsumerContext(GasConsumer);
 
-impl GasConsumerContext<'_> {
+impl GasConsumerContext {
+    #[inline]
+    fn wrap(consumer: &mut GasConsumer) -> &mut Self {
+        // SAFETY: `GasConsumerContext` has the same memory layout as `GasConsumer`.
+        unsafe { &mut *(consumer as *mut GasConsumer).cast() }
+    }
+
     fn consume_load_cell(&mut self, cell: &DynCell, mode: LoadMode) -> Result<(), Error> {
         if mode.use_gas() {
             let gas = if self.0.loaded_cells.insert(*cell.repr_hash()) {
@@ -760,7 +768,7 @@ impl GasConsumerContext<'_> {
     }
 }
 
-impl CellContext for GasConsumerContext<'_> {
+impl CellContext for GasConsumerContext {
     fn finalize_cell(&mut self, cell: CellParts<'_>) -> Result<Cell, Error> {
         ok!(self.0.try_consume(GasConsumer::BUILD_CELL_GAS));
         self.0.empty_context.finalize_cell(cell)

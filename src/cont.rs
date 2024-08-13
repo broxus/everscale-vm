@@ -363,7 +363,7 @@ pub fn load_cont(slice: &mut CellSlice, context: &mut dyn CellContext) -> Result
     const MASK: u64 = 0x1_007_01_1_1_0001_0001;
 
     // Prefetch slice prefix aligned to 6 bits
-    let slice_bits = slice.remaining_bits();
+    let slice_bits = slice.size_bits();
     let n = if slice_bits < 6 {
         ok!(slice.get_small_uint(0, slice_bits)) << (6 - slice_bits)
     } else {

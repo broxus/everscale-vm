@@ -21,8 +21,7 @@ impl OwnedCellSlice {
     }
 
     pub fn apply_allow_special(&self) -> CellSlice<'_> {
-        // SAFETY: we are okay with special cell slice there
-        unsafe { self.range().apply_unchecked(self.cell()) }
+        self.range().apply_allow_special(self.cell())
     }
 
     #[inline]
@@ -47,8 +46,8 @@ impl OwnedCellSlice {
 
     pub fn fits_into(&self, builder: &CellBuilder) -> bool {
         let range = self.range();
-        let bits = range.remaining_bits();
-        let refs = range.remaining_refs();
+        let bits = range.size_bits();
+        let refs = range.size_refs();
         builder.has_capacity(bits, refs)
     }
 }
@@ -69,12 +68,8 @@ impl From<CellSliceParts> for OwnedCellSlice {
 
 impl PartialEq<CellSlice<'_>> for OwnedCellSlice {
     fn eq(&self, right: &CellSlice<'_>) -> bool {
-        if let Ok(left) = self.apply() {
-            if let Ok(std::cmp::Ordering::Equal) = left.cmp_by_content(right) {
-                return true;
-            }
-        }
-        false
+        let left = self.apply_allow_special();
+        matches!(left.contents_eq(right), Ok(true))
     }
 }
 

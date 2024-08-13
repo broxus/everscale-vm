@@ -39,7 +39,7 @@ impl Arithops {
             st.code.range().has_remaining(bits + value_len, 0),
             InvalidOpcode
         );
-        st.code.range_mut().try_advance(bits, 0);
+        st.code.range_mut().skip_first(bits, 0).ok();
 
         let mut bytes = [0u8; 33];
         let rem = value_len % 8;
