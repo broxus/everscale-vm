@@ -3,6 +3,8 @@ use std::sync::OnceLock;
 use anyhow::Result;
 
 use self::arithops::Arithops;
+use self::cellops::Cellops;
+use self::contops::Contops;
 use self::debugops::Debugops;
 use self::stackops::Stackops;
 use self::tupleops::Tupleops;
@@ -26,6 +28,8 @@ pub fn codepage0() -> &'static DispatchTable {
     fn build() -> Result<DispatchTable> {
         let mut cp = DispatchTable::builder(0);
         Arithops.init(&mut cp)?;
+        Cellops.init(&mut cp)?;
+        Contops.init(&mut cp)?;
         Stackops.init(&mut cp)?;
         Tupleops.init(&mut cp)?;
         Debugops.init(&mut cp)?;

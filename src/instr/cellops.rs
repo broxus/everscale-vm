@@ -1404,3 +1404,54 @@ fn exec_cell_level_op_common(stack: &mut Stack, level: u8, op: LevelOp) -> VmRes
     });
     Ok(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use everscale_types::boc::Boc;
+    use tracing_test::traced_test;
+
+    use super::*;
+
+    #[test]
+    #[traced_test]
+    fn basic_contops() {
+        let cont: RcStackValue = Rc::new(crate::cont::PushIntCont {
+            value: 1,
+            next: Rc::new(crate::cont::PushIntCont {
+                value: 2,
+                next: Rc::new(crate::cont::QuitCont { exit_code: 0 }),
+            }),
+        });
+
+        assert_run_vm!(
+            "EXECUTE",
+            [raw cont.clone()] => [int 1, int 2],
+        );
+
+        assert_run_vm!(
+            "IF",
+            [int 0, raw cont.clone()] => [],
+        );
+        assert_run_vm!(
+            "IF",
+            [int 123, raw cont.clone()] => [int 1, int 2],
+        );
+
+        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 1
+            PUSHINT 2
+            "#
+        })
+        .unwrap();
+
+        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code.into(),
+            crate::instr::codepage0().id(),
+        ));
+        assert_run_vm!(
+            "EXECUTE",
+            [raw cont] => [int 1, int 2],
+        );
+    }
+}

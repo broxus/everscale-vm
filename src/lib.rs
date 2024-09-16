@@ -52,6 +52,9 @@ macro_rules! stack {
     (@v int $value:expr) => {
         ::std::rc::Rc::new(num_bigint::BigInt::from($value)) as $crate::stack::RcStackValue
     };
+    (@v raw $value:expr) => {
+        $value
+    }
 }
 
 #[cfg(test)]
