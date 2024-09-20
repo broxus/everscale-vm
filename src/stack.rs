@@ -705,17 +705,7 @@ impl StackValue for OwnedCellSlice {
     }
 
     fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let bits_end = self.range().offset_bits() + self.range().size_bits();
-        let refs_end = self.range().offset_refs() + self.range().size_refs();
-        write!(
-            f,
-            "CS{{Cell {{{}}} bits: {}..{}; refs: {}..{}}}",
-            self.cell().repr_hash(),
-            self.range().offset_bits(),
-            bits_end,
-            self.range().offset_refs(),
-            refs_end
-        )
+        std::fmt::Display::fmt(self, f)
     }
 
     fn as_slice(&self) -> Option<&OwnedCellSlice> {

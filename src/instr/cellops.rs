@@ -81,11 +81,11 @@ impl Cellops {
 
         code_range.skip_first(data_bits, refs).ok();
 
-        let slice: RcStackValue =
-            Rc::new(OwnedCellSlice::from((st.code.cell().clone(), slice_range)));
-        vm_log!("execute PUSHCONT {}", slice.display_list());
+        let code = OwnedCellSlice::from((st.code.cell().clone(), slice_range));
+        vm_log!("execute PUSHCONT {}", code);
 
-        ok!(Rc::make_mut(&mut st.stack).push_raw(slice));
+        let cont = Rc::new(OrdCont::simple(code, st.cp.id()));
+        ok!(Rc::make_mut(&mut st.stack).push_raw(cont));
         Ok(0)
     }
 
@@ -101,11 +101,11 @@ impl Cellops {
 
         code_range.skip_first(data_bits, 0).ok();
 
-        let slice: RcStackValue =
-            Rc::new(OwnedCellSlice::from((st.code.cell().clone(), slice_range)));
-        vm_log!("execute PUSHCONT {}", slice.display_list());
+        let code = OwnedCellSlice::from((st.code.cell().clone(), slice_range));
+        vm_log!("execute PUSHCONT {}", code);
 
-        ok!(Rc::make_mut(&mut st.stack).push_raw(slice));
+        let cont = Rc::new(OrdCont::simple(code, st.cp.id()));
+        ok!(Rc::make_mut(&mut st.stack).push_raw(cont));
         Ok(0)
     }
 

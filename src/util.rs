@@ -52,6 +52,23 @@ impl OwnedCellSlice {
     }
 }
 
+impl std::fmt::Display for OwnedCellSlice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (cell, range) = &self.0;
+        let bits_end = range.offset_bits() + range.size_bits();
+        let refs_end = range.offset_refs() + range.size_refs();
+        write!(
+            f,
+            "CS{{Cell {{{}}} bits: {}..{}; refs: {}..{}}}",
+            cell.repr_hash(),
+            range.offset_bits(),
+            bits_end,
+            range.offset_refs(),
+            refs_end
+        )
+    }
+}
+
 impl From<Cell> for OwnedCellSlice {
     #[inline]
     fn from(value: Cell) -> Self {
