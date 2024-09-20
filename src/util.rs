@@ -169,6 +169,17 @@ pub fn bitsize(int: &BigInt, signed: bool) -> u16 {
     bits
 }
 
+pub fn remove_trailing(slice: &mut CellSlice<'_>) -> Result<(), everscale_types::error::Error> {
+    let bits = slice.size_bits();
+    if bits == 0 {
+        return Ok(());
+    }
+
+    let n = ok!(slice.count_trailing(false));
+    // NOTE: Skip one additional bit for non-empty slice
+    slice.skip_last((n != bits) as _, 0)
+}
+
 pub fn to_signed_bytes_be(is_negative: bool, value: &BigUint) -> Vec<u8> {
     #[inline]
     fn is_zero(value: &u8) -> bool {

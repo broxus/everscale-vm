@@ -4,6 +4,7 @@ use everscale_vm_proc::vm_module;
 use crate::dispatch::Opcodes;
 use crate::error::VmResult;
 use crate::state::VmState;
+use crate::util::remove_trailing;
 
 pub struct Debugops;
 
@@ -100,7 +101,8 @@ impl Debugops {
         let ok = st.code.range_mut().skip_first(bits, 0).is_ok();
         debug_assert!(ok);
 
-        let prefix = st.code.apply_allow_special().get_prefix(data_bits, 0);
+        let mut prefix = st.code.apply_allow_special().get_prefix(data_bits, 0);
+        remove_trailing(&mut prefix)?;
 
         println!("{}", prefix.size_bits());
         vm_log!("execute DEBUGSTR {}", prefix.display_data());

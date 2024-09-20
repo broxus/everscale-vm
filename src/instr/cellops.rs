@@ -1,21 +1,114 @@
 use std::borrow::Cow;
 use std::rc::Rc;
 
-use everscale_types::cell::{Cell, CellBuilder, CellFamily, CellSlice, DynCell};
+use anyhow::Result;
+use everscale_types::cell::{
+    Cell, CellBuilder, CellContext, CellFamily, CellSlice, DynCell, LoadMode,
+};
 use everscale_types::error::Error;
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
 use num_traits::{ToPrimitive, Zero};
 
+use crate::cont::OrdCont;
+use crate::dispatch::Opcodes;
 use crate::error::{VmError, VmResult};
 use crate::stack::{RcStackValue, Stack};
 use crate::state::VmState;
-use crate::util::{bitsize, OwnedCellSlice};
+use crate::util::{bitsize, remove_trailing, OwnedCellSlice};
 
 pub struct Cellops;
 
 #[vm_module]
 impl Cellops {
+    // === Const ops ===
+
+    #[init]
+    fn init_cell_const(&self, t: &mut Opcodes) -> Result<()> {
+        t.add_ext(0x88, 8, 0, exec_push_ref)?;
+        t.add_ext(0x89, 8, 0, exec_push_ref_slice)?;
+        t.add_ext(0x8a, 8, 0, exec_push_ref_cont)?;
+        t.add_ext(0x8b, 8, 4, exec_push_slice)?;
+        t.add_ext(0x8c, 8, 7, exec_push_slice_r)?;
+        t.add_ext_range(0x8d << 10, ((0x8d << 3) + 5) << 7, 18, exec_push_slice_r2)?;
+        t.add_ext(0x8e >> 1, 7, 9, exec_push_cont)?;
+        t.add_ext(0x9, 4, 4, exec_push_cont_simple)?;
+        Ok(())
+    }
+
+    fn exec_push_ref(st: &mut VmState, _: u32, bits: u16) -> VmResult<i32> {
+        exec_push_ref_common(st, bits, "PUSHREF", PushRefMode::Cell)
+    }
+
+    fn exec_push_ref_slice(st: &mut VmState, _: u32, bits: u16) -> VmResult<i32> {
+        exec_push_ref_common(st, bits, "PUSHREFSLICE", PushRefMode::Slice)
+    }
+
+    fn exec_push_ref_cont(st: &mut VmState, _: u32, bits: u16) -> VmResult<i32> {
+        exec_push_ref_common(st, bits, "PUSHREFCONT", PushRefMode::Cont)
+    }
+
+    fn exec_push_slice(st: &mut VmState, args: u32, bits: u16) -> VmResult<i32> {
+        let data_bits = ((args & 0xf) * 8 + 4) as u16;
+        exec_push_slice_common(st, bits, data_bits, 0)
+    }
+
+    fn exec_push_slice_r(st: &mut VmState, args: u32, bits: u16) -> VmResult<i32> {
+        let data_bits = ((args & 0x1f) * 8 + 1) as u16;
+        let refs = (((args >> 5) & 0b11) + 1) as u8;
+        exec_push_slice_common(st, bits, data_bits, refs)
+    }
+
+    fn exec_push_slice_r2(st: &mut VmState, args: u32, bits: u16) -> VmResult<i32> {
+        let data_bits = ((args & 0x7f) * 8 + 6) as u16;
+        let refs = ((args >> 7) & 0b111) as u8;
+        exec_push_slice_common(st, bits, data_bits, refs)
+    }
+
+    fn exec_push_cont(st: &mut VmState, args: u32, bits: u16) -> VmResult<i32> {
+        let data_bits = ((args & 0x7f) * 8) as u16;
+        let refs = ((args >> 7) & 0b11) as u8;
+
+        let code_range = st.code.range_mut();
+        vm_ensure!(
+            code_range.has_remaining(bits + data_bits, refs),
+            InvalidOpcode
+        );
+        code_range.skip_first(bits, 0).ok();
+
+        let mut slice_range = *code_range;
+        slice_range.only_first(data_bits, refs).ok();
+
+        code_range.skip_first(data_bits, refs).ok();
+
+        let slice: RcStackValue =
+            Rc::new(OwnedCellSlice::from((st.code.cell().clone(), slice_range)));
+        vm_log!("execute PUSHCONT {}", slice.display_list());
+
+        ok!(Rc::make_mut(&mut st.stack).push_raw(slice));
+        Ok(0)
+    }
+
+    fn exec_push_cont_simple(st: &mut VmState, args: u32, bits: u16) -> VmResult<i32> {
+        let data_bits = ((args & 0xf) * 8) as u16;
+
+        let code_range = st.code.range_mut();
+        vm_ensure!(code_range.has_remaining(bits + data_bits, 0), InvalidOpcode);
+        code_range.skip_first(bits, 0).ok();
+
+        let mut slice_range = *code_range;
+        slice_range.only_first(data_bits, 0).ok();
+
+        code_range.skip_first(data_bits, 0).ok();
+
+        let slice: RcStackValue =
+            Rc::new(OwnedCellSlice::from((st.code.cell().clone(), slice_range)));
+        vm_log!("execute PUSHCONT {}", slice.display_list());
+
+        ok!(Rc::make_mut(&mut st.stack).push_raw(slice));
+        Ok(0)
+    }
+
     // === Slice comparison ops ===
 
     #[instr(code = "c700", fmt = "SEMPTY", args(op = SliceBoolUnaryOp::IsEmpty))]
@@ -952,6 +1045,72 @@ impl Cellops {
     }
 }
 
+enum PushRefMode {
+    Cell,
+    Slice,
+    Cont,
+}
+
+fn exec_push_ref_common(
+    st: &mut VmState,
+    bits: u16,
+    name: &str,
+    mode: PushRefMode,
+) -> VmResult<i32> {
+    let code_range = st.code.range();
+    vm_ensure!(code_range.has_remaining(bits, 1), InvalidOpcode);
+    let ok = st.code.range_mut().skip_first(bits, 0).is_ok();
+    debug_assert!(ok);
+
+    let Some(cell) = st.code.cell().reference_cloned(code_range.offset_refs()) else {
+        vm_bail!(CellError(everscale_types::error::Error::CellUnderflow));
+    };
+    let ok = st.code.range_mut().skip_first(0, 1).is_ok();
+    debug_assert!(ok);
+
+    vm_log!("execute {name} ({})", cell.repr_hash());
+
+    let stack = Rc::make_mut(&mut st.stack);
+    ok!(match mode {
+        PushRefMode::Cell => stack.push(cell),
+        // TODO: Load with gas consumer
+        PushRefMode::Slice => stack.push(OwnedCellSlice::new(cell)),
+        PushRefMode::Cont => {
+            let code = st.gas.context().load_cell(cell, LoadMode::Full)?;
+            let cont = Rc::new(OrdCont::simple(code.into(), st.cp.id()));
+            stack.push_raw(cont)
+        }
+    });
+    Ok(0)
+}
+
+fn exec_push_slice_common(st: &mut VmState, bits: u16, data_bits: u16, refs: u8) -> VmResult<i32> {
+    let code_range = st.code.range_mut();
+    vm_ensure!(
+        code_range.has_remaining(bits + data_bits, refs),
+        InvalidOpcode
+    );
+    code_range.skip_first(bits, 0).ok();
+
+    let mut slice_range = *code_range;
+    slice_range.only_first(data_bits, refs).ok();
+
+    code_range.skip_first(data_bits, refs).ok();
+
+    // Remove tag and trailing zeroes
+    {
+        let mut slice = slice_range.apply(st.code.cell())?;
+        remove_trailing(&mut slice)?;
+        slice_range = slice.range();
+    }
+
+    let slice: RcStackValue = Rc::new(OwnedCellSlice::from((st.code.cell().clone(), slice_range)));
+    vm_log!("execute PUSHSLICE {}", slice.display_list());
+
+    ok!(Rc::make_mut(&mut st.stack).push_raw(slice));
+    Ok(0)
+}
+
 #[derive(Clone, Copy)]
 enum SliceBoolUnaryOp {
     IsEmpty,
@@ -1379,7 +1538,7 @@ fn exec_slice_begins_with_common(
 }
 
 #[inline]
-fn compute_depth<'a, I: IntoIterator<Item = C>, C: AsRef<DynCell>>(references: I) -> u16 {
+fn compute_depth<I: IntoIterator<Item = C>, C: AsRef<DynCell>>(references: I) -> u16 {
     let mut depth = 0;
     for cell in references {
         depth = std::cmp::max(depth, cell.as_ref().repr_depth().saturating_add(1));
@@ -1437,7 +1596,7 @@ mod tests {
             [int 123, raw cont.clone()] => [int 1, int 2],
         );
 
-        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
+        let code = Boc::decode(everscale_asm_macros::tvmasm! {
             r#"
             PUSHINT 1
             PUSHINT 2

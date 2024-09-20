@@ -66,14 +66,14 @@ macro_rules! assert_run_vm {
         $(, exit_code: $exit_code:literal)?
         $(,)?
     ) => {{
-        let (exit_code, vm) = crate::tests::run_vm_with_stack(
+        let (exit_code, vm) = $crate::tests::run_vm_with_stack(
             tvmasm!($($code),+),
-            crate::stack![$($origin_stack)*],
+            $crate::stack![$($origin_stack)*],
         );
-        crate::assert_run_vm!(@check_exit_code exit_code $($exit_code)?);
+        $crate::assert_run_vm!(@check_exit_code exit_code $($exit_code)?);
 
-        let expected_stack = format!("{}", (&crate::stack![$($expected_stack)*] as &dyn crate::stack::StackValue).display_list());
-        let vm_stack = format!("{}", (&vm.stack.items as &dyn crate::stack::StackValue).display_list());
+        let expected_stack = format!("{}", (&$crate::stack![$($expected_stack)*] as &dyn $crate::stack::StackValue).display_list());
+        let vm_stack = format!("{}", (&vm.stack.items as &dyn $crate::stack::StackValue).display_list());
 
         assert_eq!(vm_stack, expected_stack);
     }};
