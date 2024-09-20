@@ -32,8 +32,7 @@ impl Cellops {
         t.add_ext(0x8c, 8, 7, exec_push_slice_r)?;
         t.add_ext_range(0x8d << 10, ((0x8d << 3) + 5) << 7, 18, exec_push_slice_r2)?;
         t.add_ext(0x8e >> 1, 7, 9, exec_push_cont)?;
-        t.add_ext(0x9, 4, 4, exec_push_cont_simple)?;
-        Ok(())
+        t.add_ext(0x9, 4, 4, exec_push_cont_simple)
     }
 
     fn exec_push_ref(st: &mut VmState, _: u32, bits: u16) -> VmResult<i32> {
@@ -210,6 +209,12 @@ impl Cellops {
 
     // === Serializer ops ===
 
+    #[init]
+    fn init_serializer_ops(&self, t: &mut Opcodes) -> Result<()> {
+        t.add_ext_range(0xcf20, 0xcf22, 16, exec_store_const_ref)?;
+        t.add_ext(0xcf80 >> 7, 9, 5, exec_store_const_slice)
+    }
+
     #[instr(code = "c8", fmt = "NEWC")]
     fn exec_new_builder(st: &mut VmState) -> VmResult<i32> {
         ok!(Rc::make_mut(&mut st.stack).push(CellBuilder::new()));
@@ -385,7 +390,78 @@ impl Cellops {
         finish_store_ok(stack, builder, quiet)
     }
 
-    // TODO: exec_store_const_ref
+    fn exec_store_const_ref(st: &mut VmState, args: u32, bits: u16) -> VmResult<i32> {
+        let refs = ((args & 1) + 1) as u8;
+        let code_range = st.code.range_mut();
+        vm_ensure!(code_range.has_remaining(bits, refs), InvalidOpcode);
+        code_range.skip_first(bits, 0).ok();
+
+        vm_log!("execute STREF{refs}CONST");
+
+        let stack = Rc::make_mut(&mut st.stack);
+        let mut builder = ok!(stack.pop_builder());
+
+        vm_ensure!(
+            builder.has_capacity(0, refs),
+            CellError(Error::CellOverflow)
+        );
+
+        {
+            let builder = Rc::make_mut(&mut builder);
+            let mut code = st.code.apply()?;
+            for _ in 0..refs {
+                let cell = code.load_reference_cloned()?;
+                builder.store_reference(cell)?;
+            }
+            st.code.set_range(code.range());
+        }
+
+        ok!(stack.push_raw(builder));
+        Ok(0)
+    }
+
+    #[instr(code = "cf22$ss", fmt = ("{}", s), args(s = StoreLeIntArgs(args)))]
+    fn exec_store_le_int(st: &mut VmState, s: StoreLeIntArgs) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let mut builder = ok!(stack.pop_builder());
+
+        let bits = s.bits();
+        vm_ensure!(
+            builder.has_capacity(bits, 0),
+            CellError(Error::CellOverflow)
+        );
+
+        let x = ok!(stack.pop_int());
+
+        enum Int {
+            U32(u32),
+            U64(u64),
+        }
+
+        let Some(x) = (match (s.is_unsigned(), bits == 64) {
+            (false, false) => x.to_i32().map(|x| Int::U32(x as _)),
+            (false, true) => x.to_i64().map(|x| Int::U64(x as _)),
+            (true, false) => x.to_u32().map(Int::U32),
+            (true, true) => x.to_u64().map(Int::U64),
+        }) else {
+            vm_bail!(IntegerOutOfRange {
+                min: 0,
+                max: bits as _,
+                actual: String::new(),
+            });
+        };
+
+        {
+            let builder = Rc::make_mut(&mut builder);
+            match x {
+                Int::U32(x) => builder.store_u32(x.swap_bytes()),
+                Int::U64(x) => builder.store_u64(x.swap_bytes()),
+            }?;
+        }
+
+        ok!(stack.push_raw(builder));
+        return Ok(0);
+    }
 
     #[instr(code = "cf23", fmt = "ENDXC")]
     fn exec_builder_to_special_cell(st: &mut VmState) -> VmResult<i32> {
@@ -402,8 +478,6 @@ impl Cellops {
         ok!(stack.push(cell));
         Ok(0)
     }
-
-    // TODO: exec_store_le_int
 
     #[instr(code = "cf30", fmt = "BDEPTH")]
     fn exec_builder_depth(st: &mut VmState) -> VmResult<i32> {
@@ -540,7 +614,38 @@ impl Cellops {
         Ok(0)
     }
 
-    // TODO: exec_store_const_slice
+    // cf$1xxxxx
+    fn exec_store_const_slice(st: &mut VmState, args: u32, bits: u16) -> VmResult<i32> {
+        let data_bits = ((args & 0b111) * 8 + 2) as u16;
+        let refs = ((args >> 3) & 0b11) as u8;
+
+        let code_range = st.code.range_mut();
+        vm_ensure!(
+            code_range.has_remaining(bits + data_bits, refs),
+            InvalidOpcode
+        );
+        code_range.skip_first(bits, 0).ok();
+
+        let mut slice_range = *code_range;
+        slice_range.only_first(data_bits, refs).ok();
+
+        code_range.skip_first(data_bits, refs).ok();
+
+        // Remove tag and trailing zeroes
+        let mut slice = slice_range.apply(st.code.cell())?;
+        remove_trailing(&mut slice)?;
+
+        vm_log!(
+            "execute STSLICECONST {}",
+            OwnedCellSlice::from((st.code.cell().clone(), slice_range))
+        );
+
+        let stack = Rc::make_mut(&mut st.stack);
+        let mut builder = ok!(stack.pop_builder());
+        Rc::make_mut(&mut builder).store_slice(slice)?;
+        ok!(stack.push_raw(builder));
+        Ok(0)
+    }
 
     // === Deserializer ops ===
 
@@ -1249,6 +1354,34 @@ fn finish_store_ok(stack: &mut Stack, builder: Rc<CellBuilder>, quiet: bool) -> 
         ok!(stack.push_bool(false)); // `false` here is intentional
     }
     Ok(0)
+}
+
+#[derive(Clone, Copy)]
+struct StoreLeIntArgs(u32);
+
+impl StoreLeIntArgs {
+    const fn is_unsigned(self) -> bool {
+        self.0 & 0b1 != 0
+    }
+
+    const fn is_signed(self) -> bool {
+        !self.is_unsigned()
+    }
+
+    const fn bits(&self) -> u16 {
+        if self.0 & 0b10 != 0 {
+            64
+        } else {
+            32
+        }
+    }
+}
+
+impl std::fmt::Display for StoreLeIntArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let sign = if self.is_signed() { "I" } else { "U" };
+        write!(f, "ST{sign}LE{}", self.bits() / 8)
+    }
 }
 
 #[derive(Clone, Copy)]
