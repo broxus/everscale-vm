@@ -420,12 +420,12 @@ impl Cellops {
         Ok(0)
     }
 
-    #[instr(code = "cf22$ss", fmt = ("{}", s), args(s = StoreLeIntArgs(args)))]
+    #[instr(code = "cf22$ss", fmt = "{s}", args(s = StoreLeIntArgs(args)))]
     fn exec_store_le_int(st: &mut VmState, s: StoreLeIntArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut builder = ok!(stack.pop_builder());
 
-        let bits = s.bits();
+        let bits = if s.is_long() { 64 } else { 32 };
         vm_ensure!(
             builder.has_capacity(bits, 0),
             CellError(Error::CellOverflow)
@@ -438,7 +438,7 @@ impl Cellops {
             U64(u64),
         }
 
-        let Some(x) = (match (s.is_unsigned(), bits == 64) {
+        let Some(x) = (match (s.is_unsigned(), s.is_long()) {
             (false, false) => x.to_i32().map(|x| Int::U32(x as _)),
             (false, true) => x.to_i64().map(|x| Int::U64(x as _)),
             (true, false) => x.to_u32().map(Int::U32),
@@ -648,6 +648,11 @@ impl Cellops {
     }
 
     // === Deserializer ops ===
+
+    #[init]
+    fn init_deserializer_ops(&self, t: &mut Opcodes) -> Result<()> {
+        t.add_ext(0xd728 >> 3, 13, 8, exec_slice_begins_with_const)
+    }
 
     #[instr(code = "d0", fmt = "CTOS")]
     fn exec_cell_to_slice(st: &mut VmState) -> VmResult<i32> {
@@ -866,7 +871,33 @@ impl Cellops {
         exec_slice_begins_with_common(stack, &target, quiet)
     }
 
-    // TODO: exec_slice_begins_with_const
+    // d72$1xxxxxxxx
+    fn exec_slice_begins_with_const(st: &mut VmState, args: u32, bits: u16) -> VmResult<i32> {
+        let quiet = (args & 0x80) != 0;
+        let data_bits = ((args & 0x7f) * 8 + 3) as u16;
+
+        let code_range = st.code.range_mut();
+        vm_ensure!(code_range.has_remaining(bits + data_bits, 0), InvalidOpcode);
+        code_range.skip_first(bits, 0).ok();
+
+        let mut slice_range = *code_range;
+        slice_range.only_first(data_bits, 0).ok();
+
+        code_range.skip_first(data_bits, 0).ok();
+
+        // Remove tag and trailing zeroes
+        let mut slice = slice_range.apply(st.code.cell())?;
+        remove_trailing(&mut slice)?;
+
+        vm_log!(
+            "execute SDBEGINS{} {}",
+            if quiet { "Q" } else { "" },
+            OwnedCellSlice::from((st.code.cell().clone(), slice_range))
+        );
+
+        let stack = Rc::make_mut(&mut st.stack);
+        exec_slice_begins_with_common(stack, &slice, quiet)
+    }
 
     #[instr(code = "d730", fmt = "SCUTFIRST", args(op = SliceRangeOp::CutFirst))]
     #[instr(code = "d731", fmt = "SSKIPFIRST", args(op = SliceRangeOp::SkipFirst))]
@@ -1048,7 +1079,49 @@ impl Cellops {
         Ok(0)
     }
 
-    // TODO: exec_load_le_int
+    #[instr(code = "d75s", fmt = "{s}", args(s = LoadLeIntArgs(args)))]
+    fn exec_load_le_int(st: &mut VmState, s: LoadLeIntArgs) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let mut cs = ok!(stack.pop_cs());
+
+        let bits = if s.is_long() { 64 } else { 32 };
+        if !cs.range().has_remaining(bits, 0) {
+            if !s.is_quiet() {
+                vm_bail!(CellError(Error::CellUnderflow));
+            }
+
+            if !s.is_prefetch() {
+                ok!(stack.push_raw(cs));
+            }
+
+            ok!(stack.push_bool(false));
+            return Ok(0);
+        }
+
+        let range = {
+            let mut slice = cs.apply_allow_special();
+
+            let int = match (s.is_unsigned(), s.is_long()) {
+                (false, false) => BigInt::from(slice.load_u32()?.swap_bytes() as i32),
+                (false, true) => BigInt::from(slice.load_u64()?.swap_bytes() as i64),
+                (true, false) => BigInt::from(slice.load_u32()?.swap_bytes()),
+                (true, true) => BigInt::from(slice.load_u64()?.swap_bytes()),
+            };
+            ok!(stack.push_int(int));
+
+            slice.range()
+        };
+
+        if !s.is_prefetch() {
+            Rc::make_mut(&mut cs).set_range(range);
+            ok!(stack.push_raw(cs));
+        }
+
+        if s.is_quiet() {
+            ok!(stack.push_bool(true));
+        }
+        Ok(0)
+    }
 
     #[instr(code = "d760", fmt = "LDZEROES", args(value = Some(false)))]
     #[instr(code = "d761", fmt = "LDONES", args(value = Some(true)))]
@@ -1368,19 +1441,16 @@ impl StoreLeIntArgs {
         !self.is_unsigned()
     }
 
-    const fn bits(&self) -> u16 {
-        if self.0 & 0b10 != 0 {
-            64
-        } else {
-            32
-        }
+    const fn is_long(&self) -> bool {
+        self.0 & 0b10 != 0
     }
 }
 
 impl std::fmt::Display for StoreLeIntArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let sign = if self.is_signed() { "I" } else { "U" };
-        write!(f, "ST{sign}LE{}", self.bits() / 8)
+        let bytes = if self.is_long() { "8" } else { "4" };
+        write!(f, "ST{sign}LE{bytes}")
     }
 }
 
@@ -1510,6 +1580,41 @@ fn exec_load_int_common(stack: &mut Stack, bits: u16, args: LoadIntArgs) -> VmRe
         ok!(stack.push_bool(true));
     }
     Ok(0)
+}
+
+#[derive(Clone, Copy)]
+struct LoadLeIntArgs(u32);
+
+impl LoadLeIntArgs {
+    const fn is_unsigned(self) -> bool {
+        self.0 & 0b0001 != 0
+    }
+
+    const fn is_signed(self) -> bool {
+        !self.is_unsigned()
+    }
+
+    const fn is_long(&self) -> bool {
+        self.0 & 0b0010 != 0
+    }
+
+    const fn is_prefetch(self) -> bool {
+        self.0 & 0b0100 != 0
+    }
+
+    const fn is_quiet(self) -> bool {
+        self.0 & 0b1000 != 0
+    }
+}
+
+impl std::fmt::Display for LoadLeIntArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let prefetch = if self.is_prefetch() { "P" } else { "" };
+        let sign = if self.is_signed() { "I" } else { "U" };
+        let bytes = if self.is_long() { "8" } else { "4" };
+        let quiet = if self.is_quiet() { "Q" } else { "" };
+        write!(f, "{prefetch}LD{sign}LE{bytes}{quiet}")
+    }
 }
 
 #[derive(Clone, Copy)]
