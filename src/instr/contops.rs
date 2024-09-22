@@ -970,13 +970,35 @@ impl Contops {
     }
 
     #[instr(code = "f2ff", fmt = "TRY")]
-    fn exec_try(s: &mut VmState) -> VmResult<i32> {
-        exec_try_common(s, None)
+    fn exec_try(st: &mut VmState) -> VmResult<i32> {
+        exec_try_common(st, None)
     }
 
     #[instr(code = "f3pr", fmt = "TRYARGS {p},{r}")]
-    fn exec_tryargs(s: &mut VmState, p: u32, r: u32) -> VmResult<i32> {
-        exec_try_common(s, Some((p as u16, r as u16)))
+    fn exec_tryargs(st: &mut VmState, p: u32, r: u32) -> VmResult<i32> {
+        exec_try_common(st, Some((p as u16, r as u16)))
+    }
+
+    // === Codepage ops ===
+    #[instr(code = "fff0", fmt = "SETCPX")]
+    fn exec_set_cp_any(st: &mut VmState) -> VmResult<i32> {
+        let cp = ok!(Rc::make_mut(&mut st.stack).pop_smallint_signed_range(-0x8000, 0x7fff));
+        ok!(st.force_cp(cp as i16 as u16));
+        Ok(0)
+    }
+
+    #[instr(code = "ff00", fmt = "SETCP0", args(x = 0i16))]
+    #[instr(
+        code = "ffxx",
+        range_from = "ff01",
+        range_to = "fff0",
+        fmt = "SETCP",
+        args(x = (args & 0xff) as i16),
+    )]
+    #[instr(code = "fffx", range_from = "fff1", fmt = "SETCP {x}", args(x = (args & 0xf) as i16 - 16))]
+    fn exec_set_cp(st: &mut VmState, x: i16) -> VmResult<i32> {
+        ok!(st.force_cp(x as u16));
+        Ok(0)
     }
 }
 
