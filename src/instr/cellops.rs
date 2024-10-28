@@ -1405,7 +1405,7 @@ fn exec_store_int_common(stack: &mut Stack, bits: u16, args: StoreIntArgs) -> Vm
     finish_store_ok(stack, builder, args.is_quiet())
 }
 
-fn finish_store_overflow(
+pub(crate) fn finish_store_overflow(
     stack: &mut Stack,
     arg1: RcStackValue,
     arg2: RcStackValue,
@@ -1421,7 +1421,7 @@ fn finish_store_overflow(
     }
 }
 
-fn finish_store_ok(stack: &mut Stack, builder: Rc<CellBuilder>, quiet: bool) -> VmResult<i32> {
+pub(crate) fn finish_store_ok(stack: &mut Stack, builder: Rc<CellBuilder>, quiet: bool) -> VmResult<i32> {
     ok!(stack.push_raw(builder));
     if quiet {
         ok!(stack.push_bool(false)); // `false` here is intentional
