@@ -137,7 +137,7 @@ impl Dictops {
         };
 
         if key.is_empty() {
-            return Err(Box::new(VmError::CellError(Error::CellUnderflow)));
+            vm_bail!(CellError(Error::CellUnderflow))
         }
 
         let value: RcStackValue = ok!(stack.pop());
@@ -181,7 +181,7 @@ impl Dictops {
         );
 
         let Some(dict) = dict else {
-            return Err(Box::new(VmError::CellError(Error::CellUnderflow))); //TODO: proper error?
+            vm_bail!(CellError(Error::CellUnderflow)) //TODO: proper error?
         };
 
         ok!(stack.push_raw(dict));
@@ -276,6 +276,120 @@ impl Dictops {
         Ok(0)
     }
 
+    #[instr(code = "f4ss", range_from = "f459", range_to = "f45c", fmt = ("{}", format_dict_delete("DEL", s)), args(s = DictOpArgs(args)))]
+    fn exec_dict_delete(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
+        let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
+
+
+        let key_slice;
+        let mut builder;
+
+        let mut key = if s.is_int() {
+            let int = ok!(stack.pop_int());
+            builder = CellBuilder::new();
+            store_int_to_builder(&int, n, &mut builder)?;
+            let key = builder.as_data_slice();
+            if key.is_empty() {
+                match dict {
+                    Some(dict) => ok!(stack.push_raw(dict)),
+                    None => ok!(stack.push_null()), //TODO: do we need to push null here?
+                }
+                ok!(stack.push_int(0));
+                return Ok(0)
+            }
+            key
+        } else {
+            key_slice = stack.pop_cs()?;
+            key_slice.apply()?
+        };
+
+        let result = dict::dict_remove_owned(
+            &mut dict.as_deref().cloned(),
+            &mut key,
+            n,
+            true,
+            &mut Cell::empty_context()
+        )?;
+        match dict {
+            Some(dict) => ok!(stack.push_raw(dict)),
+            None => ok!(stack.push_null()), //TODO: do we need to push null here?
+        }
+        ok!(stack.push_bool(result.is_some()));
+
+        Ok(0)
+    }
+
+
+    #[instr(code = "f4ss", range_from = "f462", range_to = "f468", fmt = ("{}", format_dict_delete("DELGET", s)), args(s = DictOpArgs(args)))]
+    fn exec_dict_deleteget(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
+        let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
+
+
+        let key_slice;
+        let mut builder;
+
+        let mut key = if s.is_int() {
+            let int = ok!(stack.pop_int());
+            builder = CellBuilder::new();
+            store_int_to_builder(&int, n, &mut builder)?;
+            let key = builder.as_data_slice();
+            if key.is_empty() {
+                match dict {
+                    Some(dict) => ok!(stack.push_raw(dict)),
+                    None => ok!(stack.push_null()), //TODO: do we need to push null here?
+                }
+                ok!(stack.push_int(0));
+                return Ok(0)
+            }
+            key
+        } else {
+            key_slice = stack.pop_cs()?;
+            key_slice.apply()?
+        };
+
+        let result = dict::dict_remove_owned(
+            &mut dict.as_deref().cloned(),
+            &mut key,
+            n,
+            true,
+            &mut Cell::empty_context()
+        )?;
+
+        match dict {
+            Some(dict) => ok!(stack.push_raw(dict)),
+            None => ok!(stack.push_null()), //TODO: do we need to push null here?
+        }
+
+        if !s.is_ref() {
+            let is_ok = result.is_some();
+            if let Some(res) = result {
+                ok!(stack.push_raw(Rc::new(res.0)));
+            }
+            ok!(stack.push_bool(is_ok));
+
+        } else {
+            let is_ok = result.is_some();
+            if let Some(res) = result {
+                if res.0.reference_count() != 1 {
+                    vm_bail!(CellError(Error::InvalidCell))
+                }
+
+                let Some(cell) = res.0.reference_cloned(0) else {
+                    vm_bail!(CellError(Error::InvalidCell))
+                };
+                ok!(stack.push_raw(Rc::new(cell)));
+            }
+
+            ok!(stack.push_bool(is_ok));
+        }
+
+        Ok(0)
+    }
+
 
 }
 
@@ -317,6 +431,13 @@ fn format_dict_set(name: &str, args: DictOpArgs, bld: bool ) -> String {
     let is_bld = if bld {"B"} else {""};
     let is_ref = if args.is_ref() { "REF" } else { is_bld };
 
+    format!("DICT{is_int}{name}{is_ref}")
+}
+
+fn format_dict_delete(name: &str, args: DictOpArgs ) -> String {
+    let is_unsigned = if args.is_unsigned() { "U" } else { "I" };
+    let is_int = if args.is_int() { is_unsigned } else { "" };
+    let is_ref = if args.is_ref() { "REF" } else { "" };
     format!("DICT{is_int}{name}{is_ref}")
 }
 
