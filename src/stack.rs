@@ -250,6 +250,15 @@ impl Stack {
         self.pop()?.into_cell()
     }
 
+    pub fn pop_cell_opt(&mut self) -> VmResult<Option<Rc<Cell>>> {
+        let sv = self.pop()?;
+        if sv.is_null() {
+            Ok(None)
+        } else {
+            sv.into_cell().map(Some)
+        }
+    }
+
     pub fn pop_many(&mut self, n: usize) -> VmResult<()> {
         let Some(new_len) = self.depth().checked_sub(n) else {
             vm_bail!(StackUnderflow(n));
