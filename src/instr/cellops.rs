@@ -1421,7 +1421,11 @@ pub(crate) fn finish_store_overflow(
     }
 }
 
-pub(crate) fn finish_store_ok(stack: &mut Stack, builder: Rc<CellBuilder>, quiet: bool) -> VmResult<i32> {
+pub(crate) fn finish_store_ok(
+    stack: &mut Stack,
+    builder: Rc<CellBuilder>,
+    quiet: bool,
+) -> VmResult<i32> {
     ok!(stack.push_raw(builder));
     if quiet {
         ok!(stack.push_bool(false)); // `false` here is intentional

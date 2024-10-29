@@ -15,9 +15,9 @@ mod arithops;
 mod cellops;
 mod contops;
 mod debugops;
+mod dictops;
 mod stackops;
 mod tupleops;
-mod dictops;
 
 pub fn codepage(n: u16) -> Option<&'static DispatchTable> {
     match n {
