@@ -3,7 +3,6 @@ use crate::stack::{RcStackValue, StackValueType};
 use crate::util::{store_int_to_builder, OwnedCellSlice};
 use crate::VmState;
 use everscale_types::cell::CellBuilder;
-use everscale_types::dict;
 use everscale_types::dict::SetMode;
 use everscale_types::error::Error;
 use everscale_types::prelude::{Cell, CellFamily, Store};
@@ -173,8 +172,10 @@ impl Dictops {
             },
         };
 
+        let mut dict = dict.as_deref().cloned();
+
         let result = everscale_types::dict::dict_insert(
-            &mut dict.as_deref().cloned(),
+            &mut dict,
             &mut key,
             n,
             value_ref,
@@ -182,11 +183,7 @@ impl Dictops {
             &mut Cell::empty_context(),
         );
 
-        let Some(dict) = dict else {
-            vm_bail!(CellError(Error::CellUnderflow)) //TODO: proper error?
-        };
-
-        ok!(stack.push_raw(dict));
+        ok!(stack.push_opt(dict));
 
         match mode {
             SetMode::Set => {
@@ -271,7 +268,7 @@ impl Dictops {
             },
         };
 
-        let (_, prev) = dict::dict_insert_owned(
+        let (_, prev) = everscale_types::dict::dict_insert_owned(
             &mut dict.as_deref().cloned(),
             &mut key,
             n,
@@ -298,6 +295,7 @@ impl Dictops {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
+        let mut dict = dict.as_deref().cloned();
 
         let key_slice;
         let mut builder;
@@ -308,10 +306,7 @@ impl Dictops {
             store_int_to_builder(&int, n, &mut builder)?;
             let key = builder.as_data_slice();
             if key.is_empty() {
-                match dict {
-                    Some(dict) => ok!(stack.push_raw(dict)),
-                    None => vm_bail!(StackUnderflow(1)),
-                }
+                ok!(stack.push_opt(dict));
                 ok!(stack.push_int(0));
                 return Ok(0);
             }
@@ -321,17 +316,14 @@ impl Dictops {
             key_slice.apply()?
         };
 
-        let result = dict::dict_remove_owned(
-            &mut dict.as_deref().cloned(),
+        let result = everscale_types::dict::dict_remove_owned(
+            &mut dict,
             &mut key,
             n,
             true,
             &mut Cell::empty_context(),
         )?;
-        match dict {
-            Some(dict) => ok!(stack.push_raw(dict)),
-            None => vm_bail!(StackUnderflow(1)),
-        }
+        ok!(stack.push_opt(dict));
         ok!(stack.push_bool(result.is_some()));
 
         Ok(0)
@@ -365,7 +357,7 @@ impl Dictops {
             key_slice.apply()?
         };
 
-        let result = dict::dict_remove_owned(
+        let result = everscale_types::dict::dict_remove_owned(
             &mut dict.as_deref().cloned(),
             &mut key,
             n,
@@ -504,6 +496,49 @@ impl Dictops {
             None => vm_bail!(CellError(Error::InvalidData)),
         }
 
+        Ok(0)
+    }
+
+    fn exec_pfx_dict_set(st: &mut VmState, mode: SetMode) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
+        let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
+
+        let key_slice_owned = ok!(stack.pop_cs());
+        let mut key_slice = key_slice_owned.apply()?;
+
+        let new_value = ok!(stack.pop_cs());
+        let mut dict = dict.as_deref().cloned();
+        let (result, _) = everscale_types::dict::dict_insert_owned(
+            &mut dict,
+            &mut key_slice,
+            n,
+            &new_value.apply()?,
+            mode,
+            &mut Cell::empty_context(),
+        )?;
+        ok!(stack.push_opt(dict));
+        ok!(stack.push_bool(result));
+        Ok(0)
+    }
+
+    fn exec_pfx_dict_delete(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
+        let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
+
+        let key_slice_owned: Rc<OwnedCellSlice> = ok!(stack.pop_cs());
+        let mut key_slice = key_slice_owned.apply()?;
+        let mut dict = dict.as_deref().cloned();
+        let res = everscale_types::dict::dict_remove_owned(
+            &mut dict,
+            &mut key_slice,
+            n,
+            false,
+            &mut Cell::empty_context(),
+        )?;
+        ok!(stack.push_opt(dict));
+        ok!(stack.push_bool(res.is_some()));
         Ok(0)
     }
 }
