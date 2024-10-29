@@ -1,15 +1,15 @@
 use crate::error::{VmError, VmResult};
-use crate::util::{ store_int_to_builder, OwnedCellSlice};
+use crate::stack::{RcStackValue, StackValueType};
+use crate::util::{store_int_to_builder, OwnedCellSlice};
 use crate::VmState;
-use everscale_types::cell::{CellBuilder};
+use everscale_types::cell::CellBuilder;
+use everscale_types::dict;
+use everscale_types::dict::SetMode;
 use everscale_types::error::Error;
 use everscale_types::prelude::{Cell, CellFamily, Store};
 use everscale_vm_proc::vm_module;
 use std::fmt::Formatter;
 use std::rc::Rc;
-use everscale_types::dict;
-use everscale_types::dict::{SetMode};
-use crate::stack::{RcStackValue, StackValueType};
 
 pub struct Dictops;
 
@@ -62,7 +62,7 @@ impl Dictops {
     //     Ok(0)
     // }
 
-    #[instr(code = "f40s", range_from = "f40a", range_to = "f40f", fmt = ("{}", s.display()), args(s = DictOpArgs(args)))]
+    #[instr(code = "f40s", range_from = "f40a", range_to = "f40f", fmt = ("{}", s.display()), args(s = DictOpArgs::new("GET", args)))]
     fn exec_dict_get(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
@@ -87,7 +87,7 @@ impl Dictops {
             key,
             &mut Cell::empty_context(),
         )?
-            .map(OwnedCellSlice::from);
+        .map(OwnedCellSlice::from);
 
         if s.is_ref() {
             match cs {
@@ -112,12 +112,12 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f4ss", range_from = "f412", range_to = "f418", fmt = ("{}", format_dict_set("SET", s, bld)), args(s = DictOpArgs(args), mode = SetMode::Set, bld = false))]
-    #[instr(code = "f4ss", range_from = "f432", range_to = "f438", fmt = ("{}", format_dict_set("SET", s, bld)), args(s = DictOpArgs(args), mode = SetMode::Set, bld = true))]
-    #[instr(code = "f4ss", range_from = "f422", range_to = "f428", fmt = ("{}", format_dict_set("REPLACE", s, bld)), args(s = DictOpArgs(args), mode = SetMode::Replace, bld = false))]
-    #[instr(code = "f4ss", range_from = "f449", range_to = "f44c", fmt = ("{}", format_dict_set("REPLACE", s, bld)), args(s = DictOpArgs(args), mode = SetMode::Replace, bld = true))]
-    #[instr(code = "f4ss", range_from = "f441", range_to = "f444", fmt = ("{}", format_dict_set("ADD", s, bld)), args(s = DictOpArgs(args), mode = SetMode::Add, bld = false))]
-    #[instr(code = "f4ss", range_from = "f451", range_to = "f454", fmt = ("{}", format_dict_set("ADD", s, bld)), args(s = DictOpArgs(args), mode = SetMode::Add, bld = true))]
+    #[instr(code = "f4ss", range_from = "f412", range_to = "f418", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("SET", args), mode = SetMode::Set, bld = false))]
+    #[instr(code = "f4ss", range_from = "f432", range_to = "f438", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("SET", args), mode = SetMode::Set, bld = true))]
+    #[instr(code = "f4ss", range_from = "f422", range_to = "f428", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("REPLACE", args), mode = SetMode::Replace, bld = false))]
+    #[instr(code = "f4ss", range_from = "f449", range_to = "f44c", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("REPLACE", args), mode = SetMode::Replace, bld = true))]
+    #[instr(code = "f4ss", range_from = "f441", range_to = "f444", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("ADD", args), mode = SetMode::Add, bld = false))]
+    #[instr(code = "f4ss", range_from = "f451", range_to = "f454", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("ADD", args), mode = SetMode::Add, bld = true))]
     fn exec_dict_set(st: &mut VmState, s: DictOpArgs, mode: SetMode, bld: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
@@ -143,32 +143,34 @@ impl Dictops {
         let value: RcStackValue = ok!(stack.pop());
         let value_slice;
 
-
         let value_ref: &dyn Store = match (bld, s.is_ref()) {
-            (true, _) => {
-                match value.as_builder() {
-                    Some(builder) => {
-                        value_slice = builder.as_full_slice();
-                        &value_slice as &dyn Store
-                    }
-                    None => vm_bail!(InvalidType {expected: StackValueType::Builder, actual: value.ty() })
+            (true, _) => match value.as_builder() {
+                Some(builder) => {
+                    value_slice = builder.as_full_slice();
+                    &value_slice as &dyn Store
                 }
-            }
-            (false, false) => {
-                match value.as_slice() {
-                    Some(slice) => {
-                        value_slice = slice.apply()?;
-                        &value_slice as &dyn Store
-                    }
-                    None => vm_bail!(InvalidType {expected: StackValueType::Slice, actual: value.ty() })
+                None => vm_bail!(InvalidType {
+                    expected: StackValueType::Builder,
+                    actual: value.ty()
+                }),
+            },
+            (false, false) => match value.as_slice() {
+                Some(slice) => {
+                    value_slice = slice.apply()?;
+                    &value_slice as &dyn Store
                 }
-            }
-            _ => {
-                match value.as_cell() {
-                    Some(cell) => cell as &dyn Store,
-                    None => vm_bail!(InvalidType {expected: StackValueType::Cell, actual: value.ty() })
-                }
-            }
+                None => vm_bail!(InvalidType {
+                    expected: StackValueType::Slice,
+                    actual: value.ty()
+                }),
+            },
+            _ => match value.as_cell() {
+                Some(cell) => cell as &dyn Store,
+                None => vm_bail!(InvalidType {
+                    expected: StackValueType::Cell,
+                    actual: value.ty()
+                }),
+            },
         };
 
         let result = everscale_types::dict::dict_insert(
@@ -192,19 +194,24 @@ impl Dictops {
                     return Err(Box::new(VmError::CellError(Error::InvalidCell)));
                 }
             }
-            _ => ok!(stack.push_bool(result.is_ok()))
+            _ => ok!(stack.push_bool(result.is_ok())),
         }
 
         Ok(0)
     }
 
-    #[instr(code = "f4ss", range_from = "f41a", range_to = "f420", fmt = ("{}", format_dict_set("SETGET", s, bld)), args(s = DictOpArgs(args), mode = SetMode::Set, bld = false))]
-    #[instr(code = "f4ss", range_from = "f445", range_to = "f448", fmt = ("{}", format_dict_set("SETGET", s, bld)), args(s = DictOpArgs(args), mode = SetMode::Set, bld = true))]
-    #[instr(code = "f4ss", range_from = "f42a", range_to = "f430", fmt = ("{}", format_dict_set("REPLACEGET", s, bld)), args(s = DictOpArgs(args), mode = SetMode::Replace, bld = false))]
-    #[instr(code = "f4ss", range_from = "f44d", range_to = "f450", fmt = ("{}", format_dict_set("REPLACEGET", s, bld)), args(s = DictOpArgs(args), mode = SetMode::Replace, bld = true))]
-    #[instr(code = "f4ss", range_from = "f43a", range_to = "f440", fmt = ("{}", format_dict_set("ADDGET", s, bld)), args(s = DictOpArgs(args), mode = SetMode::Add, bld = false))]
-    #[instr(code = "f4ss", range_from = "f455", range_to = "f458", fmt = ("{}", format_dict_set("ADDGET", s, bld)), args(s = DictOpArgs(args), mode = SetMode::Add, bld = true))]
-    fn exec_dict_set_get(st: &mut VmState, s: DictOpArgs, mode: SetMode, bld: bool) -> VmResult<i32> {
+    #[instr(code = "f4ss", range_from = "f41a", range_to = "f420", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("SETGET", args), mode = SetMode::Set, bld = false))]
+    #[instr(code = "f4ss", range_from = "f445", range_to = "f448", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("SETGET", args), mode = SetMode::Set, bld = true))]
+    #[instr(code = "f4ss", range_from = "f42a", range_to = "f430", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("REPLACEGET", args), mode = SetMode::Replace, bld = false))]
+    #[instr(code = "f4ss", range_from = "f44d", range_to = "f450", fmt = ("{}", format_dict_set( s, bld)), args(s = DictOpArgs::new("REPLACEGET", args), mode = SetMode::Replace, bld = true))]
+    #[instr(code = "f4ss", range_from = "f43a", range_to = "f440", fmt = ("{}", format_dict_set( s, bld)), args(s = DictOpArgs::new("ADDGET", args), mode = SetMode::Add, bld = false))]
+    #[instr(code = "f4ss", range_from = "f455", range_to = "f458", fmt = ("{}", format_dict_set( s, bld)), args(s = DictOpArgs::new("ADDGET", args), mode = SetMode::Add, bld = true))]
+    fn exec_dict_setget(
+        st: &mut VmState,
+        s: DictOpArgs,
+        mode: SetMode,
+        bld: bool,
+    ) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
@@ -228,40 +235,50 @@ impl Dictops {
 
         let is_not_add = match mode {
             SetMode::Add => false,
-            _ => true
+            _ => true,
         };
 
         let value: RcStackValue = ok!(stack.pop());
         let value_slice;
 
         let value_ref: &dyn Store = match (bld, s.is_ref()) {
-            (true, _) => {
-                match value.as_builder() {
-                    Some(builder) => {
-                        value_slice = builder.as_full_slice();
-                        &value_slice as &dyn Store
-                    }
-                    None => vm_bail!(InvalidType {expected: StackValueType::Builder, actual: value.ty() })
+            (true, _) => match value.as_builder() {
+                Some(builder) => {
+                    value_slice = builder.as_full_slice();
+                    &value_slice as &dyn Store
                 }
-            }
-            (false, false) => {
-                match value.as_slice() {
-                    Some(slice) => {
-                        value_slice = slice.apply()?;
-                        &value_slice as &dyn Store
-                    }
-                    None => vm_bail!(InvalidType {expected: StackValueType::Slice, actual: value.ty() })
+                None => vm_bail!(InvalidType {
+                    expected: StackValueType::Builder,
+                    actual: value.ty()
+                }),
+            },
+            (false, false) => match value.as_slice() {
+                Some(slice) => {
+                    value_slice = slice.apply()?;
+                    &value_slice as &dyn Store
                 }
-            }
-            _ => {
-                match value.as_cell() {
-                    Some(cell) => cell as &dyn Store,
-                    None => vm_bail!(InvalidType {expected: StackValueType::Cell, actual: value.ty() })
-                }
-            }
+                None => vm_bail!(InvalidType {
+                    expected: StackValueType::Slice,
+                    actual: value.ty()
+                }),
+            },
+            _ => match value.as_cell() {
+                Some(cell) => cell as &dyn Store,
+                None => vm_bail!(InvalidType {
+                    expected: StackValueType::Cell,
+                    actual: value.ty()
+                }),
+            },
         };
 
-        let (_, prev) = dict::dict_insert_owned(&mut dict.as_deref().cloned(), &mut key, n, value_ref, mode, &mut Cell::empty_context())?;
+        let (_, prev) = dict::dict_insert_owned(
+            &mut dict.as_deref().cloned(),
+            &mut key,
+            n,
+            value_ref,
+            mode,
+            &mut Cell::empty_context(),
+        )?;
         if let Some(dict) = dict {
             ok!(stack.push_raw(dict));
         };
@@ -276,12 +293,11 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f4ss", range_from = "f459", range_to = "f45c", fmt = ("{}", format_dict_delete("DEL", s)), args(s = DictOpArgs(args)))]
+    #[instr(code = "f4ss", range_from = "f459", range_to = "f45c", fmt = ("{}", s.display()), args(s = DictOpArgs::new("DEL", args)))]
     fn exec_dict_delete(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
-
 
         let key_slice;
         let mut builder;
@@ -294,10 +310,10 @@ impl Dictops {
             if key.is_empty() {
                 match dict {
                     Some(dict) => ok!(stack.push_raw(dict)),
-                    None => ok!(stack.push_null()), //TODO: do we need to push null here?
+                    None => vm_bail!(StackUnderflow(1)),
                 }
                 ok!(stack.push_int(0));
-                return Ok(0)
+                return Ok(0);
             }
             key
         } else {
@@ -310,24 +326,22 @@ impl Dictops {
             &mut key,
             n,
             true,
-            &mut Cell::empty_context()
+            &mut Cell::empty_context(),
         )?;
         match dict {
             Some(dict) => ok!(stack.push_raw(dict)),
-            None => ok!(stack.push_null()), //TODO: do we need to push null here?
+            None => vm_bail!(StackUnderflow(1)),
         }
         ok!(stack.push_bool(result.is_some()));
 
         Ok(0)
     }
 
-
-    #[instr(code = "f4ss", range_from = "f462", range_to = "f468", fmt = ("{}", format_dict_delete("DELGET", s)), args(s = DictOpArgs(args)))]
+    #[instr(code = "f4ss", range_from = "f462", range_to = "f468", fmt = ("{}", s.display()), args(s = DictOpArgs::new("DELGET", args)))]
     fn exec_dict_deleteget(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
-
 
         let key_slice;
         let mut builder;
@@ -340,10 +354,10 @@ impl Dictops {
             if key.is_empty() {
                 match dict {
                     Some(dict) => ok!(stack.push_raw(dict)),
-                    None => ok!(stack.push_null()), //TODO: do we need to push null here?
+                    None => vm_bail!(StackUnderflow(1)),
                 }
                 ok!(stack.push_int(0));
-                return Ok(0)
+                return Ok(0);
             }
             key
         } else {
@@ -356,12 +370,12 @@ impl Dictops {
             &mut key,
             n,
             true,
-            &mut Cell::empty_context()
+            &mut Cell::empty_context(),
         )?;
 
         match dict {
             Some(dict) => ok!(stack.push_raw(dict)),
-            None => ok!(stack.push_null()), //TODO: do we need to push null here?
+            None => vm_bail!(StackUnderflow(1)),
         }
 
         if !s.is_ref() {
@@ -370,7 +384,6 @@ impl Dictops {
                 ok!(stack.push_raw(Rc::new(res.0)));
             }
             ok!(stack.push_bool(is_ok));
-
         } else {
             let is_ok = result.is_some();
             if let Some(res) = result {
@@ -390,55 +403,163 @@ impl Dictops {
         Ok(0)
     }
 
+    #[instr(code = "f4ss", range_from = "f469", range_to = "f46c", fmt = ("{}", s.display()), args(s = DictOpArgs::new("GETOPTREF", args)))]
+    fn exec_dict_get_optref(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
+        let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
 
+        let key_slice;
+        let mut builder;
+
+        let key = if s.is_int() {
+            let int = ok!(stack.pop_int());
+            builder = CellBuilder::new();
+            if let Err(e) = store_int_to_builder(&int, n, &mut builder) {
+                vm_log!(e);
+                ok!(stack.push_null());
+                return Ok(0);
+            }
+            Ok(builder.as_data_slice())
+        } else {
+            key_slice = stack.pop_cs()?;
+            key_slice.apply()
+        };
+
+        let key = match key {
+            Ok(key) => key,
+            Err(e) => vm_bail!(CellError(e)),
+        };
+
+        let cs = everscale_types::dict::dict_get_owned(
+            dict.as_deref(),
+            n,
+            key,
+            &mut Cell::empty_context(),
+        )?
+        .map(OwnedCellSlice::from);
+
+        match cs {
+            None => vm_bail!(CellError(Error::CellUnderflow)),
+            Some(slice) => {
+                let slice = slice.apply()?;
+                if slice.size_refs() != 1 {
+                    vm_bail!(CellError(Error::InvalidData))
+                }
+                let cell = slice.get_reference_cloned(0).ok();
+                ok!(stack.push_opt(cell));
+            }
+        }
+        Ok(0)
+    }
+    #[instr(code = "f4ss", range_from = "f46d", range_to = "f470", fmt = ("{}", s.display()), args(s = DictOpArgs::new("SETGETOPTREF", args)))]
+    fn exec_dict_setget_optref(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
+        let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
+
+        let key_slice;
+        let mut builder;
+
+        let key = if s.is_int() {
+            let int = ok!(stack.pop_int());
+            builder = CellBuilder::new();
+            store_int_to_builder(&int, n, &mut builder).map(|_| builder.as_data_slice())
+        } else {
+            key_slice = stack.pop_cs()?;
+            key_slice.apply()
+        };
+
+        let mut key = match key {
+            Ok(key) => key,
+            Err(e) => vm_bail!(CellError(e)),
+        };
+
+        let mut dict = dict.as_deref().cloned();
+
+        let new_value = ok!(stack.pop_cell_opt());
+        let value = match new_value {
+            Some(cell) => everscale_types::dict::dict_insert_owned(
+                &mut dict,
+                &mut key,
+                n,
+                &cell,
+                SetMode::Set,
+                &mut Cell::empty_context(),
+            )
+            .map(|res| res.1)?,
+            None => everscale_types::dict::dict_remove_owned(
+                &mut dict,
+                &mut key,
+                n,
+                false,
+                &mut Cell::empty_context(),
+            )?,
+        };
+        match dict {
+            Some(dict) => {
+                ok!(stack.push_raw(Rc::new(dict)));
+                ok!(stack.push_opt(value.map(|x| x.0)));
+            }
+            None => vm_bail!(CellError(Error::InvalidData)),
+        }
+
+        Ok(0)
+    }
 }
 
-struct DictOpArgs(u32);
+struct DictOpArgs {
+    name: String,
+    args: u32,
+}
 
 impl DictOpArgs {
+    pub fn new(name: &str, args: u32) -> Self {
+        Self {
+            name: name.to_string(),
+            args,
+        }
+    }
     pub fn is_unsigned(&self) -> bool {
-        self.0 & 0b010 != 0
+        self.args & 0b010 != 0
     }
 
     pub fn is_int(&self) -> bool {
-        self.0 & 0b100 != 0
+        self.args & 0b100 != 0
     }
 
     pub fn is_ref(&self) -> bool {
-        self.0 & 0b001 != 0
+        self.args & 0b001 != 0
     }
 
     fn display(&self) -> DisplayDictOpArgs {
-        DisplayDictOpArgs(self.0)
+        DisplayDictOpArgs {
+            args: self.args,
+            name: self.name.to_string(),
+        }
     }
 }
 
-struct DisplayDictOpArgs(u32);
+struct DisplayDictOpArgs {
+    args: u32,
+    name: String,
+}
 impl std::fmt::Display for DisplayDictOpArgs {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let args = DictOpArgs(self.0);
+        let args = DictOpArgs::new(&self.name, self.args);
         let is_unsigned = if args.is_unsigned() { "U" } else { "I" };
         let is_int = if args.is_int() { is_unsigned } else { "" };
         let is_ref = if args.is_ref() { "REF" } else { "" };
 
-        write!(f, "DICT{is_int}GET{is_ref}")
+        write!(f, "DICT{is_int}{}{is_ref}", args.name)
     }
 }
 
-fn format_dict_set(name: &str, args: DictOpArgs, bld: bool ) -> String {
+fn format_dict_set(args: DictOpArgs, bld: bool) -> String {
     let is_unsigned = if args.is_unsigned() { "U" } else { "I" };
     let is_int = if args.is_int() { is_unsigned } else { "" };
-    let is_bld = if bld {"B"} else {""};
+    let is_bld = if bld { "B" } else { "" };
     let is_ref = if args.is_ref() { "REF" } else { is_bld };
 
-    format!("DICT{is_int}{name}{is_ref}")
+    format!("DICT{is_int}{}{is_ref}", &args.name)
 }
-
-fn format_dict_delete(name: &str, args: DictOpArgs ) -> String {
-    let is_unsigned = if args.is_unsigned() { "U" } else { "I" };
-    let is_int = if args.is_int() { is_unsigned } else { "" };
-    let is_ref = if args.is_ref() { "REF" } else { "" };
-    format!("DICT{is_int}{name}{is_ref}")
-}
-
-
