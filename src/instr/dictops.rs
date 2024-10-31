@@ -1,9 +1,9 @@
 use crate::error::{VmError, VmResult};
 use crate::stack::{RcStackValue, StackValueType};
-use crate::util::{store_int_to_builder, OwnedCellSlice};
+use crate::util::{load_int_from_slice, store_int_to_builder, OwnedCellSlice};
 use crate::VmState;
 use everscale_types::cell::CellBuilder;
-use everscale_types::dict::SetMode;
+use everscale_types::dict::{DictBound, SetMode};
 use everscale_types::error::Error;
 use everscale_types::prelude::{Cell, CellFamily, Store};
 use everscale_vm_proc::vm_module;
@@ -541,6 +541,85 @@ impl Dictops {
         ok!(stack.push_bool(res.is_some()));
         Ok(0)
     }
+
+    #[instr(code = "f4ss", range_from = "f482", range_to = "f488", fmt = ("{}", s.display()), args(s = DictOpArgs::new("MIN", args)))]
+    #[instr(code = "f4ss", range_from = "f48a", range_to = "f490", fmt = ("{}", s.display()), args(s = DictOpArgs::new("MAX", args)))]
+    #[instr(code = "f4ss", range_from = "f492", range_to = "f498", fmt = ("{}", s.display()), args(s = DictOpArgs::new("REMMIN", args)))]
+    #[instr(code = "f4ss", range_from = "f49a", range_to = "f4a0", fmt = ("{}", s.display()), args(s = DictOpArgs::new("REMMAX", args)))]
+    fn exec_dict_get_min(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+
+        let max_key_bytes = match (s.is_int(), s.is_unsigned()) {
+            (true, true) => 256,
+            (true, false) => 257,
+            _ => 1023,
+        };
+
+        let n = ok!(stack.pop_smallint_range(0, max_key_bytes)) as u16;
+        let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
+        let mut dict_deref = dict.as_deref().cloned();
+
+        let bound = if s.is_max() {
+            DictBound::Max
+        } else {
+            DictBound::Min
+        };
+
+        let mut found_key: CellBuilder;
+
+        let key_value_opt = if s.is_rem() {
+            everscale_types::dict::dict_remove_bound_owned(
+                &mut dict_deref,
+                n,
+                bound,
+                s.is_signed(),
+                &mut Cell::empty_context(),
+            )?
+            .map(|(key, value)| (key, value.0))
+        } else {
+            everscale_types::dict::dict_find_bound_owned(
+                dict_deref.as_ref(),
+                n,
+                bound,
+                s.is_signed(),
+                &mut Cell::empty_context(),
+            )?
+            .map(|(key, value)| (key, value.0))
+        };
+
+        if s.is_rem() {
+            ok!(stack.push_opt(dict_deref));
+        }
+
+        if let Some((key, value)) = key_value_opt {
+            found_key = key;
+            //found_value = value.clone();
+
+            if !s.is_ref() {
+                ok!(stack.push_raw(Rc::new(value)));
+            } else {
+                if value.reference_count() != 1 {
+                    vm_bail!(CellError(Error::InvalidCell))
+                }
+                let cell = value.reference_cloned(0).unwrap();
+                ok!(stack.push_raw(Rc::new(cell)));
+            }
+        } else {
+            ok!(stack.push_bool(false));
+            return Ok(0);
+        }
+
+        if s.is_int() {
+            let int = load_int_from_slice(&mut found_key.as_full_slice(), n, s.is_signed())?;
+            ok!(stack.push_int(int));
+        } else {
+            let cell = found_key.build()?;
+            ok!(stack.push_raw(Rc::new(OwnedCellSlice::from(cell))));
+        }
+
+        ok!(stack.push_bool(true));
+        Ok(0)
+    }
 }
 
 struct DictOpArgs {
@@ -559,12 +638,24 @@ impl DictOpArgs {
         self.args & 0b010 != 0
     }
 
+    pub fn is_signed(&self) -> bool {
+        !self.is_unsigned()
+    }
+
     pub fn is_int(&self) -> bool {
         self.args & 0b100 != 0
     }
 
     pub fn is_ref(&self) -> bool {
         self.args & 0b001 != 0
+    }
+
+    pub fn is_max(&self) -> bool {
+        self.args & 0b1000 != 0
+    }
+
+    pub fn is_rem(&self) -> bool {
+        self.args & 0b100000 != 0
     }
 
     fn display(&self) -> DisplayDictOpArgs {
