@@ -15,7 +15,7 @@ use crate::dispatch::Opcodes;
 use crate::error::{VmError, VmResult};
 use crate::stack::{RcStackValue, Stack};
 use crate::state::VmState;
-use crate::util::{bitsize, remove_trailing, OwnedCellSlice};
+use crate::util::{bitsize, load_int_from_slice, remove_trailing, OwnedCellSlice};
 
 pub struct Cellops;
 
@@ -1541,34 +1541,7 @@ fn exec_load_int_common(stack: &mut Stack, bits: u16, args: LoadIntArgs) -> VmRe
 
     let range = {
         let mut slice = cs.apply_allow_special();
-
-        let signed = args.is_signed();
-        let int = match bits {
-            0 => Ok(BigInt::zero()),
-            0..=64 if !signed => slice.load_uint(bits).map(BigInt::from),
-            0..=64 if signed => slice.load_uint(bits).map(|mut int| {
-                if bits < 64 {
-                    // Clone sign bit into all high bits
-                    int |= ((int >> (bits - 1)) * u64::MAX) << (bits - 1);
-                }
-                BigInt::from(int as i64)
-            }),
-            _ => {
-                let rem = bits % 8;
-                let mut buffer = [0u8; 33];
-                slice.load_raw(&mut buffer, bits).map(|buffer| {
-                    let mut int = if signed {
-                        BigInt::from_signed_bytes_be(buffer)
-                    } else {
-                        BigInt::from_bytes_be(Sign::Plus, buffer)
-                    };
-                    if bits % 8 != 0 {
-                        int >>= 8 - rem;
-                    }
-                    int
-                })
-            }
-        }?;
+        let int = load_int_from_slice(&mut slice, bits, args.is_signed())?;
 
         ok!(stack.push_int(int));
 
