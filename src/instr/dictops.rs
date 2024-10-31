@@ -1,6 +1,6 @@
 use crate::error::{VmError, VmResult};
 use crate::stack::{RcStackValue, StackValueType};
-use crate::util::{load_int_from_slice, store_int_to_builder, OwnedCellSlice};
+use crate::util::{store_int_to_builder, OwnedCellSlice};
 use crate::VmState;
 use everscale_types::cell::{CellBuilder};
 use everscale_types::dict::{DictBound, SetMode};
