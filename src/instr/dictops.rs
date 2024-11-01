@@ -26,6 +26,30 @@ impl Dictops {
         Ok(0)
     }
 
+    #[instr(code = "f401", fmt = "SKIPDICT")]
+    fn exec_skip_dict(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let mut owned_cs: Rc<OwnedCellSlice> = ok!(stack.pop_cs());
+        let cs = owned_cs.apply()?;
+        if cs.is_empty() {
+            vm_bail!(CellError(Error::CellUnderflow))
+        }
+
+        let prefix = cs.get_prefix(1, cs.size_refs());
+        let subslice = cs.strip_data_prefix(&prefix);
+
+        match subslice {
+            Some(ss) => {
+                let new_range = ss.range();
+                Rc::make_mut(&mut owned_cs).set_range(new_range);
+                ok!(stack.push_raw(owned_cs))
+            },
+            None => ok!(stack.push_raw(owned_cs))
+        }
+
+        Ok(0)
+    }
+
     #[instr(code = "f404", fmt = "LDDICT", args(preload = false, quite = false))]
     #[instr(code = "f405", fmt = "PLDDICT", args(preload = true, quite = false))]
     #[instr(code = "f406", fmt = "LDDICTQ", args(preload = false, quite = true))]
