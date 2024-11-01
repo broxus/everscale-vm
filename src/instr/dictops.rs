@@ -26,40 +26,53 @@ impl Dictops {
         Ok(0)
     }
 
-    // #[instr(code = "f402", fmt = "LDDICT", args(preload = true, quite = false))]
-    // //#[instr(code = "f402", fmt = "PLDDICT", args(preload = true, quite = true))]
-    // //#[instr(code = "f402", fmt = "LDDICTQ", args(preload = true, quite = true))]
-    // fn exec_load_dict(st: &mut VmState, preload: bool, quite: bool) -> VmResult<i32> {
-    //     let stack = Rc::make_mut(&mut st.stack);
-    //     let owned_cs = stack.pop_cs()?;
-    //     let range = owned_cs.range();
-    //     let mut cs = owned_cs.apply()?;
-    //
-    //     if !range.has_remaining(1, 0) {
-    //         if !quite {
-    //             vm_bail!(CellError(Error::CellUnderflow))
-    //         }
-    //         if !preload {
-    //             ok!(stack.push_raw(owned_cs));
-    //         }
-    //     } else {
-    //         if preload {
-    //             let subslice = Rc::new(cs.get_prefix(1, !range.is_empty() as u8));
-    //             ok!(stack.push_raw(subslice));
-    //         } else {
-    //             let mut bytes = Vec::new();
-    //             let loaded = cs.load_raw(&mut bytes, 1)?;
-    //             ok!(stack.push_raw(Rc::new(loaded)));
-    //             ok!(stack.push_raw(Rc::new(cs)));
-    //         }
-    //     }
-    //
-    //     if quite {
-    //         ok!(stack.push_bool(!range.is_empty()));
-    //     };
-    //
-    //     Ok(0)
-    // }
+    #[instr(code = "f404", fmt = "LDDICT", args(preload = false, quite = false))]
+    #[instr(code = "f405", fmt = "PLDDICT", args(preload = true, quite = false))]
+    #[instr(code = "f406", fmt = "LDDICTQ", args(preload = false, quite = true))]
+    #[instr(code = "f407", fmt = "PLDDICTQ", args(preload = true, quite = true))]
+    fn exec_load_dict(st: &mut VmState, preload: bool, quite: bool) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let mut owned_cs = stack.pop_cs()?;
+        let range = owned_cs.range();
+        let is_empty = range.is_empty();
+        let mut cs = owned_cs.apply()?;
+
+        if is_empty {
+            if !quite {
+                vm_bail!(CellError(Error::CellUnderflow))
+            }
+            if !preload {
+                ok!(stack.push_raw(owned_cs));
+            }
+        } else {
+            let cell_opt = if range.size_refs() > 0 {
+                cs.get_reference_cloned(0).ok()
+            } else {
+                None
+            };
+            ok!(stack.push_opt(cell_opt));
+
+            if !preload {
+                let prefix = cs.get_prefix(1, range.size_refs());
+                let subslice = cs.strip_data_prefix(&prefix);
+
+                match subslice {
+                    Some(ss) => {
+                        let new_range = ss.range();
+                        Rc::make_mut(&mut owned_cs).set_range(new_range);
+                        ok!(stack.push_raw(owned_cs))
+                    },
+                    None => ok!(stack.push_raw(owned_cs))
+                }
+            }
+        }
+
+        if quite {
+            ok!(stack.push_bool(!is_empty));
+        };
+
+        Ok(0)
+    }
 
     #[instr(code = "f40s", range_from = "f40a", range_to = "f40f", fmt = ("{}", s.display()), args(s = DictOpArgs::new("GET", args)))]
     fn exec_dict_get(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
@@ -499,6 +512,9 @@ impl Dictops {
         Ok(0)
     }
 
+    #[instr(code = "f470", fmt = "PFXDICTSET", args(mode = SetMode::Set))]
+    #[instr(code = "f471", fmt = "PFXDICTREPLACE", args(mode = SetMode::Replace))]
+    #[instr(code = "f472", fmt = "PFXDICTADD", args(mode = SetMode::Add))]
     fn exec_pfx_dict_set(st: &mut VmState, mode: SetMode) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
@@ -522,6 +538,7 @@ impl Dictops {
         Ok(0)
     }
 
+    #[instr(code = "f473", fmt = "PFXDICTDEL")]
     fn exec_pfx_dict_delete(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
@@ -620,6 +637,7 @@ impl Dictops {
         Ok(0)
     }
 
+    #[instr(code = "f4ss", range_from = "f474", range_to = "f480", fmt = ("{}", s.display()), args(s = DictTraverseArgs::new("GET", args)))]
     fn exec_dict_get_near(st: &mut VmState, s: DictTraverseArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
 
@@ -705,6 +723,41 @@ impl Dictops {
             }
         }
         ok!(stack.push_bool(true));
+        Ok(0)
+    }
+    fn exec_subdict_get(st: &mut VmState, s: SubdictOpArgs) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let n = ok!(stack.pop_smallint_range(0, 1023));
+        let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
+        let mut dict_deref = dict.as_deref().cloned();
+
+        let mk = match (s.is_int(), s.is_unsigned()) {
+            (true, true) => 256,
+            (true, false) => 257,
+            _ => 1023,
+        };
+        let k = ok!(stack.pop_smallint_range(0, std::cmp::min(mk, n))) as u16;
+
+        let key_slice;
+        let mut builder;
+
+        let mut key = if s.is_int() {
+            let int = ok!(stack.pop_int());
+            builder = CellBuilder::new();
+            store_int_to_builder(&int, k, &mut builder).map(|_| builder.as_data_slice())?
+        } else {
+            key_slice = stack.pop_cs()?;
+            key_slice.apply()?
+        };
+
+        let subdict = everscale_types::dict::dict_get_subdict(
+            dict_deref.as_ref(),
+            k,
+            &mut key,
+            &mut Cell::empty_context(),
+        )?;
+        ok!(stack.push_opt(subdict));
+
         Ok(0)
     }
 }
@@ -821,6 +874,25 @@ impl std::fmt::Display for DisplayDictTraverseArgs {
         let is_prev = if args.is_prev() { "PREV" } else { "NEXT" };
 
         write!(f, "DICT{is_int}{}{is_prev}{is_eq}", args.name)
+    }
+}
+
+struct SubdictOpArgs {
+    args: u32,
+    name: String,
+}
+
+impl SubdictOpArgs {
+    pub fn is_unsigned(&self) -> bool {
+        self.args & 0b001 != 0
+    }
+
+    pub fn is_int(&self) -> bool {
+        self.args & 0b010 != 0
+    }
+
+    pub fn is_rp(&self) -> bool {
+        self.args & 0b100 != 0
     }
 }
 
