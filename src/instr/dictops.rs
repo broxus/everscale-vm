@@ -2,7 +2,7 @@ use crate::error::{VmError, VmResult};
 use crate::stack::{RcStackValue, StackValueType};
 use crate::util::{load_int_from_slice, store_int_to_builder, OwnedCellSlice};
 use crate::VmState;
-use everscale_types::cell::CellBuilder;
+use everscale_types::cell::{CellBuilder, CellSlice};
 use everscale_types::dict::{DictBound, SetMode};
 use everscale_types::error::Error;
 use everscale_types::prelude::{Cell, CellFamily, Store};
@@ -593,7 +593,6 @@ impl Dictops {
 
         if let Some((key, value)) = key_value_opt {
             found_key = key;
-            //found_value = value.clone();
 
             if !s.is_ref() {
                 ok!(stack.push_raw(Rc::new(value)));
@@ -617,6 +616,94 @@ impl Dictops {
             ok!(stack.push_raw(Rc::new(OwnedCellSlice::from(cell))));
         }
 
+        ok!(stack.push_bool(true));
+        Ok(0)
+    }
+
+    fn exec_dict_get_near(st: &mut VmState, s: DictTraverseArgs) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+
+        let max_key_bytes = match (s.is_int(), s.is_unsigned()) {
+            (true, true) => 256,
+            (true, false) => 257,
+            _ => 1023,
+        };
+
+        let n = ok!(stack.pop_smallint_range(0, max_key_bytes)) as u16;
+        let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
+        let mut dict_deref = dict.as_deref().cloned();
+
+        let towards = if s.is_prev() {
+            DictBound::Min
+        } else {
+            DictBound::Max
+        };
+
+        if !s.is_int() {
+            let slice: Rc<OwnedCellSlice> = ok!(stack.pop_cs());
+            let key_slice = slice.apply()?;
+
+            let nearest = everscale_types::dict::dict_find_owned(
+                dict_deref.as_ref(),
+                n,
+                key_slice,
+                towards,
+                s.is_eq(),
+                s.is_signed(),
+                &mut Cell::empty_context(),
+            )?;
+
+            match nearest {
+                None => {
+                    ok!(stack.push_bool(false));
+                    return Ok(0);
+                }
+                Some((key, (value_cell, _))) => {
+                    ok!(stack.push_raw(Rc::new(OwnedCellSlice::from(value_cell))));
+                    let key_cell = key.build()?;
+                    ok!(stack.push_raw(Rc::new(OwnedCellSlice::from(key_cell))));
+                }
+            };
+        } else {
+            let int = ok!(stack.pop_int());
+            let mut builder = CellBuilder::new();
+            let result = match store_int_to_builder(&int, n, &mut builder)
+                .map(|_| builder.as_data_slice())
+            {
+                Ok(key) => everscale_types::dict::dict_find_owned(
+                    dict_deref.as_ref(),
+                    n,
+                    key,
+                    towards,
+                    s.is_eq(),
+                    s.is_signed(),
+                    &mut Cell::empty_context(),
+                )?,
+                Err(Error::IntOverflow) => {
+                    let backwards = match towards {
+                        DictBound::Max => DictBound::Min,
+                        DictBound::Min => DictBound::Max,
+                    };
+                    everscale_types::dict::dict_find_bound_owned(
+                        dict_deref.as_ref(),
+                        n,
+                        backwards,
+                        s.is_signed(),
+                        &mut Cell::empty_context(),
+                    )?
+                }
+                Err(e) => vm_bail!(CellError(e)),
+            };
+
+            if let Some((key, (value_cell, _))) = result {
+                ok!(stack.push_raw(Rc::new(OwnedCellSlice::from(value_cell))));
+                let key_cell = key.build()?;
+                ok!(stack.push_raw(Rc::new(OwnedCellSlice::from(key_cell))));
+            } else {
+                ok!(stack.push_bool(false));
+                return Ok(0);
+            }
+        }
         ok!(stack.push_bool(true));
         Ok(0)
     }
@@ -678,6 +765,62 @@ impl std::fmt::Display for DisplayDictOpArgs {
         let is_ref = if args.is_ref() { "REF" } else { "" };
 
         write!(f, "DICT{is_int}{}{is_ref}", args.name)
+    }
+}
+
+struct DictTraverseArgs {
+    name: String,
+    args: u32,
+}
+
+impl DictTraverseArgs {
+    pub fn new(name: &str, args: u32) -> Self {
+        Self {
+            name: name.to_string(),
+            args,
+        }
+    }
+    pub fn is_prev(&self) -> bool {
+        self.args & 0b010 != 0
+    }
+
+    pub fn is_signed(&self) -> bool {
+        !self.is_unsigned()
+    }
+
+    pub fn is_unsigned(&self) -> bool {
+        self.args & 0b100 != 0
+    }
+
+    pub fn is_eq(&self) -> bool {
+        self.args & 0b001 != 0
+    }
+
+    pub fn is_int(&self) -> bool {
+        self.args & 0b1000 != 0
+    }
+
+    fn display(&self) -> DisplayDictTraverseArgs {
+        DisplayDictTraverseArgs {
+            args: self.args,
+            name: self.name.to_string(),
+        }
+    }
+}
+
+struct DisplayDictTraverseArgs {
+    args: u32,
+    name: String,
+}
+impl std::fmt::Display for DisplayDictTraverseArgs {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let args = DictTraverseArgs::new(&self.name, self.args);
+        let is_unsigned = if args.is_unsigned() { "U" } else { "I" };
+        let is_int = if args.is_int() { is_unsigned } else { "" };
+        let is_eq = if args.is_eq() { "EQ\n" } else { "\n" };
+        let is_prev = if args.is_prev() { "PREV" } else { "NEXT" };
+
+        write!(f, "DICT{is_int}{}{is_prev}{is_eq}", args.name)
     }
 }
 
