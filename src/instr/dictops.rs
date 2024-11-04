@@ -9,6 +9,7 @@ use everscale_types::prelude::{Cell, CellFamily, Store};
 use everscale_vm_proc::vm_module;
 use std::fmt::Formatter;
 use std::rc::Rc;
+use num_bigint::{BigInt, Sign};
 
 pub struct Dictops;
 
@@ -19,7 +20,7 @@ impl Dictops {
         let stack = Rc::make_mut(&mut st.stack);
 
         let mut builder = ok!(stack.pop_builder());
-        let cell = ok!(stack.pop_cell_opt());
+        let cell: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
 
         cell.store_into(Rc::make_mut(&mut builder), &mut Cell::empty_context())?;
         ok!(stack.push_raw(builder));
@@ -109,6 +110,7 @@ impl Dictops {
 
         let key = if s.is_int() {
             let int = ok!(stack.pop_int());
+
             builder = CellBuilder::new();
             store_int_to_builder(&int, n, &mut builder)?;
             builder.as_data_slice()
@@ -148,13 +150,13 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f4ss", range_from = "f412", range_to = "f418", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("SET", args), mode = SetMode::Set, bld = false))]
-    #[instr(code = "f4ss", range_from = "f432", range_to = "f438", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("SET", args), mode = SetMode::Set, bld = true))]
-    #[instr(code = "f4ss", range_from = "f422", range_to = "f428", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("REPLACE", args), mode = SetMode::Replace, bld = false))]
-    #[instr(code = "f4ss", range_from = "f449", range_to = "f44c", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("REPLACE", args), mode = SetMode::Replace, bld = true))]
-    #[instr(code = "f4ss", range_from = "f441", range_to = "f444", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("ADD", args), mode = SetMode::Add, bld = false))]
-    #[instr(code = "f4ss", range_from = "f451", range_to = "f454", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("ADD", args), mode = SetMode::Add, bld = true))]
-    fn exec_dict_set(st: &mut VmState, s: DictOpArgs, mode: SetMode, bld: bool) -> VmResult<i32> {
+    #[instr(code = "f4ss", range_from = "f412", range_to = "f418", fmt = ("{}", s.display()), args(s = DictOpArgs::new("SET", args), mode = SetMode::Set))]
+    #[instr(code = "f4ss", range_from = "f432", range_to = "f438", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("SET", args), mode = SetMode::Set))]
+    #[instr(code = "f4ss", range_from = "f422", range_to = "f428", fmt = ("{}", s.display()), args(s = DictOpArgs::new("REPLACE", args), mode = SetMode::Replace))]
+    #[instr(code = "f4ss", range_from = "f449", range_to = "f44c", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("REPLACE", args), mode = SetMode::Replace))]
+    #[instr(code = "f4ss", range_from = "f441", range_to = "f444", fmt = ("{}", s.display()), args(s = DictOpArgs::new("ADD", args), mode = SetMode::Add))]
+    #[instr(code = "f4ss", range_from = "f451", range_to = "f454", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("ADD", args), mode = SetMode::Add))]
+    fn exec_dict_set(st: &mut VmState, s: DictOpArgs, mode: SetMode) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
@@ -179,7 +181,7 @@ impl Dictops {
         let value: RcStackValue = ok!(stack.pop());
         let value_slice;
 
-        let value_ref: &dyn Store = match (bld, s.is_ref()) {
+        let value_ref: &dyn Store = match (s.is_bld, s.is_ref()) {
             (true, _) => match value.as_builder() {
                 Some(builder) => {
                     value_slice = builder.as_full_slice();
@@ -234,17 +236,16 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f4ss", range_from = "f41a", range_to = "f420", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("SETGET", args), mode = SetMode::Set, bld = false))]
-    #[instr(code = "f4ss", range_from = "f445", range_to = "f448", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("SETGET", args), mode = SetMode::Set, bld = true))]
-    #[instr(code = "f4ss", range_from = "f42a", range_to = "f430", fmt = ("{}", format_dict_set(s, bld)), args(s = DictOpArgs::new("REPLACEGET", args), mode = SetMode::Replace, bld = false))]
-    #[instr(code = "f4ss", range_from = "f44d", range_to = "f450", fmt = ("{}", format_dict_set( s, bld)), args(s = DictOpArgs::new("REPLACEGET", args), mode = SetMode::Replace, bld = true))]
-    #[instr(code = "f4ss", range_from = "f43a", range_to = "f440", fmt = ("{}", format_dict_set( s, bld)), args(s = DictOpArgs::new("ADDGET", args), mode = SetMode::Add, bld = false))]
-    #[instr(code = "f4ss", range_from = "f455", range_to = "f458", fmt = ("{}", format_dict_set( s, bld)), args(s = DictOpArgs::new("ADDGET", args), mode = SetMode::Add, bld = true))]
+    #[instr(code = "f4ss", range_from = "f41a", range_to = "f420", fmt = ("{}", s.display()), args(s = DictOpArgs::new("SETGET", args), mode = SetMode::Set))]
+    #[instr(code = "f4ss", range_from = "f445", range_to = "f448", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("SETGET", args), mode = SetMode::Set))]
+    #[instr(code = "f4ss", range_from = "f42a", range_to = "f430", fmt = ("{}", s.display()), args(s = DictOpArgs::new("REPLACEGET", args), mode = SetMode::Replace))]
+    #[instr(code = "f4ss", range_from = "f44d", range_to = "f450", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("REPLACEGET", args), mode = SetMode::Replace))]
+    #[instr(code = "f4ss", range_from = "f43a", range_to = "f440", fmt = ("{}", s.display()), args(s = DictOpArgs::new("ADDGET", args), mode = SetMode::Add))]
+    #[instr(code = "f4ss", range_from = "f455", range_to = "f458", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("ADDGET", args), mode = SetMode::Add))]
     fn exec_dict_setget(
         st: &mut VmState,
         s: DictOpArgs,
-        mode: SetMode,
-        bld: bool,
+        mode: SetMode
     ) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
@@ -275,7 +276,7 @@ impl Dictops {
         let value: RcStackValue = ok!(stack.pop());
         let value_slice;
 
-        let value_ref: &dyn Store = match (bld, s.is_ref()) {
+        let value_ref: &dyn Store = match (s.is_bld, s.is_ref()) {
             (true, _) => match value.as_builder() {
                 Some(builder) => {
                     value_slice = builder.as_full_slice();
@@ -338,7 +339,13 @@ impl Dictops {
         let mut builder;
 
         let mut key = if s.is_int() {
-            let int = ok!(stack.pop_int());
+            let int: Rc<BigInt> = ok!(stack.pop_int());
+            println!("{} {:?}", int, int.sign());
+            match (s.is_unsigned(), int.sign()) {
+                (true, Sign::Minus) => vm_bail!(IntegerOverflow),
+                _ => ()
+            };
+
             builder = CellBuilder::new();
             store_int_to_builder(&int, n, &mut builder)?;
             let key = builder.as_data_slice();
@@ -350,6 +357,7 @@ impl Dictops {
             key
         } else {
             key_slice = stack.pop_cs()?;
+            println!("slice {:?}", key_slice);
             key_slice.apply()?
         };
 
@@ -445,7 +453,7 @@ impl Dictops {
             let int = ok!(stack.pop_int());
             builder = CellBuilder::new();
             if let Err(e) = store_int_to_builder(&int, n, &mut builder) {
-                vm_log!(e);
+                //vm_log!(e);
                 ok!(stack.push_null());
                 return Ok(0);
             }
@@ -789,6 +797,7 @@ impl Dictops {
 struct DictOpArgs {
     name: String,
     args: u32,
+    is_bld: bool,
 }
 
 impl DictOpArgs {
@@ -796,8 +805,26 @@ impl DictOpArgs {
         Self {
             name: name.to_string(),
             args,
+            is_bld: false
         }
     }
+
+    pub fn new_bld(name: &str, args: u32) -> Self {
+        Self {
+            name: name.to_string(),
+            args,
+            is_bld: true
+        }
+    }
+
+    pub fn new_internal(name: &str, args: u32, is_bld: bool) -> Self {
+        Self {
+            name: name.to_string(),
+            args,
+            is_bld
+        }
+    }
+
     pub fn is_unsigned(&self) -> bool {
         self.args & 0b010 != 0
     }
@@ -826,6 +853,7 @@ impl DictOpArgs {
         DisplayDictOpArgs {
             args: self.args,
             name: self.name.to_string(),
+            is_bld: self.is_bld
         }
     }
 }
@@ -833,13 +861,15 @@ impl DictOpArgs {
 struct DisplayDictOpArgs {
     args: u32,
     name: String,
+    is_bld: bool
 }
 impl std::fmt::Display for DisplayDictOpArgs {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let args = DictOpArgs::new(&self.name, self.args);
+        let args = DictOpArgs::new_internal(&self.name, self.args, self.is_bld);
         let is_unsigned = if args.is_unsigned() { "U" } else { "I" };
         let is_int = if args.is_int() { is_unsigned } else { "" };
-        let is_ref = if args.is_ref() { "REF" } else { "" };
+        let is_bld = if args.is_bld { "B" } else { "" };
+        let is_ref = if args.is_ref() { "REF" } else { is_bld };
 
         write!(f, "DICT{is_int}{}{is_ref}", args.name)
     }
@@ -920,11 +950,270 @@ impl SubdictOpArgs {
     }
 }
 
-fn format_dict_set(args: DictOpArgs, bld: bool) -> String {
-    let is_unsigned = if args.is_unsigned() { "U" } else { "I" };
-    let is_int = if args.is_int() { is_unsigned } else { "" };
-    let is_bld = if bld { "B" } else { "" };
-    let is_ref = if args.is_ref() { "REF" } else { is_bld };
+// fn format_dict_set(args: DictOpArgs, bld: bool) -> String {
+//     let is_unsigned = if args.is_unsigned() { "U" } else { "I" };
+//     let is_int = if args.is_int() { is_unsigned } else { "" };
+//     let is_bld = if bld { "B" } else { "" };
+//     let is_ref = if args.is_ref() { "REF" } else { is_bld };
+//
+//     format!("DICT{is_int}{}{is_ref}", &args.name)
+// }
 
-    format!("DICT{is_int}{}{is_ref}", &args.name)
+#[cfg(test)]
+pub mod tests {
+    use std::rc::Rc;
+    use everscale_types::cell::{CellBuilder, CellSliceRange};
+    use everscale_types::dict::{DictKey, SetMode};
+    use everscale_types::prelude::{Cell, CellFamily, Dict, Store};
+    use num_bigint::{BigInt, Sign};
+    use num_traits::One;
+    use tracing_test::traced_test;
+    use everscale_vm::stack::StackValue;
+    use everscale_vm::util::store_int_to_builder;
+    use crate::cont::load_cont;
+    use crate::stack::RcStackValue;
+    use crate::util::OwnedCellSlice;
+
+    #[test]
+    #[traced_test]
+    fn stdict_tests() {
+
+        let init_builder: RcStackValue = Rc::new(CellBuilder::new());
+        let mut dict = everscale_types::dict::Dict::<u32, u32>::new();
+        dict.add(1, 1).unwrap();
+        let dictionary: Rc<Cell> = Rc::new(dict.clone().into_root().unwrap());
+
+        let mavalue: RcStackValue = Rc::new({
+            let mut builder = CellBuilder::new();
+            dict.store_into(&mut builder, &mut Cell::empty_context()).unwrap();
+            builder
+        });
+
+
+        assert_run_vm!(
+            r#"
+                STDICT
+            "#,
+            [raw dictionary, raw init_builder.clone()] => [raw mavalue],
+        );
+
+        let mavalue: RcStackValue = Rc::new({
+            let mut builder = CellBuilder::new();
+            builder.store_bit_zero().unwrap();
+            builder
+        });
+
+        assert_run_vm!(
+            r#"
+                STDICT
+            "#,
+            [null, raw init_builder.clone()] => [raw mavalue],
+        );
+    }
+
+    // #[test]
+    // #[traced_test]
+    // fn skipdict_tests() {
+    //    let dict = build_dict::<u32, u32, _>(|dict| {
+    //        dict.add(1, 1)?;
+    //        Ok(())
+    //    });
+    //
+    //     assert_run_vm!(
+    //         r#"
+    //             SKIPDICT
+    //         "#,
+    //         [raw dict.clone()] => [raw dict],
+    //     );
+    // }
+
+    #[test]
+    #[traced_test]
+    fn get_dict_tests() {
+        let dict = build_dict::<u32, u32, _>(|dict| {
+            dict.add(1, 1)?;
+            Ok(())
+        });
+
+        let key_len: RcStackValue  = make_int_key_len();
+        let int: RcStackValue  = make_int_stack_key(1);
+        let another_int: RcStackValue  = make_new_int_value(3);
+
+        let mut builder = CellBuilder::new();
+        store_int_to_builder(&BigInt::one(), int_kbl(), &mut builder).unwrap();
+        let result: RcStackValue = Rc::new(builder.build().unwrap());
+
+        assert_run_vm!(
+            r#"
+                DICTIGET
+                SWAP NEWC STSLICE ENDC
+                SWAP
+            "#,
+            [raw int, raw dict.clone(), raw key_len.clone()] => [raw result, int -1],
+        );
+
+        assert_run_vm!(
+            r#"
+                DICTIGET
+            "#,
+            [raw another_int, raw dict.clone(), raw key_len.clone()] => [int 0],
+        );
+    }
+
+    #[test]
+    #[traced_test]
+    fn set_dict_tests() {
+        let dict_value = build_dict::<u32, u32, _>(|dict| {
+            dict.set(1, 1)?;
+            Ok(())
+        });
+        let new_slice_value = make_new_slice_value(3);
+        let new_cell_value = make_new_cell(3);
+        let stack_key: RcStackValue = make_int_stack_key(1);
+        let key_len: RcStackValue  = make_int_key_len();
+
+
+        let result_dict = build_dict::<u32, u32, _>(|dict| {
+            dict.set(1, 3)?;
+            Ok(())
+        });
+
+        let result_dict_ref = build_dict::<u32, Cell, _>(|dict| {
+            dict.add(1, new_cell_value.clone())?;
+            Ok(())
+        });
+
+
+        assert_run_vm!(
+            r#"
+                DICTISET
+            "#,
+            [raw new_slice_value.clone(), raw stack_key.clone(), raw dict_value.clone(), raw key_len.clone()] => [raw result_dict.clone()],
+        );
+
+        assert_run_vm!(
+            r#"
+                DICTISETREF
+            "#,
+            [raw Rc::new(new_cell_value), raw stack_key, raw dict_value.clone(), raw key_len.clone()] => [raw result_dict_ref],
+        );
+    }
+
+
+    #[test]
+    #[traced_test]
+    fn delete_dict_tests() {
+        let dict_value = build_dict::<i32, i32, _>(|dict| {
+            dict.set(1, 1)?;
+            dict.set(-2, 2)?;
+            Ok(())
+        });
+        let stack_key: RcStackValue = make_slice_stack_key(-2);
+        let another_key: RcStackValue = make_slice_stack_key(3);
+        let key_len: RcStackValue  = make_int_key_len();
+
+        let result_dict = build_dict::<i32, i32, _>(|dict| {
+            dict.set(1, 1)?;
+            Ok(())
+        });
+
+        assert_run_vm!("DICTIDEL",
+            [raw stack_key.clone(), raw dict_value.clone(), raw key_len.clone()] => [raw result_dict.clone(), int -1],
+        );
+
+        assert_run_vm!("DICTIDEL",
+            [raw another_key.clone(), raw dict_value.clone(), raw key_len.clone()] => [raw dict_value.clone(), int 0],
+        );
+
+
+        // let dict_value = build_dict::<u32, u32, _>(|dict| {
+        //     dict.set(-1, 1)?;
+        //     dict.set(-2, 2)?;
+        //     Ok(())
+        // });
+        //
+        // assert_run_vm!("DICTIDEL",
+        //     [raw another_key.clone(), raw dict_value.clone(), raw key_len.clone()] => [raw dict_value.clone(), int 0],
+        // );
+        //
+        // assert_run_vm!("DICTUDEL",
+        //     [raw stack_key.clone(), raw dict_value.clone(), raw key_len.clone()] => [raw result_dict.clone(), int -1],
+        // );
+    }
+
+
+    fn int_dict_to_cell(dict: Dict<u32, u32>) -> Cell {
+        dict.clone().into_root().unwrap()
+    }
+
+    const fn int_kbl() -> u16 {
+        32
+    }
+
+    fn make_int_key_len() -> RcStackValue {
+        Rc::new(BigInt::from(int_kbl()))
+    }
+
+    fn int_key_slice<const N: u16, T>(arg: T) -> OwnedCellSlice
+    where T: Into<BigInt>
+    {
+        let mut builder = CellBuilder::new();
+        store_int_to_builder(&arg.into(), N, &mut builder ).unwrap();
+        builder.build().unwrap().into()
+    }
+
+
+    fn make_slice_stack_key(value: i32) -> RcStackValue {
+        make_new_slice_value(value)
+    }
+    fn make_int_stack_key(value: u32) -> RcStackValue {
+        Rc::new(BigInt::from(value))
+    }
+
+    fn make_int_key() -> BigInt {
+        BigInt::one()
+    }
+
+    fn make_value() -> RcStackValue {
+        Rc::new(BigInt::from(2))
+    }
+
+    fn make_new_slice_value(value: i32) -> RcStackValue {
+        let value = BigInt::from(value);
+        let mut builder = CellBuilder::new();
+        store_int_to_builder(&value, 32, &mut builder).unwrap();
+        Rc::new(OwnedCellSlice::from(builder.build().unwrap()))
+    }
+
+    fn make_new_cell_value(value: u32) -> RcStackValue {
+        Rc::new(make_new_cell(value))
+    }
+
+    fn make_new_cell(value: u32) -> Cell {
+        let value = BigInt::from(value);
+        let mut builder = CellBuilder::new();
+        store_int_to_builder(&value, 32, &mut builder).unwrap();
+        builder.build().unwrap()
+    }
+
+    fn make_new_int_value(value: u32) -> RcStackValue {
+        Rc::new(BigInt::from(value))
+    }
+
+    fn make_new_value() -> BigInt {
+        BigInt::from(3)
+    }
+
+
+    fn build_dict<K, V, F>(f: F) -> RcStackValue
+    where
+        K: Store + DictKey,
+        V: Store,
+        for<'a> F: FnOnce(&'a mut Dict<K, V>) -> anyhow::Result<()>
+    {
+        let mut dict = Dict::<K, V>::new();
+        f(&mut dict).unwrap();
+        Rc::new(dict.into_root().unwrap())
+    }
+
 }
