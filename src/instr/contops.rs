@@ -1233,3 +1233,657 @@ impl std::fmt::Display for ThrowAnyArgs {
         write!(f, "THROW{arg}ANY{cond}")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cont::RcCont;
+    use everscale_types::boc::Boc;
+    use num_bigint::BigInt;
+    use everscale_vm::cont::{ControlData, ControlRegs};
+    use tracing_test::traced_test;
+    use crate::stack::RcStackValue;
+
+    #[test]
+    #[traced_test]
+    fn argument_contops() {
+        assert_run_vm!(
+            r#"
+            PUSHINT 1
+            PUSHCONT {
+                PUSHINT 3
+                PUSHINT 2
+            }
+            CALLXARGS 1, 2
+            "#,
+            [] => [int 3, int 2],
+        );
+
+        assert_run_vm!(
+            r#"
+            PUSHINT 1
+            PUSHCONT {
+                NOP
+            }
+            CALLXARGS 1, 1
+            "#,
+            [] => [int 1],
+        );
+
+        assert_run_vm!(
+            r#"
+            PUSHCONT {
+                NOP
+            }
+            CALLXARGS 1, 0
+            "#,
+            [] => [int 0],
+            exit_code: 2
+        );
+
+        assert_run_vm!(
+            r#"
+            PUSHCONT {
+                PUSHINT 3
+                PUSHINT 2
+            }
+            CALLXARGS 0, 3
+            "#,
+            [] => [int 0],
+            exit_code: 2
+        );
+
+        assert_run_vm!(
+            r#"
+            PUSHCONT {
+                PUSHINT 3
+                PUSHINT 2
+            }
+            CALLXARGS 0, 3
+            "#,
+            [] => [int 0],
+            exit_code: 2
+        );
+
+        assert_run_vm!(
+            r#"
+            PUSHCONT {
+                PUSHINT 3
+                PUSHINT 2
+            }
+            CALLXARGS 0, -1
+            "#,
+            [] => [int 3, int 2]
+        );
+
+        assert_run_vm!(
+            r#"
+            PUSHINT 1
+            PUSHCONT {
+                PUSHINT 3
+                PUSHINT 2
+            }
+            CALLXARGS 1, -1
+            "#,
+            [] => [int 1, int 3, int 2]
+        );
+
+        assert_run_vm!(
+            r#"
+            PUSHINT 1
+            PUSHINT 2
+            PUSHCONT {
+                PUSHINT 3
+                PUSHINT 4
+            }
+            JMPXARGS 1
+            PUSHINT 1
+            "#,
+            [] => [int 2, int 3, int 4]
+        );
+
+        assert_run_vm!(
+            r#"
+            PUSHINT 1
+            PUSHINT 2
+            PUSHCONT {
+                PUSHINT 3
+                PUSHINT 4
+            }
+            JMPXARGS 1
+            PUSHINT 1
+            "#,
+            [] => [int 2, int 3, int 4]
+        );
+
+        assert_run_vm!(
+            r#"
+            PUSHINT 1
+            PUSHCONT {
+                PUSHINT 123
+                PUSHINT 245
+                RETARGS 2
+            }
+            EXECUTE
+            "#,
+            [] => [int 123, int 245]
+        );
+    }
+
+    #[test]
+    #[traced_test]
+    fn basic_contops() {
+        let cont: RcStackValue = Rc::new(crate::cont::PushIntCont {
+            value: 1,
+            next: Rc::new(crate::cont::PushIntCont {
+                value: 2,
+                next: Rc::new(crate::cont::QuitCont { exit_code: 0 }),
+            }),
+        });
+
+        assert_run_vm!(
+            "EXECUTE",
+            [raw cont.clone()] => [int 1, int 2],
+        );
+
+        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 1
+            PUSHINT 2
+            "#
+        })
+            .unwrap();
+
+        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        assert_run_vm!(
+            "EXECUTE",
+            [raw cont.clone()] => [int 1, int 2],
+        );
+
+        assert_run_vm!(
+            "JMPX",
+            [raw cont.clone()] => [int 1, int 2],
+        );
+    }
+
+    #[test]
+    #[traced_test]
+    fn conditional_contops() {
+        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 1
+            PUSHINT 2
+            IFRET
+            PUSHINT 0
+            "#
+        })
+            .unwrap();
+
+        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        assert_run_vm!(
+            "EXECUTE",
+            [raw cont.clone()] => [int 1]
+        );
+
+        //--------
+
+        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 1
+            PUSHINT 0
+            IFRET
+            PUSHINT 2
+            "#
+        })
+            .unwrap();
+
+        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        assert_run_vm!(
+            "EXECUTE",
+            [raw cont.clone()] => [int 1, int 2]
+        );
+
+        assert_run_vm!(
+            "IFRET",
+            [null] => [int 0],
+            exit_code: 7
+        );
+
+        //-------
+
+        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 2
+            PUSHINT 0
+            IFNOTRET
+            PUSHINT 1
+            "#
+        })
+            .unwrap();
+
+        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        assert_run_vm!(
+            "EXECUTE",
+            [raw cont.clone()] => [int 2]
+        );
+
+        //--------
+
+        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 2
+            PUSHINT 1
+            IFNOTRET
+            PUSHINT 1
+            "#
+        })
+            .unwrap();
+
+        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        assert_run_vm!(
+            "EXECUTE",
+            [raw cont.clone()] => [int 2, int 1]
+        );
+
+        //-------------
+
+        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 1
+            PUSHINT 2
+            "#
+        })
+            .unwrap();
+
+        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        assert_run_vm!(
+            "IF",
+            [int 0, raw cont.clone()] => [],
+        );
+        assert_run_vm!(
+            "IF",
+            [int 123, raw cont.clone()] => [int 1, int 2],
+        );
+
+        assert_run_vm!(
+            "IFNOT",
+            [int 1, raw cont.clone()] => [],
+        );
+
+        assert_run_vm!(
+            "IFNOT",
+            [int 13890, raw cont.clone()] => [],
+        );
+
+        assert_run_vm!(
+            "IFNOT",
+            [int 0, raw cont.clone()] => [int 1, int 2],
+        );
+
+        //-------
+
+        let code1 = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 1
+            PUSHINT 2
+            "#
+        })
+            .unwrap();
+
+        let cont1: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code1.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        let code2 = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 3
+            PUSHINT 4
+            "#
+        })
+            .unwrap();
+
+        let cont2: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code2.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        assert_run_vm!(
+            "IFELSE",
+            [int 0, raw cont1.clone(), raw cont2.clone()] => [int 3, int 4]
+        );
+
+        assert_run_vm!(
+            "IFELSE",
+            [int 1, raw cont1.clone(), raw cont2.clone()] => [int 1, int 2]
+        );
+
+        assert_run_vm!(
+            "IFELSE",
+            [null, raw cont1.clone(), raw cont2.clone()] => [int 0],
+            exit_code: 7
+        );
+    }
+
+    #[test]
+    #[traced_test]
+    fn conditional_refcontops() {
+        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 1
+            PUSHINT 2
+            "#
+        })
+            .unwrap();
+
+        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        // assert_run_vm!(
+        //     "IFREF",
+        //     code.as,
+        //     [int 0, raw cont.clone()] => [],
+        // );
+
+        assert_run_vm!(
+            "IF",
+            [int 123, raw cont.clone()] => [int 1, int 2],
+        );
+
+        assert_run_vm!(
+            r#"PUSHCONT { PUSHINT 1 PUSHINT 2 } EXECUTE"#,
+            [] => [int 1, int 2],
+        );
+
+        assert_run_vm!(
+            "IF",
+            [int 0, raw cont.clone()] => [],
+        );
+
+        assert_run_vm!(
+            "IFNOT",
+            [int 1, raw cont.clone()] => [],
+        );
+
+        assert_run_vm!(
+            "IFNOT",
+            [int 13890, raw cont.clone()] => [],
+        );
+
+        assert_run_vm!(
+            "IFNOT",
+            [int 0, raw cont.clone()] => [int 1, int 2],
+        );
+    }
+
+    #[test]
+    #[traced_test]
+    fn conditional_altcontops() {
+        //----
+
+        let code_c1 = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 1
+            "#
+        })
+            .unwrap();
+        let cont_c1 = crate::cont::OrdCont::simple(code_c1.into(), crate::instr::codepage0().id());
+
+        let mut cr = ControlRegs::default();
+        cr.set_c(1, Rc::new(cont_c1));
+
+        let code_c0 = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 2
+            "#
+        })
+            .unwrap();
+
+        let cont_c0: RcStackValue = Rc::new(crate::cont::OrdCont {
+            data: ControlData {
+                nargs: None,
+                stack: None,
+                save: cr,
+                cp: Some(crate::instr::codepage0().id()),
+            },
+            code: code_c0.into(),
+        });
+
+        assert_run_vm!(
+            "IFRETALT",
+            [int 1, raw cont_c0.clone()] => [int 1]
+        );
+    }
+
+    #[test]
+    #[traced_test]
+    fn loops() {
+        // REPEAT
+        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 2
+            "#
+        })
+            .unwrap();
+        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        let code1 = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 2
+            PUSHINT 1
+            "#
+        })
+            .unwrap();
+        let cont1: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code1.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        assert_run_vm!(
+            "REPEAT",
+            [int 5, raw cont.clone()] => [int 2, int 2,int 2, int 2, int 2 ]
+        );
+
+        assert_run_vm!(
+            "REPEAT",
+            [int -1, raw cont.clone()] => []
+        );
+
+        assert_run_vm!(
+            "REPEAT",
+            [int (BigInt::from(1) << 31), raw cont.clone()] => [int 0],
+            exit_code: 5
+        );
+
+        // REPEATEND
+
+        assert_run_vm!(
+            "REPEATEND PUSHINT 2",
+            [int 3] => [int 2, int 2, int 2]
+        );
+
+        //UNTIL
+        assert_run_vm!(
+            "UNTIL",
+            [raw cont1.clone()] => [int 2]
+        );
+
+        //UNTILEND
+        // TODO: case for other branch
+        assert_run_vm!(
+            "UNTILEND PUSHINT 0 PUSHINT 1",
+            [int 3] => [int 3, int 0]
+        );
+
+        // WHILE
+        let code0 = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 2
+            "#
+        })
+            .unwrap();
+        let c0: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code0.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        let code1 = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 0
+            "#
+        })
+            .unwrap();
+        let c1: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code1.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        assert_run_vm!(
+            "WHILE",
+            [int 2, raw c1.clone(), raw c0.clone()] => [int 2]
+        );
+
+        // WHILEEND
+        // TODO: case for other branch
+        assert_run_vm!(
+            "WHILEEND PUSHINT 1",
+            [int 2, raw c1.clone()] => [int 2]
+        );
+
+        // AGAIN
+        // TODO: TEST MORE CASES
+
+        let code_c0 = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 2
+            RETALT
+            "#
+        })
+            .unwrap();
+
+        let cont_c0: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code_c0.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        //TODO: probably this behaviour with exit code 1 is okay. Add more cases with more loops
+
+        assert_run_vm!(
+            "AGAIN",
+            [int 2, raw cont_c0.clone()] => [int 2, int 2],
+            exit_code: 1
+        );
+
+        // AGAINEND
+        assert_run_vm!(
+            "AGAINEND PUSHINT 2 RETALT",
+            [int 2] => [int 2, int 2],
+            exit_code: 1
+        );
+
+        //REPEATBRK
+
+        let code_c0 = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            PUSHINT 0
+            DUMPSTK
+            SWAP
+            DEC
+            DUP
+            PUSHCONT {
+                DROP
+                RETALT
+            }
+            IFNOT
+            "#
+        })
+            .unwrap();
+
+        let cont_c0: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code_c0.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        assert_run_vm!(
+            "REPEATBRK",
+            [int 5, int 10, raw cont_c0.clone()] => [int 0, int 0, int 0, int 0, int 0]
+        );
+
+        //REPEATENDBRK
+
+        assert_run_vm!(
+            r#"
+            PUSHCONT {
+                REPEATENDBRK
+                PUSHINT 0
+                SWAP
+                DEC
+                DUP
+                PUSHCONT {
+                    DROP
+                    RETALT
+                }
+                IFNOT
+                POP s1
+            }
+            EXECUTE
+            "#,
+            [int 5, int 10] => [int 0]
+        );
+
+        let code_c0 = Boc::decode(&everscale_asm_macros::tvmasm! {
+            r#"
+            INC
+            SWAP
+            DUP
+            PUSHCONT {
+                DROP
+                RETALT
+            }
+            IFNOT
+            SWAP
+            DUMPSTK
+            "#
+        })
+            .unwrap();
+
+        let cont_c0: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
+            code_c0.into(),
+            crate::instr::codepage0().id(),
+        ));
+
+        assert_run_vm!(
+            "UNTILBRK",
+            [int 0, int -5, raw cont_c0.clone()] => [int -4]
+        );
+    }
+}
