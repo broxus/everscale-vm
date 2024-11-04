@@ -147,6 +147,8 @@ mod tests {
             .build()
             .unwrap();
 
+        vm.gas.gas_remaining = 1000000000;
+
         let exit_code = !vm.run();
         (exit_code, vm)
     }
