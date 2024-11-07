@@ -350,7 +350,6 @@ impl Dictops {
             key
         } else {
             key_slice = stack.pop_cs()?;
-            println!("slice {:?}", key_slice);
             key_slice.apply()?
         };
 
@@ -642,10 +641,7 @@ impl Dictops {
             found_key = key;
 
             if !s.is_ref() {
-                let mut slice = OwnedCellSlice::from(value.0);
-
-                slice.set_range(value.1);
-                //println!("{}", slice.cell().display_data());
+                let slice = OwnedCellSlice::from(value);
                 ok!(stack.push_raw(Rc::new(slice)));
             } else {
                 if value.0.reference_count() != 1 {
@@ -710,8 +706,8 @@ impl Dictops {
                     ok!(stack.push_bool(false));
                     return Ok(0);
                 }
-                Some((key, (value_cell, _))) => {
-                    ok!(stack.push_raw(Rc::new(OwnedCellSlice::from(value_cell))));
+                Some((key, parts)) => {
+                    ok!(stack.push_raw(Rc::new(OwnedCellSlice::from(parts))));
                     let key_cell = key.build()?;
                     ok!(stack.push_raw(Rc::new(OwnedCellSlice::from(key_cell))));
                 }
@@ -732,24 +728,18 @@ impl Dictops {
                     s.is_signed(),
                     &mut Cell::empty_context(),
                 )?,
-                Err(Error::IntOverflow) => {
-                    let backwards = match towards {
-                        DictBound::Max => DictBound::Min,
-                        DictBound::Min => DictBound::Max,
-                    };
-                    everscale_types::dict::dict_find_bound_owned(
-                        dict_deref.as_ref(),
-                        n,
-                        backwards,
-                        s.is_signed(),
-                        &mut Cell::empty_context(),
-                    )?
-                }
+                Err(Error::IntOverflow) => everscale_types::dict::dict_find_bound_owned(
+                    dict_deref.as_ref(),
+                    n,
+                    towards,
+                    s.is_signed(),
+                    &mut Cell::empty_context(),
+                )?,
                 Err(e) => vm_bail!(CellError(e)),
             };
 
-            if let Some((key, (value_cell, _))) = result {
-                ok!(stack.push_raw(Rc::new(OwnedCellSlice::from(value_cell))));
+            if let Some((key, parts)) = result {
+                ok!(stack.push_raw(Rc::new(OwnedCellSlice::from(parts))));
                 let key_cell = key.build()?;
                 ok!(stack.push_raw(Rc::new(OwnedCellSlice::from(key_cell))));
             } else {
@@ -760,6 +750,8 @@ impl Dictops {
         ok!(stack.push_bool(true));
         Ok(0)
     }
+
+    #[instr(code = "f4ss", range_from = "f4b1", range_to = "f4b4", fmt = ("{}", s.display()), args(s = SubdictOpArgs::new("GET", args)))]
     fn exec_subdict_get(st: &mut VmState, s: SubdictOpArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023));
@@ -962,6 +954,12 @@ struct SubdictOpArgs {
 }
 
 impl SubdictOpArgs {
+    pub fn new(name: &str, args: u32) -> Self {
+        Self {
+            name: name.to_string(),
+            args,
+        }
+    }
     pub fn is_unsigned(&self) -> bool {
         self.args & 0b001 != 0
     }
@@ -972,6 +970,32 @@ impl SubdictOpArgs {
 
     pub fn is_rp(&self) -> bool {
         self.args & 0b100 != 0
+    }
+
+    pub fn display(&self) -> DisplaySubdictOpArgs {
+        DisplaySubdictOpArgs {
+            args: self.args,
+            name: self.name.to_string(),
+        }
+    }
+}
+
+struct DisplaySubdictOpArgs {
+    args: u32,
+    name: String,
+}
+
+impl std::fmt::Display for DisplaySubdictOpArgs {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let args = SubdictOpArgs {
+            args: self.args,
+            name: self.name.to_string(),
+        };
+        let is_unsigned = if args.is_unsigned() { "U" } else { "I" };
+        let is_int = if args.is_int() { is_unsigned } else { "" };
+        let is_rp = if args.is_rp() { "RP" } else { "" };
+
+        write!(f, "SUBDICT{is_int}{is_rp}{}", self.name)
     }
 }
 
@@ -1205,9 +1229,7 @@ pub mod tests {
             Ok(())
         });
 
-        let mut builder = CellBuilder::new();
-        store_int_to_builder(&BigInt::from(2), int_kbl(), &mut builder).unwrap();
-        let removed_value: RcStackValue = Rc::new(builder.build().unwrap());
+        let removed_value = make_new_cell_value(2);
 
         {
             let stack_slice_key: RcStackValue = make_slice_stack_key(-2);
@@ -1258,20 +1280,127 @@ pub mod tests {
     fn get_min_max_tests() {
         let key_len: RcStackValue = make_int_key_len();
         let dict_value = build_dict::<i32, i32, _>(|dict| {
-            dict.set(1, 1)?;
+            dict.set(0, 1)?;
             dict.set(2, 2)?;
             dict.set(3, 3)?;
             Ok(())
         });
 
-        let mut builder = CellBuilder::new();
-        store_int_to_builder(&BigInt::from(1), int_kbl(), &mut builder).unwrap();
-        let value: RcStackValue = Rc::new(builder.build().unwrap());
+        let key = make_new_slice_value(0);
+        let value = make_new_cell_value(1);
 
         assert_run_vm!(r#"
                 DICTMIN
+                XCHG s0, s2
+                NEWC STSLICE ENDC
+                XCHG s0, s2
             "#,
-            [raw dict_value.clone(), raw key_len.clone()] => [raw value.clone(), raw value.clone(), int -1],
+            [raw dict_value.clone(), raw key_len.clone()] => [raw value.clone(), raw key.clone(), int -1],
+        );
+
+        let key = make_new_slice_value(3);
+        let value = make_new_cell_value(3);
+
+        assert_run_vm!(r#"
+                DICTMAX
+                XCHG s0, s2
+                NEWC STSLICE ENDC
+                XCHG s0, s2
+            "#,
+            [raw dict_value.clone(), raw key_len.clone()] => [raw value.clone(), raw key.clone(), int -1],
+        );
+    }
+
+    #[test]
+    #[traced_test]
+    fn get_near_tests() {
+        let key_len: RcStackValue = make_int_key_len();
+        let dict_value = build_dict::<i32, i32, _>(|dict| {
+            dict.set(0, 2)?;
+            dict.set(1, 4)?;
+            dict.set(2, 8)?;
+            Ok(())
+        });
+
+        let search = make_new_slice_value(0);
+        let found_key = make_new_slice_value(1);
+        let found_value = make_new_cell_value(4);
+
+        assert_run_vm!(r#"
+                DICTGETNEXT
+                XCHG s0, s2
+                NEWC STSLICE ENDC
+                XCHG s0, s2
+            "#,
+            [raw search, raw dict_value.clone(), raw key_len.clone()] => [raw found_value.clone(), raw found_key.clone(), int -1],
+        );
+
+        let int_search = make_new_int_value(1);
+        let found_key = make_new_slice_value(0);
+        let found_value = make_new_cell_value(2);
+
+        assert_run_vm!(r#"
+                DICTIGETPREV
+                XCHG s0, s2
+                NEWC STSLICE ENDC
+                XCHG s0, s2
+            "#,
+            [raw int_search, raw dict_value.clone(), raw key_len.clone()] => [raw found_value, raw found_key, int -1],
+        );
+
+        let long_search = make_new_long(i64::MAX);
+        let found_key = make_new_slice_value(2);
+        let found_value = make_new_cell_value(8);
+
+        assert_run_vm!(r#"
+                DICTIGETNEXT
+                XCHG s0, s2
+                NEWC STSLICE ENDC
+                XCHG s0, s2
+            "#,
+            [int long_search, raw dict_value.clone(), raw key_len.clone()] => [raw found_value, raw found_key, int -1],
+        );
+
+        let long_search = make_new_long(i64::MIN);
+        let found_key = make_new_slice_value(0);
+        let found_value = make_new_cell_value(2);
+
+        assert_run_vm!(r#"
+                DICTIGETPREV
+                XCHG s0, s2
+                NEWC STSLICE ENDC
+                XCHG s0, s2
+            "#,
+            [int long_search, raw dict_value.clone(), raw key_len.clone()] => [raw found_value, raw found_key, int -1],
+        );
+    }
+
+    #[test]
+    #[traced_test]
+    fn dict_set_get_tests() {
+        let key_len: RcStackValue = make_int_key_len();
+        let dict = build_dict::<i32, i32, _>(|dict| {
+            dict.set(0, 2)?;
+            dict.set(1, 4)?;
+            dict.set(2, 8)?;
+            Ok(())
+        });
+
+        let updated_dict = build_dict::<i32, i32, _>(|dict| {
+            dict.set(0, 5)?;
+            dict.set(1, 4)?;
+            dict.set(2, 8)?;
+            Ok(())
+        });
+
+        let search_key = make_new_slice_value(0);
+        let new_value = make_new_slice_value(5);
+        let found_value = make_new_slice_value(2);
+
+        assert_run_vm!(r#"
+                DICTSETGET
+            "#,
+            [raw new_value, raw search_key.clone(), raw dict.clone(), raw key_len.clone()] => [raw found_value.clone(),raw updated_dict.clone(), int -1],
         );
     }
 
@@ -1318,19 +1447,23 @@ pub mod tests {
         Rc::new(OwnedCellSlice::from(builder.build().unwrap()))
     }
 
-    fn make_new_cell_value(value: u32) -> RcStackValue {
+    fn make_new_cell_value(value: i32) -> RcStackValue {
         Rc::new(make_new_cell(value))
     }
 
-    fn make_new_cell(value: u32) -> Cell {
+    fn make_new_cell(value: i32) -> Cell {
         let value = BigInt::from(value);
         let mut builder = CellBuilder::new();
-        store_int_to_builder(&value, 32, &mut builder).unwrap();
+        store_int_to_builder(&value, int_kbl(), &mut builder).unwrap();
         builder.build().unwrap()
     }
 
-    fn make_new_int_value(value: u32) -> RcStackValue {
+    fn make_new_int_value(value: i32) -> RcStackValue {
         Rc::new(BigInt::from(value))
+    }
+
+    fn make_new_long(value: i64) -> BigInt {
+        BigInt::from(value)
     }
 
     fn make_new_value() -> BigInt {
