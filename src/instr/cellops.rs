@@ -8,7 +8,7 @@ use everscale_types::cell::{
 use everscale_types::error::Error;
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
-use num_traits::{ToPrimitive, Zero};
+use num_traits::{ToPrimitive};
 
 use crate::cont::OrdCont;
 use crate::dispatch::Opcodes;
