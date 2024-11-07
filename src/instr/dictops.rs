@@ -1601,28 +1601,11 @@ pub mod tests {
         Rc::new(BigInt::from(int_kbl()))
     }
 
-    fn int_key_slice<const N: u16, T>(arg: T) -> OwnedCellSlice
-    where
-        T: Into<BigInt>,
-    {
-        let mut builder = CellBuilder::new();
-        store_int_to_builder(&arg.into(), N, &mut builder).unwrap();
-        builder.build().unwrap().into()
-    }
-
     fn make_slice_stack_key(value: i32) -> RcStackValue {
         make_new_slice_value(value)
     }
     fn make_int_stack_key(value: i32) -> RcStackValue {
         Rc::new(BigInt::from(value))
-    }
-
-    fn make_int_key() -> BigInt {
-        BigInt::one()
-    }
-
-    fn make_value() -> RcStackValue {
-        Rc::new(BigInt::from(2))
     }
 
     fn make_new_slice_value(value: i32) -> RcStackValue {
@@ -1650,11 +1633,6 @@ pub mod tests {
     fn make_new_long(value: i64) -> BigInt {
         BigInt::from(value)
     }
-
-    fn make_new_value() -> BigInt {
-        BigInt::from(3)
-    }
-
     fn build_dict<K, V, F>(f: F) -> RcStackValue
     where
         K: Store + DictKey,
