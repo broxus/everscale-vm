@@ -721,6 +721,7 @@ pub struct GasConsumer {
     pub gas_limit: u64,
     pub gas_credit: u64,
     pub gas_remaining: u64,
+    pub gas_base: u64,
     pub loaded_cells: HashSet<HashBytes>,
     pub empty_context: <Cell as CellFamily>::EmptyCellContext,
 }
@@ -737,6 +738,26 @@ impl GasConsumer {
         } else {
             Err(Error::Cancelled)
         }
+    }
+
+    pub fn gas_consumed(&self) -> u64 {
+        self.gas_base - self.gas_remaining
+    }
+
+    pub fn set_limit(&mut self, limit: u64) {
+        vm_log!(
+            "changing gas limit to {}",
+            std::cmp::min(limit, self.gas_max)
+        );
+        let limit = std::cmp::min(limit, self.gas_max);
+        self.gas_credit = 0;
+        self.gas_limit = limit;
+        self.set_base(limit);
+    }
+
+    fn set_base(&mut self, base: u64) {
+        self.gas_remaining += base - self.gas_base;
+        self.gas_base = base;
     }
 
     #[inline]
