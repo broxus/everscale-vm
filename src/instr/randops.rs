@@ -20,7 +20,7 @@ impl RandOps {
     fn exec_randu256(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let random_bytes: HashBytes = ok!(generate_random_u256(&mut st.cr));
-        let random = BigInt::from_bytes_be(Sign::NoSign, random_bytes.as_ref());
+        let random = BigInt::from_bytes_be(Sign::Plus, random_bytes.as_ref());
         ok!(stack.push_int(random));
         Ok(0)
     }
@@ -29,18 +29,13 @@ impl RandOps {
         let stack = Rc::make_mut(&mut st.stack);
         let int: Rc<BigInt> = ok!(stack.pop_int());
         let random_bytes: HashBytes = ok!(generate_random_u256(&mut st.cr));
-        println!("random {}", random_bytes);
         let random = BigInt::from_bytes_be(Sign::Plus, random_bytes.as_ref());
-        println!("random {random}");
-
 
         let Some(mut temp) = int.checked_mul(&random) else {
             vm_bail!(IntegerOverflow)
         };
-        println!("temp {temp}");
 
         temp.shr_assign(256);
-        println!("temp {temp}");
         ok!(stack.push_int(temp));
 
         Ok(0)
@@ -148,7 +143,6 @@ fn generate_random_u256(regs: &mut ControlRegs) -> VmResult<HashBytes> {
         })
     };
 
-
     let value: Option<&RcStackValue> = intermediate_value.get(RANDCEED_ID);
     let ceed: Rc<BigInt> = match value {
         Some(value) => ok!(value.clone().into_int()),
@@ -162,9 +156,8 @@ fn generate_random_u256(regs: &mut ControlRegs) -> VmResult<HashBytes> {
     let mut hasher = sha2::Sha512::new();
     hasher.update(seed_bytes);
     let hash = hasher.finalize();
-    println!("hash {}, {:?}",hash.len(), hash);
 
-    let new_ceed = BigInt::from_bytes_be(Sign::NoSign, &hash[0..32]);
+    let new_ceed = BigInt::from_bytes_be(Sign::Plus, &hash[0..32]);
 
     let mut random_bytes = [0u8; 32];
     random_bytes.copy_from_slice(&hash[32..64]);
@@ -186,35 +179,59 @@ fn generate_random_u256(regs: &mut ControlRegs) -> VmResult<HashBytes> {
 
 pub mod test {
     use crate::stack::{RcStackValue, StackValue};
+    use everscale_vm::stack::Tuple;
     use num_bigint::{BigInt, Sign};
     use std::rc::Rc;
-    use tracing_test::traced_test;
-    use everscale_vm::stack::Tuple;
-    use hex;
 
     #[test]
-    #[traced_test]
+    #[tracing_test::traced_test]
     fn random() {
-        let bytes = hex::decode("576f8d6b5ac3bcc80844b7d50b1cc6603444bbe7cfcf8fc0aa1ee3c636d9e339").unwrap();
+        let bytes = hex::decode("576f8d6b5ac3bcc80844b7d50b1cc6603444bbe7cfcf8fc0aa1ee3c636d9e339")
+            .unwrap();
         let value: RcStackValue = Rc::new(BigInt::from_bytes_be(Sign::Plus, &bytes));
 
-        let result_bytes = hex::decode("576f8d6b5ac3bcc80844b7d50b1cc6603444bbe7cfcf8fc0aa1ee3c636d9e339").unwrap();
-        let result: RcStackValue = Rc::new(BigInt::from_bytes_be(Sign::Plus,&result_bytes));
+        let result_bytes =
+            hex::decode("504C79E96A1A3D91262EDE19D9F064E9752EEA03E21A5E208D7BDCAF2D6610EE")
+                .unwrap();
+        let result: RcStackValue = Rc::new(BigInt::from_bytes_be(Sign::Plus, &result_bytes));
 
-        let tuple: Tuple = vec![value.clone(),value.clone(), value.clone(), value.clone(), value.clone(), value.clone(), value.clone()];
-        let tuple2: Tuple =  vec![Rc::new(tuple)];
+        let tuple: Tuple = vec![
+            value.clone(),
+            value.clone(),
+            value.clone(),
+            value.clone(),
+            value.clone(),
+            value.clone(),
+            value.clone(),
+        ];
+        let tuple2: Tuple = vec![Rc::new(tuple)];
 
         assert_run_vm_with_c7!("RAND", [tuple2], [raw value] => [raw result] )
     }
 
-    // #[test]
-    // #[traced_test]
-    // fn random_u256() {
-    //     let bytes = hex::decode("576f8d6b5ac3bcc80844b7d50b1cc6603444bbe7cfcf8fc0aa1ee3c636d9e339").unwrap();
-    //     let value: RcStackValue = Rc::new(BigInt::from_bytes_be(Sign::Plus,&bytes));
-    //     let tuple: Tuple = vec![value.clone(),value.clone(), value.clone(), value.clone(), value.clone(), value.clone(), value.clone()];
-    //     let tuple2: Tuple =  vec![Rc::new(tuple)];
-    //
-    //     assert_run_vm_with_c7!("RANDU256", [tuple2], [] => [int 1] )
-    // }
+    #[test]
+    #[traced_test]
+    fn random_u256() {
+        let bytes = hex::decode("576f8d6b5ac3bcc80844b7d50b1cc6603444bbe7cfcf8fc0aa1ee3c636d9e339")
+            .unwrap();
+
+        let result_bytes =
+            hex::decode("EB1A91B388F714F56EE88C7B1B0902FF713FE8EBA39F64FC8F7F2F618601BBF5")
+                .unwrap();
+        let result: RcStackValue = Rc::new(BigInt::from_bytes_be(Sign::Plus, &result_bytes));
+
+        let value: RcStackValue = Rc::new(BigInt::from_bytes_be(Sign::Plus, &bytes));
+        let tuple: Tuple = vec![
+            value.clone(),
+            value.clone(),
+            value.clone(),
+            value.clone(),
+            value.clone(),
+            value.clone(),
+            value.clone(),
+        ];
+        let tuple2: Tuple = vec![Rc::new(tuple)];
+
+        assert_run_vm_with_c7!("RANDU256", [tuple2], [] => [raw result] )
+    }
 }
