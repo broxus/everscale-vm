@@ -16,6 +16,7 @@ use crate::instr::dictops::Dictops;
 mod arithops;
 mod basicgasops;
 mod cellops;
+mod configops;
 mod contops;
 mod debugops;
 mod randops;
