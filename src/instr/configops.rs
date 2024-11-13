@@ -5,7 +5,7 @@ use everscale_types::models::{BlockchainConfig, GasLimitsPrices, StoragePrices};
 use everscale_types::prelude::{Cell, CellBuilder, CellFamily, Load};
 use everscale_vm::cont::ControlRegs;
 use everscale_vm::instr::dictops::check_key_sign;
-use everscale_vm::stack::StackValueType;
+use everscale_vm::stack::{StackValue, StackValueType};
 use everscale_vm::util::{load_int_from_slice, store_int_to_builder};
 use everscale_vm::VmState;
 use everscale_vm_proc::vm_module;
@@ -13,7 +13,7 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{Signed, Zero};
 use std::fmt::Formatter;
-use std::ops::{Mul, Shr, ShrAssign};
+use std::ops::{Mul, Shr, ShrAssign, Sub};
 use std::rc::Rc;
 
 pub struct ConfigOps;
@@ -131,13 +131,19 @@ impl ConfigOps {
             None => vm_bail!(Unknown("invalid global_id config".to_string())),
         };
 
-        let mut slice = ref_cell.as_slice()?;
-        if slice.size_bits() < kbl {
+        let Some(mut slice) = ref_cell.as_slice() else {
+            vm_bail!(InvalidType {
+                expected: StackValueType::Slice,
+                actual: ref_cell.ty()
+            })
+        }; //TODO: fix this error
+
+        if slice.range().size_bits() < kbl {
             vm_bail!(Unknown("invalid global_id config".to_string()))
         }
 
         let stack = Rc::make_mut(&mut st.stack);
-        let id = load_int_from_slice(&mut slice, kbl, true)?;
+        let id = load_int_from_slice(&mut slice.apply()?, kbl, true)?;
         ok!(stack.push_int(id));
 
         Ok(0)
@@ -165,7 +171,7 @@ impl ConfigOps {
                 actual: value.ty()
             })
         };
-        let mut slice = &cell_slice.apply()?;
+        let mut slice = cell_slice.apply()?;
         let config = BlockchainConfig::load_from(&mut slice)?;
         let prices = config.get_gas_prices(is_masterchain)?;
 
@@ -173,7 +179,7 @@ impl ConfigOps {
             BigInt::from(prices.flat_gas_price)
         } else {
             let value: BigInt = BigInt::from(prices.flat_gas_price) * (gas - prices.flat_gas_limit);
-            value.shr(16) + prices.flat_gas_price
+            value.shr(16) + prices.flat_gas_price //todo: shift with ceil rounding
         };
 
         ok!(stack.push_int(gas));
@@ -204,7 +210,7 @@ impl ConfigOps {
             })
         };
 
-        let mut slice = &cell_slice.apply()?;
+        let mut slice = cell_slice.apply()?;
         let config = BlockchainConfig::load_from(&mut slice)?;
         let prices = config.get_storage_prices()?;
         let mut total = BigInt::zero();
@@ -245,13 +251,14 @@ impl ConfigOps {
                 actual: value.ty()
             })
         };
-        let mut slice = &cell_slice.apply()?;
+        let mut slice = cell_slice.apply()?;
         let config = BlockchainConfig::load_from(&mut slice)?;
         let prices = config.get_msg_forward_prices(is_masterchain)?;
 
         let fees = BigInt::from(prices.lump_price)
-            * (BigInt::from(prices.bit_price) * bits + BigInt::from(prices.cell_price) * cells)
-                .shr(16);
+            + (BigInt::from(prices.bit_price).mul(bits)
+                + BigInt::from(prices.cell_price).mul(cells))
+            .shr(16); //todo: must be with ceil rounding
 
         ok!(stack.push_int(fees));
         Ok(0)
@@ -293,20 +300,127 @@ impl ConfigOps {
                 actual: value.ty()
             })
         };
-        let mut slice = &cell_slice.apply()?;
+        let mut slice = cell_slice.apply()?;
         let config = BlockchainConfig::load_from(&mut slice)?;
         let prices = config.get_msg_forward_prices(is_masterchain)?;
 
         let fees = {
             let tmp = fwd_fee.as_ref().mul(BigInt::from(1 << 16));
-            let d = BigInt::from(1 << 16) - prices.first_frac;
-            let (quot, rem) = tmp.div_rem(&d);
-            quot
+            let d = BigInt::from(1 << 16).sub(prices.first_frac);
+            if d.is_zero() {
+                tmp
+            } else {
+                let (quot, rem) = tmp.div_rem(&d);
+                // round to nearest
+                if rem * 2.abs() >= d.abs() {
+                    if tmp.is_negative() != d.is_negative() {
+                        quot - 1
+                    } else {
+                        quot + 1
+                    }
+                } else {
+                    quot
+                }
+            }
         };
 
         ok!(stack.push_int(fees));
 
         Ok(0)
+    }
+
+    #[instr(code = "f83b", fmt = "GETGASFEESIMPLE")]
+    fn exec_get_gas_fee_simple(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let is_masterchain = ok!(stack.pop_bool());
+        let gas: u64 = ok!(stack.pop_long_range(0, u64::MAX));
+        let unpacked_config: Rc<Tuple> = ok!(get_unpacked_config_tuple(&mut st.cr));
+
+        let index = if is_masterchain { 2 } else { 3 };
+
+        let Some(value) = unpacked_config.get(index as usize) else {
+            vm_bail!(InvalidType {
+                expected: StackValueType::Tuple,
+                actual: StackValueType::Null
+            })
+        };
+
+        let Some(cell_slice) = value.as_slice() else {
+            vm_bail!(InvalidType {
+                expected: StackValueType::Slice,
+                actual: value.ty()
+            })
+        };
+        let mut slice = cell_slice.apply()?;
+        let config = BlockchainConfig::load_from(&mut slice)?;
+        let prices = config.get_gas_prices(is_masterchain)?;
+
+        let fee = BigInt::from(prices.gas_price).mul(gas).shr(16); //todo: must be with ceil rounding
+        ok!(stack.push_int(fee));
+
+        Ok(0)
+    }
+
+    #[instr(code = "f83c", fmt = "GETFORWARDFEESIMPLE")]
+    fn exec_get_forward_fee_simple(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let is_masterchain = ok!(stack.pop_bool());
+        let bits: u64 = ok!(stack.pop_long_range(0, u64::MAX));
+        let cells: u64 = ok!(stack.pop_long_range(0, u64::MAX));
+
+        let unpacked_config: Rc<Tuple> = ok!(get_unpacked_config_tuple(&mut st.cr));
+        let index = if is_masterchain { 4 } else { 5 };
+
+        let Some(value) = unpacked_config.get(index as usize) else {
+            vm_bail!(InvalidType {
+                expected: StackValueType::Tuple,
+                actual: StackValueType::Null
+            })
+        };
+
+        let Some(cell_slice) = value.as_slice() else {
+            vm_bail!(InvalidType {
+                expected: StackValueType::Slice,
+                actual: value.ty()
+            })
+        };
+        let mut slice = cell_slice.apply()?;
+        let config = BlockchainConfig::load_from(&mut slice)?;
+        let prices = config.get_msg_forward_prices(is_masterchain)?;
+        let fees = (BigInt::from(prices.bit_price).mul(bits)
+            + BigInt::from(prices.cell_price).mul(cells))
+        .shr(16); //todo: must be with ceil rounding
+
+        ok!(stack.push_int(fees));
+        Ok(0)
+    }
+
+    #[instr(code = "f840", fmt = "GETGLOBVAR")]
+    fn exec_get_global_var(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let args = ok!(stack.pop_smallint_range(0, 254));
+        get_global_common(&mut st.cr, stack, args as usize)
+    }
+
+    #[instr(code = "f8ss", range_from = "f841", range_to = "f860", fmt = "GETGLOB {s}", args(s = args & 31))]
+    fn exec_get_global(st: &mut VmState, s: u32) -> VmResult<i32> {
+        let args = s & 31;
+        let stack = Rc::make_mut(&mut st.stack);
+        get_global_common(&mut st.cr, stack, args as usize)
+    }
+
+    #[instr(code = "f860", fmt = "SETGLOBVAR")]
+    fn exec_set_global_var(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let args = ok!(stack.pop_smallint_range(0, 254));
+        set_global_common(&mut st.cr, stack, args as usize)
+    }
+
+    #[instr(code = "f8ss", range_from = "f861", range_to = "f880", fmt = "SETGLOB {s}", args(s = args & 31))]
+    fn exec_set_global(st: &mut VmState, s: u32) -> VmResult<i32> {
+        let args = s & 31;
+        let stack = Rc::make_mut(&mut st.stack);
+        set_global_common(&mut st.cr, stack, args as usize)
     }
 }
 pub struct ConfigOpsArgs(u32);
@@ -339,6 +453,51 @@ impl std::fmt::Display for DisplayConfigOpsArgs {
 
         write!(f, "{}", code)
     }
+}
+
+fn get_global_common(regs: &mut ControlRegs, stack: &mut Stack, index: usize) -> VmResult<i32> {
+    let Some(c7) = &regs.c7 else {
+        ok!(stack.push_null());
+        return Ok(0);
+    };
+
+    let value: Option<&RcStackValue> = c7.get(index);
+    match value {
+        Some(value) => ok!(stack.push_raw(value.clone())),
+        None => ok!(stack.push_null()),
+    }
+    Ok(0)
+}
+
+fn set_global_common(regs: &mut ControlRegs, stack: &mut Stack, index: usize) -> VmResult<i32> {
+    let value = ok!(stack.pop());
+    if index > 255 {
+        vm_bail!(IntegerOutOfRange {
+            min: 0,
+            max: 255,
+            actual: index.to_string()
+        })
+    }
+
+    let Some(c7) = regs.c7.as_deref() else {
+        vm_bail!(ControlRegisterOutOfRange(7))
+    };
+
+    let mut new_intermediate = c7.clone();
+    let to_pay = if index < c7.len() {
+        new_intermediate[index] = value;
+        new_intermediate.len()
+    } else {
+        new_intermediate.resize(index + 1, Stack::make_null());
+        new_intermediate[index] = value;
+        index + 1
+    };
+
+    if to_pay > 0 {
+        //TODO: consume gas tuple in amount of to_pay
+    }
+    regs.set_c7(Rc::new(new_intermediate));
+    Ok(0)
 }
 
 fn get_and_push_param(regs: &mut ControlRegs, stack: &mut Stack, index: usize) -> VmResult<i32> {
