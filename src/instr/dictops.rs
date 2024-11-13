@@ -2,7 +2,7 @@ use crate::error::{VmError, VmResult};
 use crate::stack::{RcStackValue, StackValueType};
 use crate::util::{store_int_to_builder, OwnedCellSlice};
 use crate::VmState;
-use everscale_types::cell::{CellBuilder};
+use everscale_types::cell::CellBuilder;
 use everscale_types::dict::{DictBound, SetMode};
 use everscale_types::error::Error;
 use everscale_types::prelude::{Cell, CellFamily, Store};
@@ -799,18 +799,18 @@ impl Dictops {
 
         Ok(0)
     }
+}
 
-    fn check_key_sign(is_unsigned: bool, int: Rc<BigInt>) -> VmResult<i32> {
-        match (is_unsigned, int.sign()) {
-            (true, Sign::Minus) => {
-                vm_bail!(IntegerOutOfRange {
-                    min: 0,
-                    max: u32::MAX as isize,
-                    actual: int.to_string()
-                })
-            }
-            _ => Ok(0),
+pub fn check_key_sign(is_unsigned: bool, int: Rc<BigInt>) -> VmResult<i32> {
+    match (is_unsigned, int.sign()) {
+        (true, Sign::Minus) => {
+            vm_bail!(IntegerOutOfRange {
+                min: 0,
+                max: u32::MAX as isize,
+                actual: int.to_string()
+            })
         }
+        _ => Ok(0),
     }
 }
 
@@ -1002,13 +1002,12 @@ impl std::fmt::Display for DisplaySubdictOpArgs {
     }
 }
 
-struct SimpleOpArgs{
+struct SimpleOpArgs {
     args: u32,
-    name: String
+    name: String,
 }
 
 impl SimpleOpArgs {
-
     pub fn new(name: &str, args: u32) -> Self {
         SimpleOpArgs {
             args,
@@ -1024,13 +1023,16 @@ impl SimpleOpArgs {
     }
 
     pub fn display(&self) -> DisplaySimpleOpArgs {
-        DisplaySimpleOpArgs { args: self.args, name: self.name.to_string() }
+        DisplaySimpleOpArgs {
+            args: self.args,
+            name: self.name.to_string(),
+        }
     }
 }
 
 struct DisplaySimpleOpArgs {
     args: u32,
-    name: String
+    name: String,
 }
 
 impl std::fmt::Display for DisplaySimpleOpArgs {
@@ -1491,9 +1493,10 @@ pub mod tests {
             32,
             &mut cloned,
             &mut Cell::empty_context(),
-        ).unwrap().unwrap();
+        )
+        .unwrap()
+        .unwrap();
         let subdict: RcStackValue = Rc::new(subdict);
-
 
         let key = Rc::new(slice);
 

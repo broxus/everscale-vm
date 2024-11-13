@@ -181,6 +181,20 @@ impl Stack {
         })
     }
 
+    pub fn pop_long_range(&mut self, min: u64, max: u64) -> VmResult<u64> {
+        let item = self.pop_int()?;
+        if let Some(item) = item.to_u64() {
+            if item >= min && item <= max {
+                return Ok(item);
+            }
+        }
+        vm_bail!(IntegerOutOfRange {
+            min: min as isize,
+            max: max as isize,
+            actual: item.to_string(),
+        })
+    }
+
     pub fn pop_smallint_signed_range(&mut self, min: i32, max: i32) -> VmResult<i32> {
         let item = self.pop_int()?;
         if let Some(item) = item.to_i32() {
