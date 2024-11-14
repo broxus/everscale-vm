@@ -5,13 +5,15 @@ use anyhow::Result;
 use self::arithops::Arithops;
 use self::basicgasops::BasicGasOps;
 use self::cellops::Cellops;
+use self::configops::ConfigOps;
 use self::contops::Contops;
 use self::debugops::Debugops;
+use self::dictops::Dictops;
+use self::messageops::MessageOps;
 use self::randops::RandOps;
 use self::stackops::Stackops;
 use self::tupleops::Tupleops;
 use crate::dispatch::{DispatchTable, Opcodes};
-use crate::instr::dictops::Dictops;
 
 mod arithops;
 mod basicgasops;
@@ -19,8 +21,9 @@ mod cellops;
 mod configops;
 mod contops;
 mod debugops;
-mod randops;
 mod dictops;
+mod messageops;
+mod randops;
 mod stackops;
 mod tupleops;
 
@@ -43,6 +46,8 @@ pub fn codepage0() -> &'static DispatchTable {
         Dictops.init(&mut cp)?;
         BasicGasOps.init(&mut cp)?;
         RandOps.init(&mut cp)?;
+        ConfigOps.init(&mut cp)?;
+        MessageOps.init(&mut cp)?;
         Ok(cp.build())
     }
 
