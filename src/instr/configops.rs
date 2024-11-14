@@ -1,7 +1,7 @@
 use crate::error::VmResult;
 use crate::stack::{RcStackValue, Stack, Tuple};
 use crate::util::OwnedCellSlice;
-use everscale_types::models::{BlockchainConfig, GasLimitsPrices, StoragePrices};
+use everscale_types::models::BlockchainConfig;
 use everscale_types::prelude::{Cell, CellBuilder, CellFamily, Load};
 use everscale_vm::cont::ControlRegs;
 use everscale_vm::instr::dictops::check_key_sign;
@@ -13,7 +13,7 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{Signed, Zero};
 use std::fmt::Formatter;
-use std::ops::{Mul, Shr, ShrAssign, Sub};
+use std::ops::{Mul, Shr, Sub};
 use std::rc::Rc;
 
 pub struct ConfigOps;
@@ -131,7 +131,7 @@ impl ConfigOps {
             None => vm_bail!(Unknown("invalid global_id config".to_string())),
         };
 
-        let Some(mut slice) = ref_cell.as_slice() else {
+        let Some(slice) = ref_cell.as_slice() else {
             vm_bail!(InvalidType {
                 expected: StackValueType::Slice,
                 actual: ref_cell.ty()
@@ -222,6 +222,7 @@ impl ConfigOps {
                 total = BigInt::from(cells) * prices.cell_price_ps;
                 total += BigInt::from(bits) * prices.bit_price_ps;
             }
+            total += delta;
         }
 
         ok!(stack.push_int(total));

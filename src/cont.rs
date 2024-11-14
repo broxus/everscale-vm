@@ -149,6 +149,15 @@ impl ControlRegs {
         }
     }
 
+    pub fn get_d(&mut self, mut i: usize) -> Option<Cell> {
+        i = i.wrapping_sub(Self::DATA_REG_OFFSET);
+        if i < Self::DATA_REG_COUNT {
+            self.d[i].clone()
+        } else {
+            None
+        }
+    }
+
     pub fn set_c7(&mut self, tuple: Rc<Tuple>) {
         self.c7 = Some(tuple);
     }
