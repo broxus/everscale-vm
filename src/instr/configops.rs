@@ -13,7 +13,7 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{Signed, Zero};
 use std::fmt::Formatter;
-use std::ops::{Mul, Shr, Sub};
+use std::ops::{Mul, Shr, ShrAssign, Sub};
 use std::rc::Rc;
 
 pub struct ConfigOps;
@@ -222,7 +222,8 @@ impl ConfigOps {
                 total = BigInt::from(cells) * prices.cell_price_ps;
                 total += BigInt::from(bits) * prices.bit_price_ps;
             }
-            total += delta;
+            total *= delta;
+            total.shr_assign(16) //todo: shift with ceil rounding
         }
 
         ok!(stack.push_int(total));
