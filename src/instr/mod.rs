@@ -20,6 +20,7 @@ mod basicgasops;
 mod cellops;
 mod configops;
 mod contops;
+mod currencyops;
 mod debugops;
 mod dictops;
 mod messageops;
