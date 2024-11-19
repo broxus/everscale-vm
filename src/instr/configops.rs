@@ -20,10 +20,10 @@ pub struct ConfigOps;
 
 #[vm_module]
 impl ConfigOps {
-    #[instr(code = "f82s", fmt = ("{}", s.display()), args(s = ConfigOpsArgs(args)))]
-    fn exec_get_param(st: &mut VmState, s: ConfigOpsArgs) -> VmResult<i32> {
+    #[instr(code = "f82s", fmt = ("{}", ConfigOpsArgs(s).display()))]
+    fn exec_get_param(st: &mut VmState, s: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        ok!(get_and_push_param(&mut st.cr, stack, s.0 as usize));
+        ok!(get_and_push_param(&mut st.cr, stack, s as usize));
         Ok(0)
     }
 

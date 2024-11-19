@@ -51,11 +51,11 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f404", fmt = "LDDICT", args(preload = false, quite = false))]
-    #[instr(code = "f405", fmt = "PLDDICT", args(preload = true, quite = false))]
-    #[instr(code = "f406", fmt = "LDDICTQ", args(preload = false, quite = true))]
-    #[instr(code = "f407", fmt = "PLDDICTQ", args(preload = true, quite = true))]
-    fn exec_load_dict(st: &mut VmState, preload: bool, quite: bool) -> VmResult<i32> {
+    #[instr(code = "f404", fmt = "LDDICT", args(preload = false, quiet = false))]
+    #[instr(code = "f405", fmt = "PLDDICT", args(preload = true, quiet = false))]
+    #[instr(code = "f406", fmt = "LDDICTQ", args(preload = false, quiet = true))]
+    #[instr(code = "f407", fmt = "PLDDICTQ", args(preload = true, quiet = true))]
+    fn exec_load_dict(st: &mut VmState, preload: bool, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut owned_cs = stack.pop_cs()?;
         let range = owned_cs.range();
@@ -63,7 +63,7 @@ impl Dictops {
         let cs = owned_cs.apply()?;
 
         if is_empty {
-            if !quite {
+            if !quiet {
                 vm_bail!(CellError(Error::CellUnderflow))
             }
             if !preload {
@@ -92,7 +92,7 @@ impl Dictops {
             }
         }
 
-        if quite {
+        if quiet {
             ok!(stack.push_bool(!is_empty));
         };
 
@@ -1590,10 +1590,6 @@ pub mod tests {
             "#,
             [null, raw search_key.clone(), raw dict.clone(), raw key_len.clone()] => [raw updated_dict, raw found_value.clone()],
         );
-    }
-
-    fn int_dict_to_cell(dict: Dict<u32, u32>) -> Cell {
-        dict.clone().into_root().unwrap()
     }
 
     const fn int_kbl() -> u16 {

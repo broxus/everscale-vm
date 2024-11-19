@@ -165,3 +165,142 @@ fn install_output_actions(regs: &mut ControlRegs, action_head: Cell) -> VmResult
     regs.set_d(OUTPUT_ACTIONS_IDX, action_head);
     Ok(0)
 }
+
+
+mod tests {
+    use std::rc::Rc;
+    use std::str::FromStr;
+    use everscale_types::cell::CellBuilder;
+    use everscale_types::models::{GlobalCapabilities, GlobalCapability, StdAddr};
+    use everscale_types::prelude::{Boc, HashBytes};
+    use num_bigint::BigInt;
+    use tracing_test::traced_test;
+    use everscale_vm::stack::Tuple;
+    use crate::stack::{RcStackValue, Stack};
+    use crate::util::OwnedCellSlice;
+    use crate::VmState;
+
+    #[test]
+    #[traced_test]
+    fn send_msg_test() {
+        let сode = Boc::decode(&everscale_asm_macros::tvmasm!{
+            r#"
+            SETCP0 DUP IFNOTRET // return if recv_internal
+            DUP
+            PUSHINT 85143
+            EQUAL OVER
+            PUSHINT 78748
+            EQUAL OR
+            // "seqno" and "get_public_key" get-methods
+            PUSHCONT {
+                PUSHINT 1
+                AND
+                PUSHCTR c4 CTOS
+                LDU 32
+                LDU 32
+                NIP
+                PLDU 256
+                CONDSEL
+            }
+            IFJMP
+            // fail unless recv_external
+            INC THROWIF 32
+
+            PUSHPOW2 9 LDSLICEX // signature
+            DUP
+            LDU 32 // subwallet_id
+            LDU 32 // valid_until
+            LDU 32 // msg_seqno
+
+            NOW
+            XCHG s1, s3
+            LEQ
+            DUMPSTK
+            THROWIF 35
+
+            PUSH c4 CTOS
+            LDU 32
+            LDU 32
+            LDU 256
+            ENDS
+
+            XCPU s3, s2
+            EQUAL
+            THROWIFNOT 33
+
+            XCPU s4, s4
+            EQUAL
+            THROWIFNOT 34
+
+            XCHG s0, s4
+            HASHSU
+            XC2PU s0, s5, s5
+            CHKSIGNU THROWIFNOT 35
+
+            ACCEPT
+
+            PUSHCONT { DUP SREFS }
+            PUSHCONT {
+                LDU 8
+                LDREF
+                XCHG s0, s2
+                SENDRAWMSG
+            }
+            WHILE
+
+            ENDS SWAP INC
+
+            NEWC
+            STU 32
+            STU 32
+            STU 256
+            ENDC
+            POP c4
+            "#
+        }).unwrap();
+
+        let code = OwnedCellSlice::from(сode);
+
+        let balance_tuple: Tuple = vec![
+            Rc::new(BigInt::from(10000000000u64)),
+            Stack::make_null()
+        ];
+
+        let addr = StdAddr::from_str("0:4f4f10cb9a30582792fb3c1e364de5a6fbe6fe04f4167f1f12f83468c767aeb3").unwrap();
+        let addr = OwnedCellSlice::from(CellBuilder::build_from(addr).unwrap());
+
+        let c7: Vec<RcStackValue> = vec![
+            Rc::new(BigInt::from(0x076ef1ea)),
+            Rc::new(BigInt::from(0)), //actions
+            Rc::new(BigInt::from(0)), //msgs_sent
+            Rc::new(BigInt::from(1731953811)), //unix_time
+            Rc::new(BigInt::from(55364288000000u64)), //block_logical_time
+            Rc::new(BigInt::from(55364288000001u64)), // transaction_logical_time
+            Rc::new(BigInt::from(0)), //rand_ceed
+            Rc::new(balance_tuple),
+            Rc::new(addr),
+            Stack::make_null(),
+            Rc::new(code.clone())
+
+        ];
+
+        let wallet_data = Boc::decode_base64("te6ccgEBAQEAcQAA3v8AIN0gggFMl7ohggEznLqxn3Gw7UTQ0x/THzHXC//jBOCk8mCDCNcYINMf0x/TH/gjE7vyY+1E0NMf0x/T/9FRMrryoVFEuvKiBPkBVBBV+RDyo/gAkyDXSpbTB9QC+wDo0QGkyMsfyx/L/8ntVA==").unwrap();
+        let message_body = OwnedCellSlice::from(Boc::decode_base64("te6ccgEBAgEAhgABmt+g3JawlwzQoH1ocb1wTMtZKzAZ70ChB1w3tI2B6wTejCjog2O+jgHdsqe+PDlW89cAVg0Pqa2Vi/vEYWJAtA5LqS2KZzuEzQAAAbgDAQBoQgAnp4hlzRgsE8l9ng8bJvLTffN/AnoLP4+JfBo0Y7PXWaHc1lAAAAAAAAAAAAAAAAAAAA==").unwrap());
+
+        let stack: Vec<RcStackValue> = vec![
+            Rc::new(BigInt::from(1406132362197u64)),
+            Rc::new(BigInt::from(0)),
+            Rc::new(wallet_data),
+            Rc::new(message_body),
+            Rc::new(BigInt::from(-1))
+        ];
+
+        let mut builder = VmState::builder();
+        builder.c7 = Some(vec![Rc::new(c7)]);
+        builder.stack = stack;
+        builder.code = code;
+        let mut vm_state = builder.build().unwrap();
+        let result = vm_state.run();
+        println!("code {result}");
+    }
+}
