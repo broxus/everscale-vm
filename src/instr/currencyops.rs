@@ -31,7 +31,7 @@ impl CurrencyOps {
         let int_opt = match load_int_from_slice(&mut slice, s.len_bits as u16, s.signed) {
             Ok(int) => Some(int),
             Err(e) => {
-                if !s.quite {
+                if !s.quiet {
                     vm_bail!(CellError(e))
                 } else {
                     None
@@ -45,7 +45,7 @@ impl CurrencyOps {
             Some(int) => {
                 ok!(stack.push_int(int));
                 ok!(stack.push_raw(Rc::new(cs)));
-                if s.quite {
+                if s.quiet {
                     ok!(stack.push_bool(true))
                 }
             }
@@ -66,12 +66,12 @@ impl CurrencyOps {
         match store_int_to_builder(int.as_ref(), s.len_bits as u16, cb_ref) {
             Ok(_) => {
                 ok!(stack.push_raw(builder));
-                if s.quite {
+                if s.quiet {
                     ok!(stack.push_bool(true));
                 }
             }
             Err(e) => {
-                if !s.quite {
+                if !s.quiet {
                     vm_bail!(CellError(e))
                 }
                 ok!(stack.push_bool(false));
@@ -80,14 +80,14 @@ impl CurrencyOps {
         Ok(0)
     }
 
-    #[instr(code = "fa40", fmt = "LDMSGADDR", args(quite = false))]
-    #[instr(code = "fa41", fmt = "LDMSGADDRQ", args(quite = true))]
-    fn exec_load_message_addr(st: &mut VmState, quite: bool) -> VmResult<i32> {
+    #[instr(code = "fa40", fmt = "LDMSGADDR", args(quiet = false))]
+    #[instr(code = "fa41", fmt = "LDMSGADDRQ", args(quiet = true))]
+    fn exec_load_message_addr(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         //TODO: check if this could be implemented better
         let stack = Rc::make_mut(&mut st.stack);
         let cs: Rc<OwnedCellSlice> = ok!(stack.pop_cs());
         let mut slice = cs.apply()?;
-        let (success, address) = load_message_address_q(&mut slice, quite)?;
+        let (success, address) = load_message_address_q(&mut slice, quiet)?;
         let cs = cs.deref();
         if success {
             //push address
@@ -99,7 +99,7 @@ impl CurrencyOps {
             let mut rest = cs.clone();
             rest.set_range(slice.range());
             ok!(stack.push_raw(Rc::new(rest)));
-            if quite {
+            if quiet {
                 ok!(stack.push_bool(true));
             }
         } else {
@@ -112,9 +112,9 @@ impl CurrencyOps {
         Ok(0)
     }
 
-    #[instr(code = "fa42", fmt = "PARSEMSGADDR", args(quite = false))]
-    #[instr(code = "fa43", fmt = "PARSEMSGADDRQ", args(quite = true))]
-    fn exec_parse_message_addr(st: &mut VmState, quite: bool) -> VmResult<i32> {
+    #[instr(code = "fa42", fmt = "PARSEMSGADDR", args(quiet = false))]
+    #[instr(code = "fa43", fmt = "PARSEMSGADDRQ", args(quiet = true))]
+    fn exec_parse_message_addr(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         //TODO: check if this could be implemented better
         let stack = Rc::make_mut(&mut st.stack);
         let cs: Rc<OwnedCellSlice> = ok!(stack.pop_cs());
@@ -122,12 +122,12 @@ impl CurrencyOps {
         match parse_message_address(owned) {
             Ok((true, tuple) ) => {
                 ok!(stack.push_raw(Rc::new(tuple)));
-                if quite {
+                if quiet {
                     ok!(stack.push_bool(true));
                 }
             }
             _ => {
-                if quite {
+                if quiet {
                     ok!(stack.push_bool(false));
                 } else {
                     vm_bail!(CellError(Error::CellUnderflow))
@@ -188,11 +188,11 @@ fn parse_message_address(owned_slice: &OwnedCellSlice) -> Result<(bool, Tuple), 
         _ => Ok((false, tuple))
     }
 }
-fn load_message_address_q<'a>(cs: &mut  CellSlice<'a>, quite: bool) -> VmResult<(bool, CellSlice<'a>)> {
+fn load_message_address_q<'a>(cs: &mut  CellSlice<'a>, quiet: bool) -> VmResult<(bool, CellSlice<'a>)> {
     let mut res = cs.clone();
 
     if let Err(e) = skip_message_addr(&mut cs.clone()) {
-        if quite {
+        if quiet {
             return Ok((false, cs.clone()));
         }
         vm_bail!(CellError(Error::CellUnderflow))
@@ -291,25 +291,25 @@ pub struct VarIntegerArgs {
     store: bool,
     len_bits: u32,
     signed: bool,
-    quite: bool,
+    quiet: bool,
 }
 
 impl VarIntegerArgs {
-    fn new(store: bool, len_bits: u32, signed: bool, quite: bool) -> Self {
+    fn new(store: bool, len_bits: u32, signed: bool, quiet: bool) -> Self {
         Self {
             store,
             len_bits,
             signed,
-            quite,
+            quiet,
         }
     }
 
-    fn display_store(&self) -> DisplayVarIntegerArgs {
+    fn display(&self) -> DisplayVarIntegerArgs {
         DisplayVarIntegerArgs {
             store: self.store,
             len_bits: self.len_bits,
             signed: self.signed,
-            quite: self.quite,
+            quiet: self.quiet,
         }
     }
 }
@@ -318,19 +318,19 @@ pub struct DisplayVarIntegerArgs {
     store: bool,
     len_bits: u32,
     signed: bool,
-    quite: bool,
+    quiet: bool,
 }
 
 impl std::fmt::Display for DisplayVarIntegerArgs {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mode = if self.store { "ST" } else { "LD" };
-        let quite = if self.quite { "Q" } else { "" };
+        let quiet = if self.quiet { "Q" } else { "" };
 
         let log = if self.len_bits == 4 && !self.signed {
-            format!("{mode}GRAMS{quite}")
+            format!("{mode}GRAMS{quiet}")
         } else {
             let signed = if self.signed { "" } else { "U" };
-            format!("{mode}VAR{signed}INT{}{quite}", 1 << self.len_bits)
+            format!("{mode}VAR{signed}INT{}{quiet}", 1 << self.len_bits)
         };
         write!(f, "{log}")
     }

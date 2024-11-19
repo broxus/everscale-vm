@@ -14,6 +14,8 @@ use self::randops::RandOps;
 use self::stackops::Stackops;
 use self::tupleops::Tupleops;
 use crate::dispatch::{DispatchTable, Opcodes};
+use crate::instr::compops::CompOps;
+use crate::instr::shiftops::Shiftops;
 
 mod arithops;
 mod basicgasops;
@@ -27,6 +29,9 @@ mod messageops;
 mod randops;
 mod stackops;
 mod tupleops;
+mod compops;
+mod shiftops;
+mod hashops;
 
 pub fn codepage(n: u16) -> Option<&'static DispatchTable> {
     match n {
@@ -39,6 +44,8 @@ pub fn codepage0() -> &'static DispatchTable {
     fn build() -> Result<DispatchTable> {
         let mut cp = DispatchTable::builder(0);
         Arithops.init(&mut cp)?;
+        CompOps.init(&mut cp)?;
+        Shiftops.init(&mut cp)?;
         Cellops.init(&mut cp)?;
         Contops.init(&mut cp)?;
         Stackops.init(&mut cp)?;
