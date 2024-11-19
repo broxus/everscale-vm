@@ -171,8 +171,8 @@ mod tests {
     use std::rc::Rc;
     use std::str::FromStr;
     use everscale_types::cell::CellBuilder;
-    use everscale_types::models::{GlobalCapabilities, GlobalCapability, StdAddr};
-    use everscale_types::prelude::{Boc, HashBytes};
+    use everscale_types::models::{ExtInMsgInfo, GlobalCapabilities, GlobalCapability, OwnedMessage, StdAddr};
+    use everscale_types::prelude::{Boc, HashBytes, Load};
     use num_bigint::BigInt;
     use tracing_test::traced_test;
     use everscale_vm::stack::Tuple;
@@ -273,9 +273,9 @@ mod tests {
             Rc::new(BigInt::from(0x076ef1ea)),
             Rc::new(BigInt::from(0)), //actions
             Rc::new(BigInt::from(0)), //msgs_sent
-            Rc::new(BigInt::from(1731953811)), //unix_time
+            Rc::new(BigInt::from(1732042729)), //unix_time
             Rc::new(BigInt::from(55364288000000u64)), //block_logical_time
-            Rc::new(BigInt::from(55364288000001u64)), // transaction_logical_time
+            Rc::new(BigInt::from(55396331000001u64)), // transaction_logical_time
             Rc::new(BigInt::from(0)), //rand_ceed
             Rc::new(balance_tuple),
             Rc::new(addr),
@@ -284,13 +284,17 @@ mod tests {
 
         ];
 
-        let wallet_data = Boc::decode_base64("te6ccgEBAQEAcQAA3v8AIN0gggFMl7ohggEznLqxn3Gw7UTQ0x/THzHXC//jBOCk8mCDCNcYINMf0x/TH/gjE7vyY+1E0NMf0x/T/9FRMrryoVFEuvKiBPkBVBBV+RDyo/gAkyDXSpbTB9QC+wDo0QGkyMsfyx/L/8ntVA==").unwrap();
-        let message_body = OwnedCellSlice::from(Boc::decode_base64("te6ccgEBAgEAhgABmt+g3JawlwzQoH1ocb1wTMtZKzAZ70ChB1w3tI2B6wTejCjog2O+jgHdsqe+PDlW89cAVg0Pqa2Vi/vEYWJAtA5LqS2KZzuEzQAAAbgDAQBoQgAnp4hlzRgsE8l9ng8bJvLTffN/AnoLP4+JfBo0Y7PXWaHc1lAAAAAAAAAAAAAAAAAAAA==").unwrap());
+        let c4_data = Boc::decode_base64("te6ccgEBAQEAKgAAUAAAAblLqS2KyLDWxgjLA6yhKJfmGLWfXdvRC34pWEXEek1ncgteNXU=").unwrap();
+
+        let message_cell = Boc::decode_base64("te6ccgEBAgEAqQAB34gAnp4hlzRgsE8l9ng8bJvLTffN/AnoLP4+JfBo0Y7PXWYHO+2B5vPMosfjPalLE/qz0rm+wRn9g9sSu0q4Zwo0Lq5vB/YbhvWObr1T6jLdyEU3xEQ2uSP7sKARmIsEqMbIal1JbFM55wEgAAANyBwBAGhCACeniGXNGCwTyX2eDxsm8tN9838Cegs/j4l8GjRjs9dZodzWUAAAAAAAAAAAAAAAAAAA").unwrap();
+        let message = OwnedMessage::load_from(&mut OwnedCellSlice::from(message_cell.clone()).apply().unwrap()).unwrap();
+        let message_body = OwnedCellSlice::from(message.body);
+        //let message_body = OwnedCellSlice::from(Boc::decode_base64("te6ccgEBAgEAhgABmt+g3JawlwzQoH1ocb1wTMtZKzAZ70ChB1w3tI2B6wTejCjog2O+jgHdsqe+PDlW89cAVg0Pqa2Vi/vEYWJAtA5LqS2KZzuEzQAAAbgDAQBoQgAnp4hlzRgsE8l9ng8bJvLTffN/AnoLP4+JfBo0Y7PXWaHc1lAAAAAAAAAAAAAAAAAAAA==").unwrap());
 
         let stack: Vec<RcStackValue> = vec![
-            Rc::new(BigInt::from(1406132362197u64)),
+            Rc::new(BigInt::from(1406127106355u64)),
             Rc::new(BigInt::from(0)),
-            Rc::new(wallet_data),
+            Rc::new(message_cell),
             Rc::new(message_body),
             Rc::new(BigInt::from(-1))
         ];
@@ -299,8 +303,36 @@ mod tests {
         builder.c7 = Some(vec![Rc::new(c7)]);
         builder.stack = stack;
         builder.code = code;
-        let mut vm_state = builder.build().unwrap();
+        let mut vm_state = builder.with_debug(TracingOutput::default()).build().unwrap();
+        vm_state.cr.set(4, Rc::new(c4_data)).unwrap();
+        vm_state.gas.gas_max = u64::MAX;
+        vm_state.gas.gas_base = 1000000500;
+        vm_state.gas.gas_remaining = 1000000000;
         let result = vm_state.run();
         println!("code {result}");
+    }
+
+    #[derive(Default)]
+    struct TracingOutput {
+        buffer: String,
+    }
+
+    impl std::fmt::Write for TracingOutput {
+        fn write_str(&mut self, mut s: &str) -> std::fmt::Result {
+            while !s.is_empty() {
+                match s.split_once('\n') {
+                    None => {
+                        self.buffer.push_str(s);
+                        return Ok(());
+                    }
+                    Some((prefix, rest)) => {
+                        tracing::debug!("{}{prefix}", self.buffer);
+                        self.buffer.clear();
+                        s = rest;
+                    }
+                }
+            }
+            Ok(())
+        }
     }
 }
