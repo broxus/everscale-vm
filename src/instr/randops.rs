@@ -59,7 +59,7 @@ impl RandOps {
             vm_bail!(ControlRegisterOutOfRange(7))
         };
 
-        let mut control_params_opt = c7.get(0);
+        let control_params_opt = c7.get(0);
         let Some(control_params) = control_params_opt else {
             vm_bail!(InvalidType {
                 expected: StackValueType::Tuple,
@@ -182,6 +182,7 @@ pub mod test {
     use everscale_vm::stack::Tuple;
     use num_bigint::{BigInt, Sign};
     use std::rc::Rc;
+    use tracing_test::traced_test;
 
     #[test]
     #[tracing_test::traced_test]
