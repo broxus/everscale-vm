@@ -25,6 +25,7 @@ everscale-types = { git = "https://github.com/broxus/everscale-types.git", defau
 ] }
 
 everscale-vm-proc = { path = "./proc" }
+everscale-crypto = "0.2.1"
 
 [dev-dependencies]
 tracing = "0.1"

@@ -1339,7 +1339,7 @@ fn exec_store_int_common(stack: &mut Stack, bits: u16, args: StoreIntArgs) -> Vm
 
     let mut builder;
     let x;
-    if args.is_reversed() {
+    if !args.is_reversed() {
         builder = ok!(stack.pop_builder());
         x = ok!(stack.pop_int());
     } else {
