@@ -15,6 +15,7 @@ use self::stackops::Stackops;
 use self::tupleops::Tupleops;
 use crate::dispatch::{DispatchTable, Opcodes};
 use crate::instr::compops::CompOps;
+use crate::instr::hashops::Hashops;
 use crate::instr::shiftops::Shiftops;
 
 mod arithops;
@@ -56,6 +57,7 @@ pub fn codepage0() -> &'static DispatchTable {
         RandOps.init(&mut cp)?;
         ConfigOps.init(&mut cp)?;
         MessageOps.init(&mut cp)?;
+        Hashops.init(&mut cp)?;
         Ok(cp.build())
     }
 
