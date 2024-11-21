@@ -166,24 +166,25 @@ fn install_output_actions(regs: &mut ControlRegs, action_head: Cell) -> VmResult
     Ok(0)
 }
 
-
 mod tests {
-    use std::rc::Rc;
-    use std::str::FromStr;
-    use everscale_types::cell::CellBuilder;
-    use everscale_types::models::{ExtInMsgInfo, GlobalCapabilities, GlobalCapability, OwnedMessage, StdAddr};
-    use everscale_types::prelude::{Boc, HashBytes, Load};
-    use num_bigint::BigInt;
-    use tracing_test::traced_test;
-    use everscale_vm::stack::Tuple;
     use crate::stack::{RcStackValue, Stack};
     use crate::util::OwnedCellSlice;
     use crate::VmState;
+    use everscale_types::cell::CellBuilder;
+    use everscale_types::models::{
+        ExtInMsgInfo, GlobalCapabilities, GlobalCapability, OwnedMessage, StdAddr,
+    };
+    use everscale_types::prelude::{Boc, HashBytes, Load};
+    use everscale_vm::stack::Tuple;
+    use num_bigint::BigInt;
+    use std::rc::Rc;
+    use std::str::FromStr;
+    use tracing_test::traced_test;
 
     #[test]
     #[traced_test]
     fn send_msg_test() {
-        let сode = Boc::decode(&everscale_asm_macros::tvmasm!{
+        let сode = Boc::decode(&everscale_asm_macros::tvmasm! {
             r#"
             SETCP0 DUP IFNOTRET // return if recv_internal
             DUP
@@ -257,53 +258,124 @@ mod tests {
             ENDC
             POP c4
             "#
-        }).unwrap();
+        })
+        .unwrap();
 
         let code = OwnedCellSlice::from(сode);
 
-        let balance_tuple: Tuple = vec![
-            Rc::new(BigInt::from(10000000000u64)),
-            Stack::make_null()
-        ];
+        let balance_tuple: Tuple = vec![Rc::new(BigInt::from(10000000000u64)), Stack::make_null()];
 
-        let addr = StdAddr::from_str("0:4f4f10cb9a30582792fb3c1e364de5a6fbe6fe04f4167f1f12f83468c767aeb3").unwrap();
+        let addr =
+            StdAddr::from_str("0:4f4f10cb9a30582792fb3c1e364de5a6fbe6fe04f4167f1f12f83468c767aeb3")
+                .unwrap();
         let addr = OwnedCellSlice::from(CellBuilder::build_from(addr).unwrap());
 
         let c7: Vec<RcStackValue> = vec![
             Rc::new(BigInt::from(0x076ef1ea)),
-            Rc::new(BigInt::from(0)), //actions
-            Rc::new(BigInt::from(0)), //msgs_sent
-            Rc::new(BigInt::from(1732042729)), //unix_time
+            Rc::new(BigInt::from(0)),                 //actions
+            Rc::new(BigInt::from(0)),                 //msgs_sent
+            Rc::new(BigInt::from(1732042729)),        //unix_time
             Rc::new(BigInt::from(55364288000000u64)), //block_logical_time
             Rc::new(BigInt::from(55396331000001u64)), // transaction_logical_time
-            Rc::new(BigInt::from(0)), //rand_ceed
+            Rc::new(BigInt::from(0)),                 //rand_ceed
             Rc::new(balance_tuple),
             Rc::new(addr),
             Stack::make_null(),
-            Rc::new(code.clone())
-
+            Rc::new(code.clone()),
         ];
 
-        let c4_data = Boc::decode_base64("te6ccgEBAQEAKgAAUAAAAblLqS2KyLDWxgjLA6yhKJfmGLWfXdvRC34pWEXEek1ncgteNXU=").unwrap();
+        let c4_data = Boc::decode_base64(
+            "te6ccgEBAQEAKgAAUAAAAblLqS2KyLDWxgjLA6yhKJfmGLWfXdvRC34pWEXEek1ncgteNXU=",
+        )
+        .unwrap();
 
         let message_cell = Boc::decode_base64("te6ccgEBAgEAqQAB34gAnp4hlzRgsE8l9ng8bJvLTffN/AnoLP4+JfBo0Y7PXWYHO+2B5vPMosfjPalLE/qz0rm+wRn9g9sSu0q4Zwo0Lq5vB/YbhvWObr1T6jLdyEU3xEQ2uSP7sKARmIsEqMbIal1JbFM55wEgAAANyBwBAGhCACeniGXNGCwTyX2eDxsm8tN9838Cegs/j4l8GjRjs9dZodzWUAAAAAAAAAAAAAAAAAAA").unwrap();
-        let message = OwnedMessage::load_from(&mut OwnedCellSlice::from(message_cell.clone()).apply().unwrap()).unwrap();
+        let message = OwnedMessage::load_from(
+            &mut OwnedCellSlice::from(message_cell.clone()).apply().unwrap(),
+        )
+        .unwrap();
         let message_body = OwnedCellSlice::from(message.body);
-        //let message_body = OwnedCellSlice::from(Boc::decode_base64("te6ccgEBAgEAhgABmt+g3JawlwzQoH1ocb1wTMtZKzAZ70ChB1w3tI2B6wTejCjog2O+jgHdsqe+PDlW89cAVg0Pqa2Vi/vEYWJAtA5LqS2KZzuEzQAAAbgDAQBoQgAnp4hlzRgsE8l9ng8bJvLTffN/AnoLP4+JfBo0Y7PXWaHc1lAAAAAAAAAAAAAAAAAAAA==").unwrap());
 
         let stack: Vec<RcStackValue> = vec![
             Rc::new(BigInt::from(1406127106355u64)),
             Rc::new(BigInt::from(0)),
             Rc::new(message_cell),
             Rc::new(message_body),
-            Rc::new(BigInt::from(-1))
+            Rc::new(BigInt::from(-1)),
         ];
 
         let mut builder = VmState::builder();
         builder.c7 = Some(vec![Rc::new(c7)]);
         builder.stack = stack;
         builder.code = code;
-        let mut vm_state = builder.with_debug(TracingOutput::default()).build().unwrap();
+        let mut vm_state = builder
+            .with_debug(TracingOutput::default())
+            .build()
+            .unwrap();
+        vm_state.cr.set(4, Rc::new(c4_data)).unwrap();
+        vm_state.gas.gas_max = u64::MAX;
+        vm_state.gas.gas_base = 1000000500;
+        vm_state.gas.gas_remaining = 1000000000;
+        let result = vm_state.run();
+        println!("code {result}");
+    }
+
+    #[test]
+    #[traced_test]
+    pub fn e_wallet_send_msg() {
+        let code = Boc::decode_base64("te6cckEBBgEA/AABFP8A9KQT9LzyyAsBAgEgAgMABNIwAubycdcBAcAA8nqDCNcY7UTQgwfXAdcLP8j4KM8WI88WyfkAA3HXAQHDAJqDB9cBURO68uBk3oBA1wGAINcBgCDXAVQWdfkQ8qj4I7vyeWa++COBBwiggQPoqFIgvLHydAIgghBM7mRsuuMPAcjL/8s/ye1UBAUAmDAC10zQ+kCDBtcBcdcBeNcB10z4AHCAEASqAhSxyMsFUAXPFlAD+gLLaSLQIc8xIddJoIQJuZgzcAHLAFjPFpcwcQHLABLM4skB+wAAPoIQFp4+EbqOEfgAApMg10qXeNcB1AL7AOjRkzLyPOI+zYS/").unwrap();
+        let code = OwnedCellSlice::from(code);
+
+        let balance_tuple: Tuple = vec![Rc::new(BigInt::from(10000000000u64)), Stack::make_null()];
+
+        let addr =
+            StdAddr::from_str("0:4f4f10cb9a30582792fb3c1e364de5a6fbe6fe04f4167f1f12f83468c767aeb3")
+                .unwrap();
+        let addr = OwnedCellSlice::from(CellBuilder::build_from(addr).unwrap());
+
+        let c7: Vec<RcStackValue> = vec![
+            Rc::new(BigInt::from(0x076ef1ea)),
+            Rc::new(BigInt::from(0)),                 //actions
+            Rc::new(BigInt::from(0)),                 //msgs_sent
+            Rc::new(BigInt::from(1732048342)),        //unix_time
+            Rc::new(BigInt::from(55398352000000u64)), //block_logical_time
+            Rc::new(BigInt::from(55398352000001u64)), // transaction_logical_time
+            Rc::new(BigInt::from(0)),                 //rand_ceed
+            Rc::new(balance_tuple),
+            Rc::new(addr),
+            Stack::make_null(),
+            Rc::new(code.clone()),
+        ];
+
+        let c4_data = Boc::decode_base64(
+            "te6ccgEBAQEAKgAAUMiw1sYIywOsoSiX5hi1n13b0Qt+KVhFxHpNZ3ILXjV1AAABk0YeykY=",
+        )
+        .unwrap();
+
+        let message_cell = Boc::decode_base64("te6ccgEBBAEA0gABRYgAxgNljqstzcrTTaJ1ydjhkp4u/ZwXwz8tG7nOeonPX44MAQHhmt2/xQjjwjfYraY7Tv53Ct8o9OAtI8nD7DFB19TrG7W8wYMxQKtbXuvGvaKFoB9D0lMZwnPpZ1fEBWxaXZgtg/IsNbGCMsDrKEol+YYtZ9d29ELfilYRcR6TWdyC141dQAAAZNGIEb+Zzz2EEzuZGyACAWWADGA2WOqy3NytNNonXJ2OGSni79nBfDPy0buc56ic9fjgAAAAAAAAAAAAAAAHc1lAADgDAAA=").unwrap();
+        let message = OwnedMessage::load_from(
+            &mut OwnedCellSlice::from(message_cell.clone()).apply().unwrap(),
+        )
+        .unwrap();
+        let message_body = OwnedCellSlice::from(message.body);
+
+        let stack: Vec<RcStackValue> = vec![
+            Rc::new(BigInt::from(4989195982u64)),
+            Rc::new(BigInt::from(0)),
+            Rc::new(message_cell),
+            Rc::new(message_body),
+            Rc::new(BigInt::from(-1)),
+        ];
+
+        let mut builder = VmState::builder();
+        builder.c7 = Some(vec![Rc::new(c7)]);
+        builder.stack = stack;
+        builder.code = code;
+
+        let mut vm_state = builder
+            .with_debug(TracingOutput::default())
+            .build()
+            .unwrap();
         vm_state.cr.set(4, Rc::new(c4_data)).unwrap();
         vm_state.gas.gas_max = u64::MAX;
         vm_state.gas.gas_base = 1000000500;
