@@ -1,3 +1,4 @@
+use crate::dispatch::Opcodes;
 use crate::error::{VmError, VmResult};
 use crate::stack::{RcStackValue, StackValueType};
 use crate::util::{store_int_to_builder, OwnedCellSlice};
@@ -6,15 +7,41 @@ use everscale_types::cell::CellBuilder;
 use everscale_types::dict::{DictBound, SetMode};
 use everscale_types::error::Error;
 use everscale_types::prelude::{Cell, CellFamily, Store};
+use everscale_vm::cont::OrdCont;
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
-use std::fmt::Formatter;
+use std::fmt::{write, Formatter};
 use std::rc::Rc;
 
 pub struct Dictops;
 
 #[vm_module]
 impl Dictops {
+    #[init]
+    fn init_dict_const(&self, t: &mut Opcodes) -> anyhow::Result<()> {
+        t.add_ext_range(0xf4a400, 0xf4a800, 24, exec_push_const_dict)?;
+        Ok(())
+    }
+
+    fn exec_push_const_dict(st: &mut VmState, args: u32, bits: u16) -> VmResult<i32> {
+        vm_ensure!(st.code.range().has_remaining(bits, 1), InvalidOpcode);
+
+        let stack = Rc::make_mut(&mut st.stack);
+        st.code.range_mut().skip_first(bits - 11, 0).ok();
+
+        let mut cell_slice = st.code.apply()?;
+        let prefix = cell_slice.get_prefix(1, 1);
+        cell_slice.skip_first(1, 1)?;
+
+        let int = load_int_from_slice(&mut cell_slice, 10, false)?;
+        let cell = prefix.get_reference_cloned(0)?;
+        vm_log!("execute DICTPUSHCONST {int}");
+        ok!(stack.push_raw(Rc::new(cell)));
+        ok!(stack.push_int(int));
+
+        Ok(0)
+    }
+
     #[instr(code = "f400", fmt = "STDICT")]
     fn exec_stdict(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
@@ -799,6 +826,50 @@ impl Dictops {
 
         Ok(0)
     }
+
+    #[instr(code = "f4a$00ss",fmt = ("{}", s.display()),args(s = DictExecArgs(args)))]
+    #[instr(code = "f4b$11ss", fmt = ("{}", s.display()),args(s = DictExecArgs(args)))]
+    fn exec_dict_get_exec(st: &mut VmState, s: DictExecArgs) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let n = ok!(stack.pop_smallint_range(0, 1023));
+
+        let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
+        let idx: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
+
+        let Some(idx) = idx else {
+            vm_bail!(IntegerOverflow) //TODO: proper error
+        };
+
+        ok!(check_key_sign(s.is_unsigned(), idx.clone()));
+        let mut builder = CellBuilder::new();
+        store_int_to_builder(&idx, n as u16, &mut builder)?;
+        let key_slice = builder.as_data_slice();
+
+        let dict = dict.as_deref();
+
+        let entry = everscale_types::dict::dict_get_owned(
+            dict,
+            n as u16,
+            key_slice,
+            &mut Cell::empty_context(),
+        )?;
+
+        if let Some(entry) = entry {
+            let code = OwnedCellSlice::from((st.code.cell().clone()));
+            let cont = Rc::new(OrdCont::simple(code, st.cp.id()));
+            return if s.is_exec() {
+                st.call(cont)
+            } else {
+                st.jump(cont)
+            };
+        }
+
+        if s.is_z() {
+            ok!(stack.push_int(idx.as_ref().clone()));
+        }
+
+        Ok(0)
+    }
 }
 
 pub fn check_key_sign(is_unsigned: bool, int: Rc<BigInt>) -> VmResult<i32> {
@@ -811,6 +882,45 @@ pub fn check_key_sign(is_unsigned: bool, int: Rc<BigInt>) -> VmResult<i32> {
             })
         }
         _ => Ok(0),
+    }
+}
+
+struct DictExecArgs(u32);
+impl DictExecArgs {
+    fn is_unsigned(&self) -> bool {
+        self.0 & 0b01 != 0
+    }
+
+    fn is_signed(&self) -> bool {
+        !self.is_unsigned()
+    }
+
+    fn is_exec(&self) -> bool {
+        self.0 & 0b10 != 0
+    }
+
+    fn is_jump(&self) -> bool {
+        !self.is_exec()
+    }
+
+    fn is_z(&self) -> bool {
+        self.0 & 0b100 != 0
+    }
+
+    fn display(&self) -> DisplayDictExecArgs {
+        DisplayDictExecArgs(self.0)
+    }
+}
+
+struct DisplayDictExecArgs(u32);
+
+impl std::fmt::Display for DisplayDictExecArgs {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let args = DictExecArgs(self.0);
+        let is_unsigned = if args.is_unsigned() { "I" } else { "I" };
+        let is_exec = if args.is_exec() { "EXEC" } else { "JMP" };
+        let is_z = if args.is_z() { "Z" } else { "" };
+        write!(f, "DICT{is_unsigned}GET{is_exec}{is_z}")
     }
 }
 
