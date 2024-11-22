@@ -338,8 +338,8 @@ mod tests {
             Rc::new(BigInt::from(0)),                 //actions
             Rc::new(BigInt::from(0)),                 //msgs_sent
             Rc::new(BigInt::from(1732048342)),        //unix_time
-            Rc::new(BigInt::from(55398352000000u64)), //block_logical_time
-            Rc::new(BigInt::from(55398352000001u64)), // transaction_logical_time
+            Rc::new(BigInt::from(55398352000001u64)), //block_logical_time
+            Rc::new(BigInt::from(55398317000004u64)), // transaction_logical_time
             Rc::new(BigInt::from(0)),                 //rand_ceed
             Rc::new(balance_tuple),
             Rc::new(addr),

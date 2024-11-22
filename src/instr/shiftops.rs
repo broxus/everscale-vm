@@ -1,13 +1,11 @@
-use std::ops::{BitOr, Deref};
-use std::rc::Rc;
-use num_bigint::BigInt;
-use everscale_vm_proc::vm_module;
 use crate::error::VmResult;
 use crate::VmState;
-
+use everscale_vm_proc::vm_module;
+use num_bigint::BigInt;
+use std::ops::{BitOr, Deref};
+use std::rc::Rc;
 
 pub struct Shiftops;
-
 
 #[vm_module]
 impl Shiftops {

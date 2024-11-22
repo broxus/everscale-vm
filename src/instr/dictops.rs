@@ -33,8 +33,10 @@ impl Dictops {
         let prefix = cell_slice.get_prefix(1, 1);
         cell_slice.skip_first(1, 1)?;
 
-        let int = load_int_from_slice(&mut cell_slice, 10, false)?;
+        let int = cell_slice.load_uint(10)?;
         let cell = prefix.get_reference_cloned(0)?;
+        st.code.set_range(cell_slice.range());
+
         vm_log!("execute DICTPUSHCONST {int}");
         ok!(stack.push_raw(Rc::new(cell)));
         ok!(stack.push_int(int));
@@ -855,8 +857,7 @@ impl Dictops {
         )?;
 
         if let Some(entry) = entry {
-            let code = OwnedCellSlice::from((st.code.cell().clone()));
-            let cont = Rc::new(OrdCont::simple(code, st.cp.id()));
+            let cont = Rc::new(OrdCont::simple(entry.into(), st.cp.id()));
             return if s.is_exec() {
                 st.call(cont)
             } else {
@@ -877,7 +878,7 @@ pub fn check_key_sign(is_unsigned: bool, int: Rc<BigInt>) -> VmResult<i32> {
         (true, Sign::Minus) => {
             vm_bail!(IntegerOutOfRange {
                 min: 0,
-                max: u32::MAX as isize,
+                max: u32::MAX as isize, //TODO: proper max value
                 actual: int.to_string()
             })
         }
@@ -917,7 +918,7 @@ struct DisplayDictExecArgs(u32);
 impl std::fmt::Display for DisplayDictExecArgs {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let args = DictExecArgs(self.0);
-        let is_unsigned = if args.is_unsigned() { "I" } else { "I" };
+        let is_unsigned = if args.is_unsigned() { "U" } else { "I" };
         let is_exec = if args.is_exec() { "EXEC" } else { "JMP" };
         let is_z = if args.is_z() { "Z" } else { "" };
         write!(f, "DICT{is_unsigned}GET{is_exec}{is_z}")
