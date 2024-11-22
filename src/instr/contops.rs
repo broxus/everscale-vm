@@ -914,9 +914,9 @@ impl Contops {
     #[instr(code = "f2$00nn#n", fmt = "THROW {n}", args(mode = ThrowMode::Direct))]
     #[instr(code = "f2$01nn#n", fmt = "THROWIF {n}", args(mode = ThrowMode::Cond(true)))]
     #[instr(code = "f2$10nn#n", fmt = "THROWIFNOT {n}", args(mode = ThrowMode::Cond(false)))]
-    #[instr(code = "f2c$0nnn#n", fmt = "THROW {n}", args(mode = ThrowMode::Direct))]
-    #[instr(code = "f2d$0nnn#n", fmt = "THROWIF {n}", args(mode = ThrowMode::Cond(true)))]
-    #[instr(code = "f2e$0nnn#n", fmt = "THROWIFNOT {n}", args(mode = ThrowMode::Cond(false)))]
+    #[instr(code = "f2c$0nnn#nn", fmt = "THROW {n}", args(mode = ThrowMode::Direct))]
+    #[instr(code = "f2d$0nnn#nn", fmt = "THROWIF {n}", args(mode = ThrowMode::Cond(true)))]
+    #[instr(code = "f2e$0nnn#nn", fmt = "THROWIFNOT {n}", args(mode = ThrowMode::Cond(false)))]
     fn exec_throw_fixed(st: &mut VmState, n: u32, mode: ThrowMode) -> VmResult<i32> {
         if let ThrowMode::Cond(cond) = mode {
             if ok!(Rc::make_mut(&mut st.stack).pop_bool()) != cond {
