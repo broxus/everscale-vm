@@ -10,6 +10,7 @@ use everscale_vm::error::VmResult;
 use everscale_vm::stack::Tuple;
 use everscale_vm::util::OwnedCellSlice;
 use everscale_vm::VmState;
+use crate::error::VmError;
 use crate::stack::{RcStackValue, Stack};
 use crate::util::{load_int_from_slice, store_int_to_builder};
 
@@ -63,7 +64,7 @@ impl CurrencyOps {
         let int: Rc<BigInt> = ok!(stack.pop_int());
         let mut builder: Rc<CellBuilder> = ok!(stack.pop_builder());
         let cb_ref = Rc::make_mut(&mut builder);
-        match store_int_to_builder(int.as_ref(), s.len_bits as u16, cb_ref) {
+        match store_int_to_builder(int.as_ref(), (s.len_bits * 8) as u16, cb_ref) {  //TODO: get rid of multiply by 8
             Ok(_) => {
                 ok!(stack.push_raw(builder));
                 if s.quiet {
@@ -191,9 +192,9 @@ fn parse_message_address(owned_slice: &OwnedCellSlice) -> Result<(bool, Tuple), 
 fn load_message_address_q<'a>(cs: &mut  CellSlice<'a>, quiet: bool) -> VmResult<(bool, CellSlice<'a>)> {
     let mut res = cs.clone();
 
-    if let Err(e) = skip_message_addr(&mut cs.clone()) {
+    if let Err(e) = skip_message_addr(cs) {
         if quiet {
-            return Ok((false, cs.clone()));
+            return Ok((false, res.clone()));
         }
         vm_bail!(CellError(Error::CellUnderflow))
     }
