@@ -329,7 +329,7 @@ mod tests {
         let balance_tuple: Tuple = vec![Rc::new(BigInt::from(10000000000u64)), Stack::make_null()];
 
         let addr =
-            StdAddr::from_str("0:4f4f10cb9a30582792fb3c1e364de5a6fbe6fe04f4167f1f12f83468c767aeb3")
+            StdAddr::from_str("0:6301b2c75596e6e569a6d13ae4ec70c94f177ece0be19f968ddce73d44e7afc7")
                 .unwrap();
         let addr = OwnedCellSlice::from(CellBuilder::build_from(addr).unwrap());
 
