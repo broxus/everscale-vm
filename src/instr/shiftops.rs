@@ -11,14 +11,14 @@ pub struct Shiftops;
 #[vm_module]
 impl Shiftops {
     #[instr(code = "b1", fmt = "OR", args(quiet = false))]
-    #[instr(code = "b7b1", fmt = "QOR", args(quiet = false))]
+    #[instr(code = "b7b1", fmt = "QOR", args(quiet = true))]
     fn exec_or(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y: Rc<BigInt> = ok!(stack.pop_int());
         let x: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
         match x {
             Some(f) => {
-                let result = f.deref().bitor(y.deref());
+                let result = f.deref().bitor(&*y);
                 ok!(stack.push_raw_int(Rc::new(result), quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -29,14 +29,14 @@ impl Shiftops {
     }
 
     #[instr(code = "b0", fmt = "AND", args(quiet = false))]
-    #[instr(code = "b7b0", fmt = "QAND", args(quiet = false))]
+    #[instr(code = "b7b0", fmt = "QAND", args(quiet = true))]
     fn exec_and(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y: Rc<BigInt> = ok!(stack.pop_int());
         let x: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
         match x {
             Some(f) => {
-                let result = f.deref().bitand(y.deref());
+                let result = f.deref().bitand(&*y);
                 ok!(stack.push_raw_int(Rc::new(result), quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -47,20 +47,36 @@ impl Shiftops {
     }
 
     #[instr(code = "b2", fmt = "XOR", args(quiet = false))]
-    #[instr(code = "b7b2", fmt = "QXOR", args(quiet = false))]
+    #[instr(code = "b7b2", fmt = "QXOR", args(quiet = true))]
     fn exec_xor(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y: Rc<BigInt> = ok!(stack.pop_int());
         let x: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
         match x {
             Some(f) => {
-                let result = f.deref().bitxor(y.deref());
+                let result = f.deref().bitxor(&*y);
                 ok!(stack.push_raw_int(Rc::new(result), quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
             _ => vm_bail!(IntegerOverflow),
         }
 
+        Ok(0)
+    }
+
+    #[instr(code = "b3", fmt = "NOT", args(quiet = false))]
+    #[instr(code = "b7b3", fmt = "QNOT", args(quiet = true))]
+    fn exec_not(st: &mut VmState, quiet: bool) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let y = ok!(stack.pop_smallint_range(0, 1023));
+        match ok!(stack.pop_int_or_nan()) {
+            Some(x) => {
+                let x = !&*x;
+                ok!(stack.push_raw_int(Rc::new(x), quiet));
+            }
+            _ if quiet => ok!(stack.push_nan()),
+            _ => vm_bail!(IntegerOverflow),
+        }
         Ok(0)
     }
 
@@ -132,8 +148,8 @@ impl Shiftops {
     fn exec_pow2(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_smallint_range(0, 1023));
-        let result = BigInt::from(2).pow(y);
-        ok!(stack.push_raw_int(Rc::new(result), quiet));
+        let x = BigInt::from(2) << y;
+        ok!(stack.push_raw_int(Rc::new(x), quiet));
         Ok(0)
     }
 
