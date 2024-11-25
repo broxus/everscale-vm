@@ -4,11 +4,12 @@ use std::ops::Deref;
 use std::rc::Rc;
 use everscale_types::cell::{CellBuilder, CellSlice};
 use everscale_types::error::Error;
+use everscale_types::num::SplitDepth;
 use num_bigint::BigInt;
 use num_traits::{One, Zero};
 use everscale_vm::error::VmResult;
 use everscale_vm::stack::Tuple;
-use everscale_vm::util::OwnedCellSlice;
+use everscale_vm::util::{load_var_int_from_slice, store_varint_to_builder, OwnedCellSlice};
 use everscale_vm::VmState;
 use crate::error::VmError;
 use crate::stack::{RcStackValue, Stack};
@@ -28,8 +29,7 @@ impl CurrencyOps {
         let mut cs = cs.deref().clone();
         let mut slice = cs.apply()?;
 
-
-        let int_opt = match load_int_from_slice(&mut slice, s.len_bits as u16, s.signed) {
+        let int_opt = match load_var_int_from_slice(&mut slice, s.len_bits as u16, s.signed) {
             Ok(int) => Some(int),
             Err(e) => {
                 if !s.quiet {
@@ -64,18 +64,18 @@ impl CurrencyOps {
         let int: Rc<BigInt> = ok!(stack.pop_int());
         let mut builder: Rc<CellBuilder> = ok!(stack.pop_builder());
         let cb_ref = Rc::make_mut(&mut builder);
-        match store_int_to_builder(int.as_ref(), (s.len_bits * 8) as u16, cb_ref) {  //TODO: get rid of multiply by 8
-            Ok(_) => {
+        match store_varint_to_builder(int.as_ref(), s.len_bits as u16, cb_ref, s.signed, s.quiet) {
+            Ok(true) => {
                 ok!(stack.push_raw(builder));
                 if s.quiet {
                     ok!(stack.push_bool(true));
                 }
             }
-            Err(e) => {
-                if !s.quiet {
-                    vm_bail!(CellError(e))
-                }
+            Ok(false) => {
                 ok!(stack.push_bool(false));
+            }
+            Err(e) => {
+                vm_bail!(CellError(e))
             }
         }
         Ok(0)
@@ -84,7 +84,6 @@ impl CurrencyOps {
     #[instr(code = "fa40", fmt = "LDMSGADDR", args(quiet = false))]
     #[instr(code = "fa41", fmt = "LDMSGADDRQ", args(quiet = true))]
     fn exec_load_message_addr(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        //TODO: check if this could be implemented better
         let stack = Rc::make_mut(&mut st.stack);
         let cs: Rc<OwnedCellSlice> = ok!(stack.pop_cs());
         let mut slice = cs.apply()?;
@@ -116,11 +115,10 @@ impl CurrencyOps {
     #[instr(code = "fa42", fmt = "PARSEMSGADDR", args(quiet = false))]
     #[instr(code = "fa43", fmt = "PARSEMSGADDRQ", args(quiet = true))]
     fn exec_parse_message_addr(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        //TODO: check if this could be implemented better
         let stack = Rc::make_mut(&mut st.stack);
-        let cs: Rc<OwnedCellSlice> = ok!(stack.pop_cs());
-        let owned = cs.deref();
-        match parse_message_address(owned) {
+        let mut cs: Rc<OwnedCellSlice> = ok!(stack.pop_cs());
+        let owned_cell_slice = Rc::make_mut(&mut cs);
+        match parse_message_address(owned_cell_slice) {
             Ok((true, tuple) ) => {
                 ok!(stack.push_raw(Rc::new(tuple)));
                 if quiet {
@@ -139,12 +137,15 @@ impl CurrencyOps {
     }
 }
 
-fn parse_message_address(owned_slice: &OwnedCellSlice) -> Result<(bool, Tuple), Error> {
-    let mut slice = owned_slice.apply()?;
-    let mut cloned = owned_slice.clone();
+fn parse_message_address(owned_slice: &mut OwnedCellSlice) -> Result<(bool, Tuple), Error> {
+    let mut slice = owned_slice.clone();
+    let mut slice = slice.apply()?;
 
     let mut tuple = Tuple::new();
-    match slice.load_uint(2)? {
+    let prefix = slice.load_small_uint(2)?;
+    owned_slice.set_range(slice.range());
+
+    match prefix {
         0 => {
             tuple.push(Rc::new(BigInt::zero()));
             Ok((true, tuple))
@@ -153,37 +154,50 @@ fn parse_message_address(owned_slice: &OwnedCellSlice) -> Result<(bool, Tuple), 
             let len = slice.load_uint(9)?;
             let address = slice.get_prefix(len as u16, 0);
             slice.skip_first(len as u16, 0)?;
-
-
-            cloned.set_range(address.range());
-
             tuple.push(Rc::new(BigInt::one()));
-            tuple.push(Rc::new(cloned));
+            owned_slice.set_range(address.range());
+            tuple.push(Rc::new(owned_slice.clone()));
             Ok((true, tuple))
         }
         2 => {
-            let anycast = parse_maybe_anycast(owned_slice)?;
-            let worckchain = slice.load_uint(8)?;
+            let anycast = parse_maybe_anycast(&mut slice)?;
+            let worckchain = slice.load_u8()?;
             let prefix = slice.get_prefix(256, 0);
             slice.skip_first(256, 0)?;
 
             tuple.push(Rc::new(BigInt::from(2)));
-            tuple.push(anycast);
+            let value = match anycast {
+                Some(anycast) => {
+                    owned_slice.set_range(anycast.range());
+                    Rc::new(owned_slice.clone())
+                }
+                None => Stack::make_null()
+            };
+            tuple.push(value);
             tuple.push(Rc::new(BigInt::from(worckchain)));
-            tuple.push(Rc::new(cloned.set_range(prefix.range())));
+            owned_slice.set_range(prefix.range());
+            tuple.push(Rc::new(owned_slice.clone()));
             Ok((true, tuple))
         }
         3 => {
-            let anycast = parse_maybe_anycast(owned_slice)?;
+            let anycast = parse_maybe_anycast(&mut slice)?;
             let len = slice.load_uint(9)?;
             let worckchain = slice.load_uint(32)?;
             let prefix = slice.get_prefix(len as u16, 0);
             slice.skip_first(len as u16, 0)?;
 
             tuple.push(Rc::new(BigInt::from(3)));
-            tuple.push(anycast);
+            let value = match anycast {
+                Some(anycast) => {
+                    owned_slice.set_range(anycast.range());
+                    Rc::new(owned_slice.clone())
+                }
+                None => Stack::make_null()
+            };
+            tuple.push(value);
             tuple.push(Rc::new(BigInt::from(worckchain)));
-            tuple.push(Rc::new(cloned.set_range(prefix.range())));
+            owned_slice.set_range(prefix.range());
+            tuple.push(Rc::new(owned_slice.clone()));
             Ok((true, tuple))
         }
         _ => Ok((false, tuple))
@@ -196,7 +210,7 @@ fn load_message_address_q<'a>(cs: &mut  CellSlice<'a>, quiet: bool) -> VmResult<
         if quiet {
             return Ok((false, res.clone()));
         }
-        vm_bail!(CellError(Error::CellUnderflow))
+        vm_bail!(CellError(e))
     }
     res.skip_last(cs.offset_bits(), cs.offset_refs())?;
 
@@ -207,7 +221,7 @@ fn load_message_address_q<'a>(cs: &mut  CellSlice<'a>, quiet: bool) -> VmResult<
 
 
 fn skip_message_addr(slice: &mut CellSlice) -> Result<(), Error> {
-    let addr_type = slice.load_uint(2)?;
+    let addr_type = slice.load_small_uint(2)?;
 
     match addr_type {
         0 => Ok(()),
@@ -232,44 +246,30 @@ fn skip_message_addr(slice: &mut CellSlice) -> Result<(), Error> {
 }
 
 fn skip_maybe_anycast(cs: &mut CellSlice) -> Result<(), Error> {
-    if cs.get_uint(cs.offset_bits(), 1)? != 1 {
-        cs.skip_first(1, 0)?;
+    if !cs.load_bit()? {
         return Ok(());
     }
-
-    cs.skip_first(cs.offset_bits(), 1)?;
-    let depth = load_uint_leq(cs, 30)?;
-    if depth < 1 {
-        return Err(Error::InvalidData);
-    }
-    cs.skip_first(depth as u16, 0)?;
+    let depth = SplitDepth::new(load_uint_leq(cs, 30)? as u8)?;
+    cs.skip_first(depth.into_bit_len(), 0)?;
 
     Ok(())
 }
 
-fn parse_maybe_anycast<'a>(slice: &OwnedCellSlice) -> Result<RcStackValue, Error> {
-    let mut cloned = slice.clone();
-    let mut cs = cloned.apply()?;
-    let mut stack_value= Stack::make_null();
-
-    if cs.get_uint(cs.offset_bits(), 1)? != 1 {
-        cs.skip_first(1, 0)?;
-        return Ok(stack_value);
+fn parse_maybe_anycast<'a>(cs: &mut CellSlice<'a>) -> Result<Option<CellSlice<'a>>, Error> {
+    let load_bit = cs.load_bit()?;
+    if !load_bit {
+        return Ok(None);
     }
-    cs.skip_first(cs.offset_bits(), 1)?;
-    let depth = load_uint_leq(&mut cs, 30)?;
-    if depth < 1 {
-        return Err(Error::InvalidData);
-    }
-    let prefix = cs.get_prefix(depth as u16, 0 );
-    cs.skip_first(depth as u16, 0)?;
-    stack_value = Rc::new(cloned.set_range(prefix.range()));
 
-    Ok(stack_value)
+    let depth = SplitDepth::new(load_uint_leq(cs, 30)? as u8)?;
+    let prefix = cs.get_prefix(depth.into_bit_len(), 0 );
+    cs.skip_first(depth.into_bit_len(), 0)?;
+
+    Ok(Some(prefix))
 }
 
-fn load_uint_leq(cs: &mut CellSlice, upper_bound: u64) -> Result<u64, Error> {
-    let leading_zeros: u32 = if upper_bound == 0 {
+fn load_uint_leq(cs: &mut CellSlice, upper_bound: u32) -> Result<u64, Error> {
+    let leading_zeros = if upper_bound == 0 {
         32
     } else {
         upper_bound.leading_zeros()
@@ -279,7 +279,7 @@ fn load_uint_leq(cs: &mut CellSlice, upper_bound: u64) -> Result<u64, Error> {
         Err(Error::IntOverflow)
     } else {
         let result = cs.get_uint(cs.offset_bits(), bits as u16)?;
-        if result > upper_bound {
+        if result > upper_bound as u64 {
             return Err(Error::IntOverflow);
         };
 
@@ -334,5 +334,76 @@ impl std::fmt::Display for DisplayVarIntegerArgs {
             format!("{mode}VAR{signed}INT{}{quiet}", 1 << self.len_bits)
         };
         write!(f, "{log}")
+    }
+}
+
+
+mod test {
+    use std::rc::Rc;
+    use std::str::FromStr;
+    use everscale_types::cell::CellSliceRange;
+    use everscale_types::models::StdAddr;
+    use everscale_types::prelude::CellBuilder;
+    use num_bigint::BigInt;
+    use tracing_test::traced_test;
+    use everscale_vm::stack::Stack;
+    use crate::stack::{RcStackValue, Tuple};
+    use crate::util::{store_varint_to_builder, OwnedCellSlice};
+
+    #[test]
+    #[traced_test]
+    fn load_varint_u16_test() {
+        let int = BigInt::from(5);
+        let mut builder = CellBuilder::new();
+        let x = store_varint_to_builder(&int, 4, &mut builder, true, false).unwrap();
+        let mut slice = OwnedCellSlice::from(builder.build().unwrap());
+        let value: RcStackValue = Rc::new(slice.clone());
+        let mut cs = slice.apply().unwrap();
+        cs.skip_first(12, 0).unwrap();
+        slice.set_range(cs.range());
+        let another_value: RcStackValue = Rc::new(slice);
+
+        assert_run_vm!("LDVARUINT16", [raw value] => [int 5, raw another_value]) // aka LDGRAMS
+    }
+
+    #[test]
+    #[traced_test]
+    fn load_varint_u32_test() {
+        let int = BigInt::from(5);
+        let mut builder = CellBuilder::new();
+        let x = store_varint_to_builder(&int, 5, &mut builder, true, false).unwrap();
+        let mut slice = OwnedCellSlice::from(builder.build().unwrap());
+        let value: RcStackValue = Rc::new(slice.clone());
+        let mut cs = slice.apply().unwrap();
+        cs.skip_first(13, 0).unwrap();
+        slice.set_range(cs.range());
+        let another_value: RcStackValue = Rc::new(slice);
+
+        assert_run_vm!("LDVARUINT32", [raw value] => [int 5, raw another_value])
+    }
+
+    #[test]
+    #[traced_test]
+    fn parse_message_address() {
+        let addr =
+            StdAddr::from_str("0:6301b2c75596e6e569a6d13ae4ec70c94f177ece0be19f968ddce73d44e7afc7")
+                .unwrap();
+        let mut addr = OwnedCellSlice::from(CellBuilder::build_from(addr).unwrap());
+        let value: RcStackValue = Rc::new(addr.clone());
+
+        let mut tuple = Tuple::new();
+        tuple.push(Rc::new(BigInt::from(2)));
+        tuple.push(Stack::make_null());
+        tuple.push(Rc::new(BigInt::from(0)));
+        let mut cs = addr.apply().unwrap();
+        cs.skip_first(11, 0).unwrap();
+        addr.set_range(cs.range());
+        tuple.push(Rc::new(addr));
+        let tuple: RcStackValue = Rc::new(tuple);
+
+        assert_run_vm!("PARSEMSGADDR", [raw value.clone()] => [raw tuple.clone()]);
+        assert_run_vm!("PARSEMSGADDRQ", [raw value.clone()] => [raw tuple, int -1]);
+
+
     }
 }
