@@ -3,7 +3,7 @@ use crate::error::VmResult;
 use crate::VmState;
 use everscale_vm_proc::vm_module;
 use num_bigint::BigInt;
-use std::ops::{BitAnd, BitOr, BitXor, Deref, Shl};
+use std::ops::{BitAnd, BitOr, BitXor, Deref, Not, Shl};
 use std::rc::Rc;
 
 pub struct Shiftops;
@@ -11,15 +11,15 @@ pub struct Shiftops;
 #[vm_module]
 impl Shiftops {
     #[instr(code = "b1", fmt = "OR", args(quiet = false))]
-    #[instr(code = "b7b1", fmt = "QOR", args(quiet = true))]
+    #[instr(code = "b7b1", fmt = "QOR", args(quiet = true))] //TODO: differs from the specification. Original C++ implementation has the same problem
     fn exec_or(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let y: Rc<BigInt> = ok!(stack.pop_int());
+        let y: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
         let x: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
-        match x {
-            Some(f) => {
-                let result = f.deref().bitor(&*y);
-                ok!(stack.push_raw_int(Rc::new(result), quiet));
+        match (x, y) {
+            (Some(mut x), Some(y)) => {
+                *Rc::make_mut(&mut x) |= y.as_ref();
+                ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
             _ => vm_bail!(IntegerOverflow),
@@ -29,15 +29,15 @@ impl Shiftops {
     }
 
     #[instr(code = "b0", fmt = "AND", args(quiet = false))]
-    #[instr(code = "b7b0", fmt = "QAND", args(quiet = true))]
+    #[instr(code = "b7b0", fmt = "QAND", args(quiet = true))] //TODO: differs from the specification. Original C++ implementation has the same problem
     fn exec_and(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let y: Rc<BigInt> = ok!(stack.pop_int());
+        let y: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
         let x: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
-        match x {
-            Some(f) => {
-                let result = f.deref().bitand(&*y);
-                ok!(stack.push_raw_int(Rc::new(result), quiet));
+        match (x, y) {
+            (Some(mut x), Some(y)) => {
+                *Rc::make_mut(&mut x) &= y.as_ref();
+                ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
             _ => vm_bail!(IntegerOverflow),
@@ -50,12 +50,12 @@ impl Shiftops {
     #[instr(code = "b7b2", fmt = "QXOR", args(quiet = true))]
     fn exec_xor(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let y: Rc<BigInt> = ok!(stack.pop_int());
+        let y: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
         let x: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
-        match x {
-            Some(f) => {
-                let result = f.deref().bitxor(&*y);
-                ok!(stack.push_raw_int(Rc::new(result), quiet));
+        match (x, y) {
+            (Some(mut x), Some(y)) => {
+                *Rc::make_mut(&mut x) ^= y.as_ref();
+                ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
             _ => vm_bail!(IntegerOverflow),
@@ -68,10 +68,11 @@ impl Shiftops {
     #[instr(code = "b7b3", fmt = "QNOT", args(quiet = true))]
     fn exec_not(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let y = ok!(stack.pop_smallint_range(0, 1023));
-        match ok!(stack.pop_int_or_nan()) {
+        //let y = ok!(stack.pop_smallint_range(0, 1023));
+        let x: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
+        match x {
             Some(x) => {
-                let x = !&*x;
+                let x = x.as_ref().not();
                 ok!(stack.push_raw_int(Rc::new(x), quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -148,9 +149,70 @@ impl Shiftops {
     fn exec_pow2(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_smallint_range(0, 1023));
-        let x = BigInt::from(2) << y;
+        let x = BigInt::from(1).shl(y);
         ok!(stack.push_raw_int(Rc::new(x), quiet));
         Ok(0)
     }
 
+}
+
+mod tests {
+    use num_bigint::BigInt;
+    use tracing_test::traced_test;
+
+    #[test]
+    #[traced_test]
+    pub fn shift_tests() {
+        assert_run_vm!("AND", [int 1, int 1] => [int 1]);
+        assert_run_vm!("AND", [int 0, int 1] => [int 0]);
+        assert_run_vm!("AND", [int 0, int 0] => [int 0]);
+        assert_run_vm!("AND", [nan, int 1] => [int 0], exit_code: 4);
+        assert_run_vm!("QAND", [nan, int 1] => [nan]);
+
+        assert_run_vm!("OR", [int 1, int 1] => [int 1]);
+        assert_run_vm!("OR", [int 0, int 1] => [int 1]);
+        assert_run_vm!("OR", [int 0, int 0] => [int 0]);
+        assert_run_vm!("OR", [nan, int 1] => [int 0], exit_code: 4);
+        assert_run_vm!("QOR", [nan, int 1] => [nan]);
+
+        assert_run_vm!("XOR", [int 1, int 1] => [int 0]);
+        assert_run_vm!("XOR", [int 0, int 1] => [int 1]);
+        assert_run_vm!("XOR", [int 0, int 0] => [int 0]);
+        assert_run_vm!("XOR", [nan, int 1] => [int 0], exit_code: 4);
+        assert_run_vm!("QXOR", [nan, int 1] => [nan]);
+
+        assert_run_vm!("NOT", [int 1] => [int -2]);
+        assert_run_vm!("NOT", [int 0] => [int -1]);
+        assert_run_vm!("NOT", [int 4] => [int -5]);
+        assert_run_vm!("NOT", [int -4] => [int 3]);
+        assert_run_vm!("NOT", [nan] => [int 0], exit_code: 4);
+        assert_run_vm!("QNOT", [nan] => [nan]);
+
+        assert_run_vm!("LSHIFT# 5", [int 1] => [int 32]);
+        assert_run_vm!("RSHIFT# 5", [int 32] => [int 1]);
+
+        assert_run_vm!("RSHIFT", [int 32, int 5] => [int 1]);
+        assert_run_vm!("RSHIFT", [int 5] => [int 0], exit_code: 2);
+        assert_run_vm!("QRSHIFT", [nan, int 5] => [nan]);
+
+        assert_run_vm!("LSHIFT", [int 1, int 5] => [int 32]);
+        assert_run_vm!("LSHIFT", [int 1, int 255] => [int (BigInt::from(1) << 255)]);
+        assert_run_vm!("LSHIFT", [int 5] => [int 0], exit_code: 2);
+        assert_run_vm!("QLSHIFT", [nan, int 5] => [nan]);
+
+        assert_run_vm!("RSHIFT", [int 32, int 5] => [int 1]);
+        assert_run_vm!("RSHIFT", [int 5] => [int 0], exit_code: 2);
+        assert_run_vm!("QRSHIFT", [nan, int 5] => [nan]);
+
+
+        assert_run_vm!("POW2", [int 1] => [int 2]);
+        assert_run_vm!("POW2", [int 0] => [int 1]);
+        assert_run_vm!("QPOW2", [int 1] => [int 2]);
+        assert_run_vm!("QPOW2", [int 0] => [int 1]);
+        assert_run_vm!("POW2", [] => [int 0], exit_code: 2);
+        assert_run_vm!("QPOW2", [] => [int 0], exit_code: 2);
+        assert_run_vm!("QPOW2", [int 1024] => [int 0], exit_code: 5);
+        assert_run_vm!("POW2", [int 1024] => [int 0], exit_code: 5);
+        assert_run_vm!("POW2", [int -1] => [int 0], exit_code: 5);
+    }
 }
