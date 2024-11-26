@@ -1,19 +1,17 @@
-use everscale_vm_proc::vm_module;
-use std::fmt::Formatter;
-use std::ops::Deref;
-use std::rc::Rc;
+use crate::stack::Stack;
 use everscale_types::cell::{CellBuilder, CellSlice};
 use everscale_types::error::Error;
 use everscale_types::num::SplitDepth;
-use num_bigint::BigInt;
-use num_traits::{One, Zero};
 use everscale_vm::error::VmResult;
 use everscale_vm::stack::Tuple;
 use everscale_vm::util::{load_var_int_from_slice, store_varint_to_builder, OwnedCellSlice};
 use everscale_vm::VmState;
-use crate::error::VmError;
-use crate::stack::{RcStackValue, Stack};
-use crate::util::{load_int_from_slice, store_int_to_builder};
+use everscale_vm_proc::vm_module;
+use num_bigint::BigInt;
+use num_traits::{One, Zero};
+use std::fmt::Formatter;
+use std::ops::Deref;
+use std::rc::Rc;
 
 pub struct CurrencyOps;
 
@@ -50,7 +48,7 @@ impl CurrencyOps {
                     ok!(stack.push_bool(true))
                 }
             }
-            None => ok!(stack.push_bool(false))
+            None => ok!(stack.push_bool(false)),
         }
         Ok(0)
     }
@@ -119,7 +117,7 @@ impl CurrencyOps {
         let mut cs: Rc<OwnedCellSlice> = ok!(stack.pop_cs());
         let owned_cell_slice = Rc::make_mut(&mut cs);
         match parse_message_address(owned_cell_slice) {
-            Ok((true, tuple) ) => {
+            Ok((true, tuple)) => {
                 ok!(stack.push_raw(Rc::new(tuple)));
                 if quiet {
                     ok!(stack.push_bool(true));
@@ -138,7 +136,7 @@ impl CurrencyOps {
 }
 
 fn parse_message_address(owned_slice: &mut OwnedCellSlice) -> Result<(bool, Tuple), Error> {
-    let mut slice = owned_slice.clone();
+    let slice = owned_slice.clone();
     let mut slice = slice.apply()?;
 
     let mut tuple = Tuple::new();
@@ -171,7 +169,7 @@ fn parse_message_address(owned_slice: &mut OwnedCellSlice) -> Result<(bool, Tupl
                     owned_slice.set_range(anycast.range());
                     Rc::new(owned_slice.clone())
                 }
-                None => Stack::make_null()
+                None => Stack::make_null(),
             };
             tuple.push(value);
             tuple.push(Rc::new(BigInt::from(worckchain)));
@@ -192,7 +190,7 @@ fn parse_message_address(owned_slice: &mut OwnedCellSlice) -> Result<(bool, Tupl
                     owned_slice.set_range(anycast.range());
                     Rc::new(owned_slice.clone())
                 }
-                None => Stack::make_null()
+                None => Stack::make_null(),
             };
             tuple.push(value);
             tuple.push(Rc::new(BigInt::from(worckchain)));
@@ -200,10 +198,13 @@ fn parse_message_address(owned_slice: &mut OwnedCellSlice) -> Result<(bool, Tupl
             tuple.push(Rc::new(owned_slice.clone()));
             Ok((true, tuple))
         }
-        _ => Ok((false, tuple))
+        _ => Ok((false, tuple)),
     }
 }
-fn load_message_address_q<'a>(cs: &mut  CellSlice<'a>, quiet: bool) -> VmResult<(bool, CellSlice<'a>)> {
+fn load_message_address_q<'a>(
+    cs: &mut CellSlice<'a>,
+    quiet: bool,
+) -> VmResult<(bool, CellSlice<'a>)> {
     let mut res = cs.clone();
 
     if let Err(e) = skip_message_addr(cs) {
@@ -216,9 +217,6 @@ fn load_message_address_q<'a>(cs: &mut  CellSlice<'a>, quiet: bool) -> VmResult<
 
     Ok((true, res))
 }
-
-
-
 
 fn skip_message_addr(slice: &mut CellSlice) -> Result<(), Error> {
     let addr_type = slice.load_small_uint(2)?;
@@ -241,7 +239,7 @@ fn skip_message_addr(slice: &mut CellSlice) -> Result<(), Error> {
             slice.skip_first((32 + len) as u16, 0)
         }
 
-        _ => Err(Error::InvalidData)
+        _ => Err(Error::InvalidData),
     }
 }
 
@@ -262,7 +260,7 @@ fn parse_maybe_anycast<'a>(cs: &mut CellSlice<'a>) -> Result<Option<CellSlice<'a
     }
 
     let depth = SplitDepth::new(load_uint_leq(cs, 30)? as u8)?;
-    let prefix = cs.get_prefix(depth.into_bit_len(), 0 );
+    let prefix = cs.get_prefix(depth.into_bit_len(), 0);
     cs.skip_first(depth.into_bit_len(), 0)?;
 
     Ok(Some(prefix))
@@ -337,25 +335,25 @@ impl std::fmt::Display for DisplayVarIntegerArgs {
     }
 }
 
-
+#[cfg(test)]
 mod test {
-    use std::rc::Rc;
-    use std::str::FromStr;
+    use crate::stack::{RcStackValue, Tuple};
+    use crate::util::{store_varint_to_builder, OwnedCellSlice};
     use everscale_types::cell::CellSliceRange;
     use everscale_types::models::StdAddr;
     use everscale_types::prelude::CellBuilder;
-    use num_bigint::BigInt;
-    use tracing_test::traced_test;
     use everscale_vm::stack::Stack;
-    use crate::stack::{RcStackValue, Tuple};
-    use crate::util::{store_varint_to_builder, OwnedCellSlice};
+    use num_bigint::BigInt;
+    use std::rc::Rc;
+    use std::str::FromStr;
+    use tracing_test::traced_test;
 
     #[test]
     #[traced_test]
     fn load_varint_u16_test() {
         let int = BigInt::from(5);
         let mut builder = CellBuilder::new();
-        let x = store_varint_to_builder(&int, 4, &mut builder, true, false).unwrap();
+        store_varint_to_builder(&int, 4, &mut builder, true, false).unwrap();
         let mut slice = OwnedCellSlice::from(builder.build().unwrap());
         let value: RcStackValue = Rc::new(slice.clone());
         let mut cs = slice.apply().unwrap();
@@ -363,7 +361,8 @@ mod test {
         slice.set_range(cs.range());
         let another_value: RcStackValue = Rc::new(slice);
 
-        assert_run_vm!("LDVARUINT16", [raw value] => [int 5, raw another_value]) // aka LDGRAMS
+        assert_run_vm!("LDVARUINT16", [raw value] => [int 5, raw another_value])
+        // aka LDGRAMS
     }
 
     #[test]
@@ -371,7 +370,7 @@ mod test {
     fn load_varint_u32_test() {
         let int = BigInt::from(5);
         let mut builder = CellBuilder::new();
-        let x = store_varint_to_builder(&int, 5, &mut builder, true, false).unwrap();
+        store_varint_to_builder(&int, 5, &mut builder, true, false).unwrap();
         let mut slice = OwnedCellSlice::from(builder.build().unwrap());
         let value: RcStackValue = Rc::new(slice.clone());
         let mut cs = slice.apply().unwrap();
@@ -403,7 +402,5 @@ mod test {
 
         assert_run_vm!("PARSEMSGADDR", [raw value.clone()] => [raw tuple.clone()]);
         assert_run_vm!("PARSEMSGADDRQ", [raw value.clone()] => [raw tuple, int -1]);
-
-
     }
 }
