@@ -10,7 +10,7 @@ use everscale_types::prelude::{Cell, CellFamily, Store};
 use everscale_vm::cont::OrdCont;
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
-use std::fmt::{write, Formatter};
+use std::fmt::Formatter;
 use std::rc::Rc;
 
 pub struct Dictops;
@@ -890,10 +890,6 @@ struct DictExecArgs(u32);
 impl DictExecArgs {
     fn is_unsigned(&self) -> bool {
         self.0 & 0b01 != 0
-    }
-
-    fn is_signed(&self) -> bool {
-        !self.is_unsigned()
     }
 
     fn is_exec(&self) -> bool {

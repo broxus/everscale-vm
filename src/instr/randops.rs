@@ -177,6 +177,7 @@ fn generate_random_u256(regs: &mut ControlRegs) -> VmResult<HashBytes> {
     Ok(random)
 }
 
+#[cfg(test)]
 pub mod test {
     use crate::stack::{RcStackValue, StackValue};
     use everscale_vm::stack::Tuple;

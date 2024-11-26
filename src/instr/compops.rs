@@ -3,9 +3,7 @@ use crate::VmState;
 use everscale_vm_proc::vm_module;
 use num_bigint::BigInt;
 use std::cmp::Ordering;
-use std::fmt::Formatter;
 use std::ops::Deref;
-use std::path::Display;
 use std::rc::Rc;
 
 pub struct CompOps;

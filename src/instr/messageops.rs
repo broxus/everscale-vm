@@ -166,6 +166,7 @@ fn install_output_actions(regs: &mut ControlRegs, action_head: Cell) -> VmResult
     Ok(0)
 }
 
+#[cfg(test)]
 mod tests {
     use crate::stack::{RcStackValue, Stack};
     use crate::util::OwnedCellSlice;
@@ -184,7 +185,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn send_msg_test() {
-        let сode = Boc::decode(&everscale_asm_macros::tvmasm! {
+        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
             r#"
             SETCP0 DUP IFNOTRET // return if recv_internal
             DUP
@@ -261,7 +262,7 @@ mod tests {
         })
         .unwrap();
 
-        let code = OwnedCellSlice::from(сode);
+        let code = OwnedCellSlice::from(code);
 
         let balance_tuple: Tuple = vec![Rc::new(BigInt::from(10000000000u64)), Stack::make_null()];
 
