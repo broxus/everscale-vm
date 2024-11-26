@@ -79,7 +79,7 @@ impl Hashops {
         };
 
         let result = key.verify_raw(data.as_ref(), &signature);
-        ok!(stack.push_bool(true)); // todo: or check sig is always success by config
+        ok!(stack.push_bool(result)); // todo: or check sig is always success by config
 
         Ok(0)
     }
