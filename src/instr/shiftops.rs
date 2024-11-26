@@ -1,9 +1,8 @@
-use std::env::args;
 use crate::error::VmResult;
 use crate::VmState;
 use everscale_vm_proc::vm_module;
 use num_bigint::BigInt;
-use std::ops::{BitAnd, BitOr, BitXor, Deref, Not, Shl};
+use std::ops::{Not, Shl};
 use std::rc::Rc;
 
 pub struct Shiftops;
@@ -81,7 +80,6 @@ impl Shiftops {
         Ok(0)
     }
 
-
     #[instr(code = "aayy", fmt = "LSHIFT {y}", args(y = (args & 0xff) + 1, quiet = false))]
     #[instr(code = "b7aayy", fmt = "QLSHIFT {y}", args(y = (args & 0xff) + 1, quiet = true))]
     fn exec_lshift_tinyint8(st: &mut VmState, y: u32, quiet: bool) -> VmResult<i32> {
@@ -153,9 +151,9 @@ impl Shiftops {
         ok!(stack.push_raw_int(Rc::new(x), quiet));
         Ok(0)
     }
-
 }
 
+#[cfg(test)]
 mod tests {
     use num_bigint::BigInt;
     use tracing_test::traced_test;
@@ -203,7 +201,6 @@ mod tests {
         assert_run_vm!("RSHIFT", [int 32, int 5] => [int 1]);
         assert_run_vm!("RSHIFT", [int 5] => [int 0], exit_code: 2);
         assert_run_vm!("QRSHIFT", [nan, int 5] => [nan]);
-
 
         assert_run_vm!("POW2", [int 1] => [int 2]);
         assert_run_vm!("POW2", [int 0] => [int 1]);
