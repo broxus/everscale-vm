@@ -209,7 +209,7 @@ fn load_message_address_q<'a>(
 
     if let Err(e) = skip_message_addr(cs) {
         if quiet {
-            return Ok((false, res.clone()));
+            return Ok((false, res));
         }
         vm_bail!(CellError(e))
     }

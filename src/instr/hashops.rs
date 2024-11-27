@@ -70,7 +70,7 @@ impl Hashops {
         vm_ensure!(key_bytes.len() == 32usize, IntegerOverflow);
         key.copy_from_slice(key_bytes.as_slice());
 
-        //todo: register checksign counter and consume gas
+        st.gas.try_consume_check_signature_gas()?;
         let key = everscale_crypto::ed25519::PublicKey::from_bytes(key);
         let Some(key) = key else {
             vm_bail!(Unknown(
