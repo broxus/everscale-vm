@@ -6,9 +6,6 @@ use everscale_types::prelude::*;
 use crate::error::VmResult;
 use crate::state::VmState;
 
-const GAS_PER_INSTRUCTION: u64 = 10;
-const GAS_PER_BIT: u64 = 1;
-
 pub trait Opcode: Send + Sync {
     fn range(&self) -> (u32, u32);
 
@@ -239,7 +236,8 @@ impl Opcode for SimpleOpcode {
     }
 
     fn dispatch(&self, st: &mut VmState, _: u32, bits: u16) -> VmResult<i32> {
-        // TODO: consume gas_per_instr + opcode_bits * gas_per_bit
+        st.gas
+            .try_consume(GAS_PER_INSTRUCTION + self.opcode_bits as u64 * GAS_PER_BIT)?;
         vm_ensure!(bits >= self.opcode_bits, InvalidOpcode);
         st.code.range_mut().skip_first(self.opcode_bits, 0)?;
         (self.exec)(st)
@@ -259,7 +257,8 @@ impl Opcode for FixedOpcode {
     }
 
     fn dispatch(&self, st: &mut VmState, opcode: u32, bits: u16) -> VmResult<i32> {
-        // TODO: consume gas_per_instr + total_bits * gas_per_bit
+        st.gas
+            .try_consume(GAS_PER_INSTRUCTION + self.total_bits as u64 * GAS_PER_BIT)?;
         vm_ensure!(bits >= self.total_bits, InvalidOpcode);
         st.code.range_mut().skip_first(self.total_bits, 0)?;
         (self.exec)(st, opcode >> (MAX_OPCODE_BITS - self.total_bits))
@@ -279,7 +278,8 @@ impl Opcode for ExtOpcode {
     }
 
     fn dispatch(&self, st: &mut VmState, opcode: u32, bits: u16) -> VmResult<i32> {
-        // TODO: consume gas_per_instr + total_bits * gas_per_bit
+        st.gas
+            .try_consume(GAS_PER_INSTRUCTION + self.total_bits as u64 * GAS_PER_BIT)?;
         vm_ensure!(bits >= self.total_bits, InvalidOpcode);
         (self.exec)(
             st,
@@ -297,3 +297,6 @@ pub type FnExecInstrFull = fn(&mut VmState, u32, u16) -> VmResult<i32>;
 
 const MAX_OPCODE_BITS: u16 = 24;
 const MAX_OPCODE: u32 = 1 << MAX_OPCODE_BITS;
+
+const GAS_PER_INSTRUCTION: u64 = 10;
+const GAS_PER_BIT: u64 = 1;
