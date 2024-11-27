@@ -1,6 +1,7 @@
 use crate::cont::ControlRegs;
 use crate::error::VmResult;
 use crate::stack::{RcStackValue, StackValueType};
+use crate::state::GasConsumer;
 use crate::VmState;
 use everscale_types::cell::HashBytes;
 use everscale_vm::stack::{Stack, Tuple};
@@ -19,7 +20,7 @@ impl RandOps {
     #[instr(code = "f810", fmt = "RANDU256")]
     fn exec_randu256(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let random_bytes: HashBytes = ok!(generate_random_u256(&mut st.cr));
+        let random_bytes: HashBytes = ok!(generate_random_u256(&mut st.cr, &mut st.gas));
         let random = BigInt::from_bytes_be(Sign::Plus, random_bytes.as_ref());
         ok!(stack.push_int(random));
         Ok(0)
@@ -28,7 +29,7 @@ impl RandOps {
     fn exec_rand_int(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let int: Rc<BigInt> = ok!(stack.pop_int());
-        let random_bytes: HashBytes = ok!(generate_random_u256(&mut st.cr));
+        let random_bytes: HashBytes = ok!(generate_random_u256(&mut st.cr, &mut st.gas));
         let random = BigInt::from_bytes_be(Sign::Plus, random_bytes.as_ref());
 
         let Some(mut temp) = int.checked_mul(&random) else {
@@ -59,7 +60,7 @@ impl RandOps {
             vm_bail!(ControlRegisterOutOfRange(7))
         };
 
-        let control_params_opt = c7.get(0);
+        let control_params_opt = c7.first();
         let Some(control_params) = control_params_opt else {
             vm_bail!(InvalidType {
                 expected: StackValueType::Tuple,
@@ -98,7 +99,7 @@ impl RandOps {
 
         //TODO: should clean c7 first
         let mut new_intermediate = Tuple::from(intermediate_value);
-        let to_pay = if RANDCEED_ID < intermediate_value.len() {
+        let updated = if RANDCEED_ID < intermediate_value.len() {
             new_intermediate[RANDCEED_ID] = int;
             new_intermediate.len()
         } else {
@@ -107,27 +108,30 @@ impl RandOps {
             RANDCEED_ID + 1
         };
 
-        if to_pay > 0 {
-            //TODO: consume gas tuple in amount of to_pay
+        if updated > 0 {
+            st.gas.try_consume_tuple_gas(updated as u64)?;
         }
 
         let mut new_c7 = c7.as_ref().clone();
         new_c7[0] = Rc::new(new_intermediate);
 
-        //TODO: consume gas tuple for c7
+        st.gas.try_consume_tuple_gas(new_c7.len() as u64)?;
         st.cr.set_c7(Rc::new(new_c7));
 
         Ok(0)
     }
 }
 
-fn generate_random_u256(regs: &mut ControlRegs) -> VmResult<HashBytes> {
+fn generate_random_u256(
+    regs: &mut ControlRegs,
+    gas_consumer: &mut GasConsumer,
+) -> VmResult<HashBytes> {
     let c7_opt = &regs.c7;
     let Some(c7) = c7_opt else {
         vm_bail!(ControlRegisterOutOfRange(7))
     };
 
-    let control_params_opt: Option<&RcStackValue> = c7.get(0);
+    let control_params_opt: Option<&RcStackValue> = c7.first();
     let Some(control_params) = control_params_opt else {
         vm_bail!(InvalidType {
             expected: StackValueType::Tuple,
@@ -164,15 +168,14 @@ fn generate_random_u256(regs: &mut ControlRegs) -> VmResult<HashBytes> {
     let random = HashBytes::from(random_bytes);
 
     //TODO: should clean c7 first
-
-    //TODO: consume gas to set t1 idx 6 in c7
     let mut new_intermediate = Tuple::from(intermediate_value);
     new_intermediate[RANDCEED_ID] = Rc::new(new_ceed);
+    gas_consumer.try_consume_tuple_gas(new_intermediate.len() as u64)?;
 
     let mut new_c7 = c7.as_ref().clone();
     new_c7[0] = Rc::new(new_intermediate);
 
-    //TODO: consume gas tuple for c7
+    gas_consumer.try_consume_tuple_gas(new_c7.len() as u64)?;
     regs.set_c7(Rc::new(new_c7));
     Ok(random)
 }

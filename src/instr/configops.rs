@@ -1,5 +1,6 @@
 use crate::error::VmResult;
 use crate::stack::{RcStackValue, Stack, Tuple};
+use crate::state::GasConsumer;
 use crate::util::OwnedCellSlice;
 use everscale_types::models::BlockchainConfig;
 use everscale_types::prelude::{Cell, CellBuilder, CellFamily, Load};
@@ -415,14 +416,14 @@ impl ConfigOps {
     fn exec_set_global_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let args = ok!(stack.pop_smallint_range(0, 254));
-        set_global_common(&mut st.cr, stack, args as usize)
+        set_global_common(&mut st.cr, stack, &mut st.gas, args as usize)
     }
 
     #[instr(code = "f8ss", range_from = "f861", range_to = "f880", fmt = "SETGLOB {s}", args(s = args & 31))]
     fn exec_set_global(st: &mut VmState, s: u32) -> VmResult<i32> {
         let args = s & 31;
         let stack = Rc::make_mut(&mut st.stack);
-        set_global_common(&mut st.cr, stack, args as usize)
+        set_global_common(&mut st.cr, stack, &mut st.gas, args as usize)
     }
 }
 pub struct ConfigOpsArgs(u32);
@@ -471,7 +472,12 @@ fn get_global_common(regs: &mut ControlRegs, stack: &mut Stack, index: usize) ->
     Ok(0)
 }
 
-fn set_global_common(regs: &mut ControlRegs, stack: &mut Stack, index: usize) -> VmResult<i32> {
+fn set_global_common(
+    regs: &mut ControlRegs,
+    stack: &mut Stack,
+    gas: &mut GasConsumer,
+    index: usize,
+) -> VmResult<i32> {
     let value = ok!(stack.pop());
     if index > 255 {
         vm_bail!(IntegerOutOfRange {
@@ -486,7 +492,7 @@ fn set_global_common(regs: &mut ControlRegs, stack: &mut Stack, index: usize) ->
     };
 
     let mut new_intermediate = c7.clone();
-    let to_pay = if index < c7.len() {
+    let updated = if index < c7.len() {
         new_intermediate[index] = value;
         new_intermediate.len()
     } else {
@@ -495,8 +501,8 @@ fn set_global_common(regs: &mut ControlRegs, stack: &mut Stack, index: usize) ->
         index + 1
     };
 
-    if to_pay > 0 {
-        //TODO: consume gas tuple in amount of to_pay
+    if updated > 0 {
+        gas.try_consume_tuple_gas(updated as u64)?;
     }
     regs.set_c7(Rc::new(new_intermediate));
     Ok(0)
@@ -518,7 +524,7 @@ fn get_param(regs: &mut ControlRegs, index: usize) -> VmResult<&RcStackValue> {
         vm_bail!(ControlRegisterOutOfRange(7))
     };
 
-    let Some(control_params) = c7.get(0) else {
+    let Some(control_params) = c7.first() else {
         vm_bail!(InvalidType {
             expected: StackValueType::Tuple,
             actual: StackValueType::Null

@@ -1079,7 +1079,9 @@ fn exec_setcontargs_common(st: &mut VmState, copy: u32, more: i32) -> VmResult<(
             } else {
                 cdata.stack = Some(ok!(stack.split_top(copy as _)));
             }
-            // TODO: Consume stack gas for `cdata.stack`
+
+            st.gas.try_consume_stack_gas(cdata.stack.as_ref())?;
+
             if let Some(n) = &mut cdata.nargs {
                 *n -= copy as u16;
             }
@@ -1124,7 +1126,8 @@ fn exec_return_args_common(st: &mut VmState, count: u32) -> VmResult<()> {
         cdata.stack = Some(alt_stack);
     }
 
-    // TODO: Consume stack gas for `cdata.stack`
+    st.gas.try_consume_stack_gas(cdata.stack.as_ref())?;
+
     if let Some(n) = &mut cdata.nargs {
         *n -= copy as u16;
     }
@@ -1135,7 +1138,7 @@ fn exec_bless_args_common(st: &mut VmState, copy: u32, more: i32) -> VmResult<()
     let stack = Rc::make_mut(&mut st.stack);
     let cs = ok!(stack.pop_cs());
     let new_stack = ok!(stack.split_top(copy as _));
-    // TODO: Consume stack gas for `new_stack`
+    st.gas.try_consume_stack_gas(Some(&new_stack))?;
     let cont = Rc::new(OrdCont {
         data: ControlData {
             nargs: (more >= 0).then_some(more as _),

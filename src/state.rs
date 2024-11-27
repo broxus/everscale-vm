@@ -315,7 +315,9 @@ impl VmState {
         let new_stack = match stack_copy {
             Some(0) => None,
             Some(n) if (n as usize) != self.stack.depth() => {
-                ok!(Rc::make_mut(&mut self.stack).split_top(n as _).map(Some))
+                let stack = ok!(Rc::make_mut(&mut self.stack).split_top(n as _).map(Some));
+                self.gas.try_consume_stack_gas(stack.as_ref())?;
+                stack
             }
             _ => Some(self.take_stack()),
         };
@@ -446,14 +448,15 @@ impl VmState {
                     let current_stack = Rc::make_mut(&mut self.stack);
                     ok!(Rc::make_mut(&mut stack).move_from_stack(current_stack, copy));
                     ok!(current_stack.pop_many(skip));
-                    // TODO: consume stack gas price
+                    self.gas.try_consume_stack_gas(Some(&self.stack))?;
 
                     stack
                 }
                 _ => {
                     if let Some(copy) = copy {
-                        ok!(Rc::make_mut(&mut self.stack).split_top_ext(copy, skip))
-                        // TODO: consume stack gas price
+                        let stack = ok!(Rc::make_mut(&mut self.stack).split_top_ext(copy, skip));
+                        self.gas.try_consume_stack_gas(Some(&stack))?;
+                        stack
                     } else {
                         self.take_stack()
                     }
@@ -464,8 +467,9 @@ impl VmState {
         } else {
             // Simple case without continuation data
             let new_stack = if let Some(pass_args) = pass_args {
-                ok!(Rc::make_mut(&mut self.stack).split_top(pass_args as _))
-                // TODO: consume gas of new stack length
+                let stack = ok!(Rc::make_mut(&mut self.stack).split_top(pass_args as _));
+                self.gas.try_consume_stack_gas(Some(&stack))?;
+                stack
             } else {
                 self.take_stack()
             };
@@ -568,14 +572,14 @@ impl VmState {
                     // TODO?: don't copy `self.stack` here
                     ok!(Rc::make_mut(&mut cont_stack)
                         .move_from_stack(Rc::make_mut(&mut self.stack), next_depth));
-                    // TODO: consume_stack_gas(cont_stack)
+                    self.gas.try_consume_stack_gas(Some(&cont_stack))?;
 
                     self.stack = cont_stack;
                 }
                 // Ensure that the current stack has an exact number of items
                 _ if next_depth < current_depth => {
                     ok!(Rc::make_mut(&mut self.stack).drop_bottom(current_depth - next_depth));
-                    // TODO: consume_stack_gas(copy)
+                    self.gas.try_consume_stack_depth_gas(next_depth as u64)?;
                 }
                 // Leave the current stack untouched
                 _ => {}
@@ -589,7 +593,7 @@ impl VmState {
             if depth_diff > 0 {
                 // Modify the current stack only when needed
                 ok!(Rc::make_mut(&mut self.stack).drop_bottom(depth_diff));
-                // TODO: consume_stack_gas(pass_args)
+                self.gas.try_consume_stack_depth_gas(pass_args as u64)?;
             }
         }
 
@@ -723,6 +727,9 @@ pub struct GasConsumer {
     pub gas_remaining: u64,
     pub gas_base: u64,
     pub loaded_cells: HashSet<HashBytes>,
+
+    pub chksign_counter: u64,
+
     pub empty_context: <Cell as CellFamily>::EmptyCellContext,
 }
 
@@ -730,6 +737,39 @@ impl GasConsumer {
     const BUILD_CELL_GAS: u64 = 500;
     const NEW_CELL_GAS: u64 = 100;
     const OLD_CELL_GAS: u64 = 25;
+
+    const FREE_STACK_DEPTH: u64 = 32;
+    const STACK_VALUE_GAS_PRICE: u64 = 1;
+    const TUPLE_ENTRY_GAS_PRICE: u64 = 1;
+
+    const FREE_SIGNATURE_CHECKS: u64 = 10;
+    const CHK_SGN_GAS_PRICE: u64 = 4000;
+
+    pub fn try_consume_check_signature_gas(&mut self) -> Result<(), Error> {
+        self.chksign_counter += 1;
+        if self.chksign_counter > Self::FREE_SIGNATURE_CHECKS {
+            self.try_consume(Self::CHK_SGN_GAS_PRICE)?;
+        }
+        Ok(())
+    }
+
+    pub fn try_consume_stack_gas(&mut self, stack: Option<&Rc<Stack>>) -> Result<(), Error> {
+        if let Some(stack) = stack {
+            self.try_consume_stack_depth_gas(stack.depth() as u64)?;
+        }
+        Ok(())
+    }
+
+    pub fn try_consume_tuple_gas(&mut self, tuple_len: u64) -> Result<(), Error> {
+        self.try_consume(tuple_len * Self::TUPLE_ENTRY_GAS_PRICE)?;
+        Ok(())
+    }
+    pub fn try_consume_stack_depth_gas(&mut self, depth: u64) -> Result<(), Error> {
+        self.try_consume(
+            (std::cmp::max(depth, Self::FREE_STACK_DEPTH) - Self::FREE_STACK_DEPTH)
+                * Self::STACK_VALUE_GAS_PRICE,
+        )
+    }
 
     pub fn try_consume(&mut self, amount: u64) -> Result<(), Error> {
         if let Some(remaining) = self.gas_remaining.checked_sub(amount) {

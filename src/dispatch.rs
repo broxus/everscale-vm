@@ -6,6 +6,9 @@ use everscale_types::prelude::*;
 use crate::error::VmResult;
 use crate::state::VmState;
 
+const GAS_PER_INSTRUCTION: u64 = 10;
+const GAS_PER_BIT: u64 = 1;
+
 pub trait Opcode: Send + Sync {
     fn range(&self) -> (u32, u32);
 
@@ -217,8 +220,8 @@ impl Opcode for DummyOpcode {
         (self.opcode_min, self.opcode_max)
     }
 
-    fn dispatch(&self, _: &mut VmState, _: u32, _: u16) -> VmResult<i32> {
-        // TODO: consume gas_per_instr
+    fn dispatch(&self, st: &mut VmState, _: u32, _: u16) -> VmResult<i32> {
+        st.gas.try_consume(GAS_PER_INSTRUCTION)?;
         vm_bail!(InvalidOpcode);
     }
 }

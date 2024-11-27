@@ -5,7 +5,7 @@ use num_traits::Zero;
 
 use crate::error::VmResult;
 use crate::stack::{RcStackValue, Stack, StackValue, StackValueType};
-use crate::state::VmState;
+use crate::state::{GasConsumer, VmState};
 
 pub struct Tupleops;
 
@@ -29,7 +29,7 @@ impl Tupleops {
     #[instr(code = "6f0i", fmt = "TUPLE {i}")]
     fn exec_mktuple(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        make_tuple_impl(stack, i as _)
+        make_tuple_impl(stack, i as _, &mut st.gas)
     }
 
     #[instr(code = "6f1i", fmt = "INDEX {i}")]
@@ -41,19 +41,19 @@ impl Tupleops {
     #[instr(code = "6f2i", fmt = "UNTUPLE {i}")]
     fn exec_untuple(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        untuple_impl(stack, i)
+        untuple_impl(stack, i, &mut st.gas)
     }
 
     #[instr(code = "6f3i", fmt = "UNPACKFIRST {i}")]
     fn exec_untuple_first(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        untuple_first_impl(stack, i)
+        untuple_first_impl(stack, i, &mut st.gas)
     }
 
     #[instr(code = "6f4i", fmt = "EXPLODE {i}")]
     fn exec_explode_tuple(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        explode_tuple_impl(stack, i)
+        explode_tuple_impl(stack, i, &mut st.gas)
     }
 
     #[instr(code = "6f5i", fmt = "SETINDEX {i}")]
@@ -71,14 +71,14 @@ impl Tupleops {
     #[instr(code = "6f7i", fmt = "SETINDEXQ {i}")]
     fn exec_tuple_quiet_set_index(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        tuple_set_index_quiet_impl(stack, i as _)
+        tuple_set_index_quiet_impl(stack, i as _, &mut st.gas)
     }
 
     #[instr(code = "6f80", fmt = "TUPLEVAR")]
     fn exec_mktuple_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 255));
-        make_tuple_impl(stack, n as _)
+        make_tuple_impl(stack, n as _, &mut st.gas)
     }
 
     #[instr(code = "6f81", fmt = "INDEXVAR")]
@@ -92,21 +92,21 @@ impl Tupleops {
     fn exec_untuple_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 255));
-        untuple_impl(stack, n as _)
+        untuple_impl(stack, n as _, &mut st.gas)
     }
 
     #[instr(code = "6f83", fmt = "UNPACKFIRSTVAR")]
     fn exec_untuple_first_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 255));
-        untuple_first_impl(stack, n)
+        untuple_first_impl(stack, n, &mut st.gas)
     }
 
     #[instr(code = "6f84", fmt = "EXPLODEVAR")]
     fn exec_explode_tuple_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 255));
-        explode_tuple_impl(stack, n)
+        explode_tuple_impl(stack, n, &mut st.gas)
     }
 
     #[instr(code = "6f85", fmt = "SETINDEXVAR")]
@@ -127,7 +127,7 @@ impl Tupleops {
     fn exec_tuple_quiet_set_index_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let i = ok!(stack.pop_smallint_range(0, 254));
-        tuple_set_index_quiet_impl(stack, i as _)
+        tuple_set_index_quiet_impl(stack, i as _, &mut st.gas)
     }
 
     #[instr(code = "6f88", fmt = "TLEN")]
@@ -174,7 +174,7 @@ impl Tupleops {
         let x = ok!(stack.pop());
         let mut tuple = ok!(stack.pop_tuple_range(0, 254));
         Rc::make_mut(&mut tuple).push(x);
-        // TODO: consume gas of tuple len
+        st.gas.try_consume_tuple_gas(tuple.len() as u64)?;
         ok!(stack.push_raw(tuple));
         Ok(0)
     }
@@ -186,7 +186,7 @@ impl Tupleops {
         let x = Rc::make_mut(&mut tuple)
             .pop()
             .expect("Should not fail due to range check");
-        // TODO: consume gas of tuple len
+        st.gas.try_consume_tuple_gas(tuple.len() as u64)?;
         ok!(stack.push_raw(tuple));
         ok!(stack.push_raw(x));
         Ok(0)
@@ -265,12 +265,12 @@ impl Tupleops {
     }
 }
 
-fn make_tuple_impl(stack: &mut Stack, n: usize) -> VmResult<i32> {
+fn make_tuple_impl(stack: &mut Stack, n: usize, gas_consumer: &mut GasConsumer) -> VmResult<i32> {
     let Some(offset) = stack.depth().checked_sub(n) else {
         vm_bail!(StackUnderflow(n));
     };
     let tuple = Rc::new(stack.items.drain(offset..offset + n).collect::<Vec<_>>());
-    // TODO: consume tuple gas
+    gas_consumer.try_consume_tuple_gas(tuple.len() as u64)?;
     ok!(stack.push_raw(tuple));
     Ok(0)
 }
@@ -303,27 +303,32 @@ fn tuple_index_quiet_impl(stack: &mut Stack, i: usize) -> VmResult<i32> {
     Ok(0)
 }
 
-fn untuple_impl(stack: &mut Stack, n: u32) -> VmResult<i32> {
+fn untuple_impl(stack: &mut Stack, n: u32, gas_consumer: &mut GasConsumer) -> VmResult<i32> {
     let tuple = ok!(stack.pop_tuple_range(n, n));
-    ok!(do_explode_tuple(stack, tuple, n as _));
+    ok!(do_explode_tuple(stack, tuple, n as _, gas_consumer));
     Ok(0)
 }
 
-fn untuple_first_impl(stack: &mut Stack, n: u32) -> VmResult<i32> {
+fn untuple_first_impl(stack: &mut Stack, n: u32, gas_consumer: &mut GasConsumer) -> VmResult<i32> {
     let tuple = ok!(stack.pop_tuple_range(n, 255));
-    ok!(do_explode_tuple(stack, tuple, n as _));
+    ok!(do_explode_tuple(stack, tuple, n as _, gas_consumer));
     Ok(0)
 }
 
-fn explode_tuple_impl(stack: &mut Stack, n: u32) -> VmResult<i32> {
+fn explode_tuple_impl(stack: &mut Stack, n: u32, gas_consumer: &mut GasConsumer) -> VmResult<i32> {
     let tuple = ok!(stack.pop_tuple_range(0, n));
     let tuple_len = tuple.len();
-    ok!(do_explode_tuple(stack, tuple, tuple_len));
+    ok!(do_explode_tuple(stack, tuple, tuple_len, gas_consumer));
     ok!(stack.push_int(tuple_len));
     Ok(0)
 }
 
-fn do_explode_tuple(stack: &mut Stack, tuple: Rc<Vec<RcStackValue>>, n: usize) -> VmResult<()> {
+fn do_explode_tuple(
+    stack: &mut Stack,
+    tuple: Rc<Vec<RcStackValue>>,
+    n: usize,
+    gas_consumer: &mut GasConsumer,
+) -> VmResult<()> {
     match Rc::try_unwrap(tuple) {
         Ok(tuple) => {
             for item in tuple.into_iter().take(n) {
@@ -336,7 +341,7 @@ fn do_explode_tuple(stack: &mut Stack, tuple: Rc<Vec<RcStackValue>>, n: usize) -
             }
         }
     }
-    // TODO: consume tuple gas n
+    gas_consumer.try_consume_tuple_gas(n as u64)?;
     Ok(())
 }
 
@@ -357,7 +362,11 @@ fn tuple_set_index_impl(stack: &mut Stack, i: usize) -> VmResult<i32> {
     Ok(0)
 }
 
-fn tuple_set_index_quiet_impl(stack: &mut Stack, i: usize) -> VmResult<i32> {
+fn tuple_set_index_quiet_impl(
+    stack: &mut Stack,
+    i: usize,
+    gas_consumer: &mut GasConsumer,
+) -> VmResult<i32> {
     let x = ok!(stack.pop());
     let mut tuple = ok!(stack.pop_opt_tuple_range(0, 255));
     vm_ensure!(
@@ -369,7 +378,7 @@ fn tuple_set_index_quiet_impl(stack: &mut Stack, i: usize) -> VmResult<i32> {
         }
     );
 
-    let _updated_items = match &mut tuple {
+    let updated_items = match &mut tuple {
         None if x.is_null() => 0,
         None => {
             let mut items = vec![Stack::make_null(); i + 1];
@@ -390,7 +399,7 @@ fn tuple_set_index_quiet_impl(stack: &mut Stack, i: usize) -> VmResult<i32> {
         }
     };
 
-    // TODO: consume gas of tuple with length `_updated_items``
+    gas_consumer.try_consume_tuple_gas(updated_items as u64)?;
 
     ok!(match tuple {
         None => stack.push_null(),
