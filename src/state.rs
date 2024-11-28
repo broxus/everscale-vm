@@ -30,9 +30,19 @@ pub struct VmStateBuilder {
     pub stack: Vec<RcStackValue>,
     pub libraries: Vec<Dict<HashBytes, SimpleLib>>,
     pub c7: Option<Vec<RcStackValue>>,
+    pub gas: GasParameters,
     pub same_c3: bool,
     pub without_push0: bool,
     pub debug: Option<Box<dyn std::fmt::Write>>,
+}
+
+#[derive(Default)]
+pub struct GasParameters {
+    pub gas_max: u64,
+    pub gas_limit: u64,
+    pub gas_credit: u64,
+    pub gas_remaining: u64,
+    pub gas_base: u64,
 }
 
 impl VmStateBuilder {
@@ -75,12 +85,11 @@ impl VmStateBuilder {
             quit0,
             quit1,
             gas: GasConsumer {
-                // TODO: pass gas limits as argument
-                gas_max: 0,
-                gas_limit: 0,
-                gas_credit: 0,
-                gas_remaining: 0,
-                gas_base: 0,
+                gas_max: self.gas.gas_max,
+                gas_limit: self.gas.gas_limit,
+                gas_credit: self.gas.gas_credit,
+                gas_remaining: self.gas.gas_remaining,
+                gas_base: self.gas.gas_base,
                 loaded_cells: Default::default(),
                 libraries: self.libraries,
                 chksign_counter: 0,
@@ -96,6 +105,27 @@ impl VmStateBuilder {
         values: I,
     ) -> Self {
         self.libraries = values.into_iter().collect();
+        self
+    }
+
+    pub fn with_gas_max(mut self, value: u64) -> Self {
+        self.gas.gas_max = value;
+        self
+    }
+    pub fn with_gas_limit(mut self, value: u64) -> Self {
+        self.gas.gas_limit = value;
+        self
+    }
+    pub fn with_gas_remaining(mut self, value: u64) -> Self {
+        self.gas.gas_remaining = value;
+        self
+    }
+    pub fn with_gas_credit(mut self, value: u64) -> Self {
+        self.gas.gas_credit = value;
+        self
+    }
+    pub fn with_gas_base(mut self, value: u64) -> Self {
+        self.gas.gas_base = value;
         self
     }
 
