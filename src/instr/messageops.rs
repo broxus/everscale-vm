@@ -310,13 +310,13 @@ mod tests {
         builder.stack = stack;
         builder.code = code;
         let mut vm_state = builder
+            .with_gas_base(1000)
+            .with_gas_remaining(1000)
+            .with_gas_max(u64::MAX)
             .with_debug(TracingOutput::default())
             .build()
             .unwrap();
         vm_state.cr.set(4, Rc::new(c4_data)).unwrap();
-        vm_state.gas.gas_max = u64::MAX;
-        vm_state.gas.gas_base = 1000000500;
-        vm_state.gas.gas_remaining = 1000000000;
         let result = vm_state.run();
         println!("code {result}");
     }
@@ -374,13 +374,13 @@ mod tests {
         builder.code = code;
 
         let mut vm_state = builder
+            .with_gas_base(10000)
+            .with_gas_remaining(10000)
+            .with_gas_max(u64::MAX)
             .with_debug(TracingOutput::default())
             .build()
             .unwrap();
         vm_state.cr.set(4, Rc::new(c4_data)).unwrap();
-        vm_state.gas.gas_max = u64::MAX;
-        vm_state.gas.gas_base = 1000000500;
-        vm_state.gas.gas_remaining = 1000000000;
         let result = vm_state.run();
         println!("code {result}");
     }

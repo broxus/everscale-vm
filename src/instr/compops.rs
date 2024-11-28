@@ -30,7 +30,6 @@ impl CompOps {
         let second: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
         match (first, second) {
             (Some(sec), Some(f)) => {
-                println!("{f} {sec}");
                 let z = match f.cmp(&sec) {
                     Ordering::Greater => 1,
                     Ordering::Equal => 0,
