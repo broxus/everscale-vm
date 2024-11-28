@@ -197,7 +197,7 @@ impl ConfigOps {
 
         let unpacked_config: Rc<Tuple> = ok!(get_unpacked_config_tuple(&mut st.cr));
 
-        let Some(value) = unpacked_config.get(0usize) else {
+        let Some(value) = unpacked_config.first() else {
             vm_bail!(InvalidType {
                 expected: StackValueType::Tuple,
                 actual: StackValueType::Null
