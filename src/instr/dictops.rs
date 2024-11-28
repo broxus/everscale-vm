@@ -819,7 +819,7 @@ impl Dictops {
 
         let subdict = everscale_types::dict::dict_get_subdict(
             dict_deref.as_ref(),
-            32 as u16,
+            32,
             &mut prefix,
             &mut Cell::empty_context(),
         )?;

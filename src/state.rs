@@ -4,7 +4,9 @@ use ahash::HashSet;
 use anyhow::Result;
 use bitflags::bitflags;
 use everscale_types::cell::*;
+use everscale_types::dict::Dict;
 use everscale_types::error::Error;
+use everscale_types::models::SimpleLib;
 use num_bigint::BigInt;
 use num_traits::Zero;
 
@@ -26,6 +28,7 @@ pub struct VmStateBuilder {
     pub code: OwnedCellSlice,
     pub data: Option<Cell>,
     pub stack: Vec<RcStackValue>,
+    pub libraries: Vec<Dict<HashBytes, SimpleLib>>,
     pub c7: Option<Vec<RcStackValue>>,
     pub same_c3: bool,
     pub without_push0: bool,
@@ -71,10 +74,29 @@ impl VmStateBuilder {
             steps: 0,
             quit0,
             quit1,
-            gas: Default::default(), // TODO: pass gas limits as argument
+            gas: GasConsumer {
+                // TODO: pass gas limits as argument
+                gas_max: 0,
+                gas_limit: 0,
+                gas_credit: 0,
+                gas_remaining: 0,
+                gas_base: 0,
+                loaded_cells: Default::default(),
+                libraries: self.libraries,
+                chksign_counter: 0,
+                empty_context: Default::default(),
+            },
             cp,
             debug: self.debug,
         })
+    }
+
+    pub fn with_libraries<I: IntoIterator<Item = Dict<HashBytes, SimpleLib>>>(
+        mut self,
+        values: I,
+    ) -> Self {
+        self.libraries = values.into_iter().collect();
+        self
     }
 
     pub fn with_debug<T: std::fmt::Write + 'static>(mut self, stderr: T) -> Self {
@@ -166,7 +188,7 @@ impl VmState {
 
             let next_cell = self.code.apply()?.get_reference_cloned(0)?;
 
-            // TODO: consume implicit_jmpref_gas_price
+            self.gas.try_consume_implicit_jmpref_gas()?;
             let code = self
                 .gas
                 .context()
@@ -178,7 +200,7 @@ impl VmState {
         } else {
             vm_log!("implicit RET");
 
-            // TODO: consume implicit_ret_gas_price
+            self.gas.try_consume_implicit_ret_gas()?;
             self.ret()
         }
     }
@@ -353,7 +375,7 @@ impl VmState {
             items: vec![Rc::new(BigInt::zero()), Rc::new(BigInt::from(n))],
         });
         self.code = Default::default();
-        // TODO: try consume exception_gas_price
+        self.gas.try_consume_exception_gas()?;
         let Some(c2) = self.cr.c[2].clone() else {
             vm_bail!(InvalidOpcode);
         };
@@ -365,7 +387,7 @@ impl VmState {
             items: vec![arg, Rc::new(BigInt::from(n))],
         });
         self.code = Default::default();
-        // TODO: try consume exception_gas_price
+        self.gas.try_consume_exception_gas()?;
         let Some(c2) = self.cr.c[2].clone() else {
             vm_bail!(InvalidOpcode);
         };
@@ -718,8 +740,6 @@ bitflags! {
     }
 }
 
-// TODO: remove default
-#[derive(Default)]
 pub struct GasConsumer {
     pub gas_max: u64,
     pub gas_limit: u64,
@@ -727,6 +747,7 @@ pub struct GasConsumer {
     pub gas_remaining: u64,
     pub gas_base: u64,
     pub loaded_cells: HashSet<HashBytes>,
+    pub libraries: Vec<Dict<HashBytes, SimpleLib>>,
 
     pub chksign_counter: u64,
 
@@ -739,11 +760,25 @@ impl GasConsumer {
     const OLD_CELL_GAS: u64 = 25;
 
     const FREE_STACK_DEPTH: u64 = 32;
+    const FREE_SIGNATURE_CHECKS: u64 = 10;
     const STACK_VALUE_GAS_PRICE: u64 = 1;
     const TUPLE_ENTRY_GAS_PRICE: u64 = 1;
-
-    const FREE_SIGNATURE_CHECKS: u64 = 10;
     const CHK_SGN_GAS_PRICE: u64 = 4000;
+    const IMPLICIT_JMPREF_GAS_PRICE: u64 = 10;
+    const IMPLICIT_RET_GAS_PRICE: u64 = 5;
+    const EXCEPTION_GAS_PRICE: u64 = 50;
+
+    pub fn try_consume_exception_gas(&mut self) -> Result<(), Error> {
+        self.try_consume(Self::EXCEPTION_GAS_PRICE)
+    }
+
+    pub fn try_consume_implicit_jmpref_gas(&mut self) -> Result<(), Error> {
+        self.try_consume(Self::IMPLICIT_JMPREF_GAS_PRICE)
+    }
+
+    pub fn try_consume_implicit_ret_gas(&mut self) -> Result<(), Error> {
+        self.try_consume(Self::IMPLICIT_RET_GAS_PRICE)
+    }
 
     pub fn try_consume_check_signature_gas(&mut self) -> Result<(), Error> {
         self.chksign_counter += 1;
@@ -814,6 +849,17 @@ impl GasConsumerContext {
     fn wrap(consumer: &mut GasConsumer) -> &mut Self {
         // SAFETY: `GasConsumerContext` has the same memory layout as `GasConsumer`.
         unsafe { &mut *(consumer as *mut GasConsumer).cast() }
+    }
+
+    pub fn load_library(&mut self, key: HashBytes) -> Result<Option<Cell>, Error> {
+        for lib in &self.0.libraries {
+            match lib.get(key)? {
+                Some(lib) => return Ok(Some(lib.root)),
+                None => continue,
+            }
+        }
+
+        Ok(None)
     }
 
     fn consume_load_cell(&mut self, cell: &DynCell, mode: LoadMode) -> Result<(), Error> {
