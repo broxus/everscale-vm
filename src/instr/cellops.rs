@@ -1,9 +1,10 @@
 use std::borrow::Cow;
+use std::ops::Deref;
 use std::rc::Rc;
 
 use anyhow::Result;
 use everscale_types::cell::{
-    Cell, CellBuilder, CellContext, CellFamily, CellSlice, DynCell, LoadMode,
+    Cell, CellBuilder, CellContext, CellFamily, CellSlice, CellType, DynCell, HashBytes, LoadMode,
 };
 use everscale_types::error::Error;
 use everscale_vm_proc::vm_module;
@@ -460,7 +461,7 @@ impl Cellops {
         }
 
         ok!(stack.push_raw(builder));
-        return Ok(0);
+        Ok(0)
     }
 
     #[instr(code = "cf23", fmt = "ENDXC")]
@@ -993,8 +994,11 @@ impl Cellops {
         let cell = ok!(stack.pop_cell());
         let is_special = cell.descriptor().is_exotic();
 
-        // TODO: Load with gas consumer
-        let cs = OwnedCellSlice::new(Rc::unwrap_or_clone(cell));
+        let cell = st
+            .gas
+            .context()
+            .load_cell(Rc::unwrap_or_clone(cell), LoadMode::UseGas)?;
+        let cs = OwnedCellSlice::new(cell);
         ok!(stack.push(cs));
         ok!(stack.push_bool(is_special));
         Ok(0)
@@ -1004,10 +1008,50 @@ impl Cellops {
     #[instr(code = "d73b", fmt = "XLOADQ", args(quiet = true))]
     fn exec_load_special_cell(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let _cell = ok!(stack.pop_cell());
-        let _ = quiet;
+        let cell: Rc<Cell> = ok!(stack.pop_cell());
+        let cell = Rc::unwrap_or_clone(cell);
+        let loaded_cell_res = st.gas.context().load_cell(cell, LoadMode::UseGas);
+        let mut cell: Cell = match loaded_cell_res {
+            Err(_) if quiet => {
+                ok!(stack.push_bool(false));
+                return Ok(0);
+            }
+            Err(e) => vm_bail!(CellError(e)),
+            Ok(cell) => cell,
+        };
 
-        todo!();
+        if cell.is_exotic() {
+            match cell.cell_type() {
+                CellType::LibraryReference => (),
+                _ if quiet => {
+                    ok!(stack.push_bool(false));
+                    return Ok(0);
+                }
+                _ => vm_bail!(CellError(Error::CellUnderflow)),
+            }
+
+            if cell.data().len() != 33 {
+                vm_bail!(CellError(Error::InvalidCell))
+            }
+
+            let hash_bytes = HashBytes::from_slice(&cell.data()[1..]);
+
+            match st.gas.context().load_library(hash_bytes)? {
+                Some(library) => cell = library,
+                None if quiet => {
+                    ok!(stack.push_bool(false));
+                    return Ok(0);
+                }
+                None => vm_bail!(CellError(Error::CellUnderflow)),
+            }
+        }
+
+        ok!(stack.push_raw(Rc::new(cell)));
+        if quiet {
+            ok!(stack.push_bool(true));
+        }
+
+        Ok(0)
     }
 
     #[instr(code = "d741", fmt = "SCHKBITS", args(mode = CheckMode::Bits, quiet = false))]

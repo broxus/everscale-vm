@@ -59,7 +59,7 @@ impl Tupleops {
     #[instr(code = "6f5i", fmt = "SETINDEX {i}")]
     fn exec_tuple_set_index(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        tuple_set_index_impl(stack, i as _)
+        tuple_set_index_impl(stack, i as _, &mut st.gas)
     }
 
     #[instr(code = "6f6i", fmt = "INDEXQ {i}")]
@@ -113,7 +113,7 @@ impl Tupleops {
     fn exec_tuple_set_index_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let i = ok!(stack.pop_smallint_range(0, 254));
-        tuple_set_index_impl(stack, i as usize)
+        tuple_set_index_impl(stack, i as usize, &mut st.gas)
     }
 
     #[instr(code = "6f86", fmt = "INDEXVARQ")]
@@ -345,7 +345,7 @@ fn do_explode_tuple(
     Ok(())
 }
 
-fn tuple_set_index_impl(stack: &mut Stack, i: usize) -> VmResult<i32> {
+fn tuple_set_index_impl(stack: &mut Stack, i: usize, gas: &mut GasConsumer) -> VmResult<i32> {
     let x = ok!(stack.pop());
     let mut tuple = ok!(stack.pop_tuple_range(0, 255));
     vm_ensure!(
@@ -357,7 +357,7 @@ fn tuple_set_index_impl(stack: &mut Stack, i: usize) -> VmResult<i32> {
         }
     );
     Rc::make_mut(&mut tuple)[i] = x;
-    // TODO: consume tuple gas
+    gas.try_consume_tuple_gas(tuple.len() as u64)?;
     ok!(stack.push_raw(tuple));
     Ok(0)
 }
