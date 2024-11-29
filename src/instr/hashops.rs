@@ -20,13 +20,13 @@ impl Hashops {
         let stack = Rc::make_mut(&mut st.stack);
         let hash = if !s.if_s() {
             let cell: Rc<Cell> = ok!(stack.pop_cell());
-            *cell.hash(LevelMask::MAX_LEVEL)
+            *cell.repr_hash()
         } else {
             let slice: Rc<OwnedCellSlice> = ok!(stack.pop_cs());
             let mut cb = CellBuilder::new();
             let slice = slice.apply()?;
             slice.store_into(&mut cb, &mut Cell::empty_context())?;
-            *cb.build()?.hash(LevelMask::MAX_LEVEL)
+            *cb.build()?.repr_hash()
         };
 
         let hash_int = BigInt::from_bytes_be(Sign::Plus, hash.as_slice());
