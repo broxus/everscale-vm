@@ -9,11 +9,13 @@ use self::debugops::Debugops;
 use self::stackops::Stackops;
 use self::tupleops::Tupleops;
 use crate::dispatch::{DispatchTable, Opcodes};
+use crate::instr::dictops::Dictops;
 
 mod arithops;
 mod cellops;
 mod contops;
 mod debugops;
+mod dictops;
 mod stackops;
 mod tupleops;
 
@@ -33,6 +35,7 @@ pub fn codepage0() -> &'static DispatchTable {
         Stackops.init(&mut cp)?;
         Tupleops.init(&mut cp)?;
         Debugops.init(&mut cp)?;
+        Dictops.init(&mut cp)?;
         Ok(cp.build())
     }
 
