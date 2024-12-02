@@ -40,6 +40,7 @@ pub struct VmStateBuilder {
 pub struct GasParameters {
     pub gas_max: u64,
     pub gas_limit: u64,
+    pub gas_limit_max: u64,
     pub gas_credit: u64,
     pub gas_remaining: u64,
     pub gas_base: u64,
@@ -253,6 +254,9 @@ impl VmState {
                     }
                 }
             };
+            // for value in self.stack.items.iter() {
+            //     println!("{}", value.display_list());
+            // }
 
             // TODO: handle out of gas
 

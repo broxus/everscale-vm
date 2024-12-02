@@ -171,16 +171,21 @@ mod tests {
     use crate::stack::{RcStackValue, Stack};
     use crate::util::OwnedCellSlice;
     use crate::VmState;
-    use everscale_types::cell::CellBuilder;
+    use everscale_types::cell::{Cell, CellBuilder, CellSlice};
     use everscale_types::models::{
         ExtInMsgInfo, GlobalCapabilities, GlobalCapability, OwnedMessage, StdAddr,
     };
-    use everscale_types::prelude::{Boc, HashBytes, Load};
+    use everscale_types::prelude::{Boc, CellFamily, HashBytes, Load, Store};
     use everscale_vm::stack::Tuple;
     use num_bigint::BigInt;
     use std::rc::Rc;
     use std::str::FromStr;
+    use anyhow::Context;
+    use everscale_types::dict::{Dict, RawDict};
     use tracing_test::traced_test;
+    use everscale_vm::util::store_int_to_builder;
+    use crate::cont::OrdCont;
+    use crate::stack::StackValueType::Cont;
 
     #[test]
     #[traced_test]
@@ -382,6 +387,71 @@ mod tests {
             .unwrap();
         vm_state.cr.set(4, Rc::new(c4_data)).unwrap();
         let result = vm_state.run();
+        println!("code {result}");
+    }
+
+    #[test]
+    #[traced_test]
+    pub fn jetton() {
+        let code = Boc::decode_base64("te6ccgECGgEABQ4AART/APSkE/S88sgLAQIBYgIDAgLLBAUCASAQEQHX0MtDTAwFxsI5EMIAg1yHTHwGCEBeNRRm6kTDhgEDXIfoAMO1E0PoA+kD6QNTU0/8B+GHRUEWhQTT4QchQBvoCUATPFljPFszMy//J7VTg+kD6QDH6ADH0AfoAMfoAATFw+DoC0x8BAdM/ARKBgAdojhkZYOA54tkgUGD+gvABPztRND6APpA+kDU1NP/Afhh0SaCEGQrfQe6jss1NVFhxwXy4EkE+kAh+kQwwADy4U36ANTRINDTHwGCEBeNRRm68uBIgEDXIfoA+kAx+kAx+gAg1wsAmtdLwAEBwAGw8rGRMOJUQxvgOSWCEHvdl9664wIlghAsdrlzuuMCNCQHCAkKAY4hkXKRceL4OSBuk4F4LpEg4iFulDGBfuCRAeJQI6gToHOBBK1w+DygAnD4NhKgAXD4NqBzgQUTghAJZgGAcPg3oLzysCVZfwsB5jUF+gD6QPgo+EEoEDQB2zxvIjD5AHB0yMsCygfL/8nQUAjHBfLgShKhRBRQNvhByFAG+gJQBM8WWM8WzMzL/8ntVPpA0SDXCwHAALOOIsiAEAHLBQHPFnD6AnABy2qCENUydtsByx8BAcs/yYBC+wCRW+IYAdI1XwM0AfpA0gABAdGVyCHPFsmRbeLIgBABywVQBM8WcPoCcAHLaoIQ0XNUAAHLH1AEAcs/I/pEMMAAjp34KPhBEDVBUNs8byIw+QBwdMjLAsoHy//J0BLPFpcxbBJwAcsB4vQAyYBQ+wAYBP6CEGUB81S6jiUwM1FCxwXy4EkC+kDRQAME+EHIUAb6AlAEzxZYzxbMzMv/ye1U4CSCEPuI4Rm6jiQxMwPRUTHHBfLgSYsCQDT4QchQBvoCUATPFljPFszMy//J7VTgJIIQy4YpArrjAjAjghAlCNZquuMCI4IQdDHyIbrjAhA2DA0ODwHAghA7msoAcPsC+Cj4QRA2QVDbPG8iMCD5AHB0yMsCygfL/8iAGAHLBQHPF1j6AgKYWHdQA8trzMyXMAFxWMtqzOLJgBH7AFAFoEMU+EHIUAb6AlAEzxZYzxbMzMv/ye1UGABONDZRRccF8uBJyFADzxbJEDQS+EHIUAb6AlAEzxZYzxbMzMv/ye1UACI2XwMCxwXy4EnU1NEB7VT7BABKM1BCxwXy4EkB0YsCiwJANPhByFAG+gJQBM8WWM8WzMzL/8ntVAAcXwaCENNyFYy63IQP8vACAUgSEwICcRYXAT+10V2omh9AH0gfSBqamn/gPww6IovgnwUfCCJbZ43kUBgCAWoUFQAuq1vtRND6APpA+kDU1NP/Afhh0RAkXwQALqpn7UTQ+gD6QPpA1NTT/wH4YdFfBfhBAVutvPaiaH0AfSB9IGpqaf+A/DDoii+CfBR8IIltnjeRGHyAODpkZYFlA+X/5OhAGACLrxb2omh9AH0gfSBqamn/gPww6L+Z6DbBeDhy69tRTZyXwoO38K5ReQKeK2EZw5RicZ5PRu2PdBPmLHgKOGRlg/oAZKGAQAH2hA9/cCb6RDGr+1MRSUYYBMjLA1AD+gIBzxYBzxbL/yCBAMrIyw8Bzxck+QAl12UlggIBNMjLFxLLD8sPy/+OKQakXAHLCXH5BABScAHL/3H5BACr+yiyUwS5kzQ0I5Ew4iDAICTAALEX5hAjXwMzMyJwA8sJySLIywESGQAU9AD0AMsAyQFvAg==").unwrap();
+        let code = OwnedCellSlice::from(code);
+
+        let balance_tuple: Tuple = vec![Rc::new(BigInt::from(1931553923u64)), Stack::make_null()];
+
+        let addr =
+            StdAddr::from_str("0:fa67d0c7739331fbc3c8f08e018c65f47763616a969100ad760a0b2dc1e36832")
+                .unwrap();
+        let addr = OwnedCellSlice::from(CellBuilder::build_from(addr).unwrap());
+
+
+        let default =
+            StdAddr::default();
+        let default = OwnedCellSlice::from(CellBuilder::build_from(default).unwrap());
+
+        let c7: Vec<RcStackValue> = vec![
+            Rc::new(BigInt::from(0x076ef1ea)),
+            Rc::new(BigInt::from(0)),                 //actions
+            Rc::new(BigInt::from(0)),                 //msgs_sent
+            Rc::new(BigInt::from(1733142533)),        //unix_time
+            Rc::new(BigInt::from(50899537000013u64)), //block_logical_time
+            Rc::new(BigInt::from(50899537000013u64)), // transaction_logical_time
+            Rc::new(BigInt::from(0)),                 //rand_ceed
+            Rc::new(balance_tuple),
+            Rc::new(addr.clone()),
+            Stack::make_null(),
+            Rc::new(code.clone()),
+        ];
+
+        let c4_data = Boc::decode_base64(
+            "te6ccgEBBAEA3gACTmE+QBlNGKCvtRVlwuLLP8LwzhcDJNm1TPewFBFqmlIYet7ln0NupwECCEICDvGeG/QPK6SS/KrDhu7KWb9oJ6OFBwjZ/NmttoOrwzYB5mh0dHBzOi8vZ2lzdC5naXRodWJ1c2VyY29udGVudC5jb20vRW1lbHlhbmVua29LLzI3MWMwYWRhMWRlNDJiOTdjNDU1YWM5MzVjOTcyZjQyL3Jhdy9iN2IzMGMzZTk3MGUwNzdlMTFkMDg1Y2M2NzEzYmUDADAzMTU3YzdjYTA4L21ldGFkYXRhLmpzb24=",
+        )
+            .unwrap();
+
+        println!("{}", c4_data.repr_hash());
+
+
+        let stack: Vec<RcStackValue> = vec![
+            Rc::new(default),
+            Rc::new(BigInt::from(103289)),
+            //Rc::new(BigInt::from(106029))
+        ];
+
+        let mut builder = VmState::builder();
+
+        let mut vm_state = builder
+            .with_c7(vec![Rc::new(c7)])
+            .with_stack(stack)
+            .with_code(code.clone())
+            .with_gas_base(1000000)
+            .with_gas_remaining(1000000)
+            .with_gas_max(u64::MAX)
+            .with_debug(TracingOutput::default())
+            .build()
+            .unwrap();
+        vm_state.cr.set(4, Rc::new(c4_data)).unwrap();
+        vm_state.cr.set(3, Rc::new(OrdCont::simple(code.clone(), crate::instr::codepage0().id()))).unwrap();
+
+        let result = !vm_state.run();
         println!("code {result}");
     }
 

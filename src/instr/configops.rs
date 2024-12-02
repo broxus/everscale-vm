@@ -48,7 +48,7 @@ impl ConfigOps {
         ok!(check_key_sign(false, idx.clone()));
 
         let mut builder = CellBuilder::new();
-        store_int_to_builder(&idx, kbl, &mut builder)?;
+        store_int_to_builder(&idx, kbl, true, &mut builder)?;
         let key = builder.as_data_slice();
 
         let dict = dict.as_deref();
@@ -115,9 +115,8 @@ impl ConfigOps {
         }
 
         let kbl = 32u16;
-
         let mut builder = CellBuilder::new();
-        store_int_to_builder(&BigInt::from(19), kbl, &mut builder)?;
+        store_int_to_builder(&BigInt::from(19), kbl, true, &mut builder)?;
         let key = builder.as_data_slice();
 
         let result =

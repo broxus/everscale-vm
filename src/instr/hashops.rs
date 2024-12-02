@@ -1,7 +1,7 @@
 use crate::error::VmResult;
 use crate::util::OwnedCellSlice;
 use crate::VmState;
-use everscale_types::cell::{CellBuilder, LevelMask};
+use everscale_types::cell::{CellBuilder};
 use everscale_types::error::Error;
 use everscale_types::prelude::{Cell, CellFamily, Store};
 use everscale_vm_proc::vm_module;

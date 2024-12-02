@@ -223,7 +223,7 @@ mod tests {
             .with_debug(TracingOutput::default())
             .build()
             .unwrap();
-        let exit_code = vm.run();
+        let exit_code = !vm.run();
         println!("Exit code: {exit_code}");
     }
 
