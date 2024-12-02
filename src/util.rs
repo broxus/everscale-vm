@@ -1,10 +1,11 @@
+use std::borrow::Cow;
 use std::rc::Rc;
 
 use everscale_types::dict::DictKey;
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
 use num_bigint::{BigInt, BigUint, Sign};
-use num_traits::{One, Zero};
+use num_traits::{One, ToPrimitive, Zero};
 
 #[derive(Default, Debug, Clone)]
 #[repr(transparent)]
@@ -127,42 +128,45 @@ pub fn ensure_empty_slice(slice: &CellSlice) -> Result<(), Error> {
 }
 
 pub fn store_int_to_builder(
-    int: &BigInt,
+    x: &BigInt,
     bits: u16,
+    signed: bool,
     builder: &mut CellBuilder,
 ) -> Result<(), Error> {
-    let value = int.magnitude();
-    if value.bits() > bits as u64 {
+    let int_bits = bitsize(x, signed);
+    if bits < int_bits {
         return Err(Error::IntOverflow);
     }
 
-    let is_negative = int.sign() == Sign::Minus;
-    let bytes = to_signed_bytes_be(is_negative, value);
-    let value_bits = (bytes.len() * 8) as u16;
+    match x.to_u64() {
+        Some(value) => builder.store_uint(value, bits),
+        None => {
+            let int = if bits % 8 != 0 {
+                let align = 8 - bits % 8;
+                Cow::Owned(x.clone() << align)
+            } else {
+                Cow::Borrowed(x)
+            };
 
-    if bytes.is_empty() {
-        builder.store_zeros(bits)
-    } else if bits > value_bits {
-        let diff = bits - value_bits;
-        ok!(if is_negative {
-            builder.store_ones(diff)
-        } else {
-            builder.store_zeros(diff)
-        });
-        builder.store_raw(&bytes, value_bits)
-    } else {
-        let bits_offset = value_bits - bits;
-        let bytes_offset = (bits_offset / 8) as usize;
-        let rem = bits_offset % 8;
+            let minimal_bytes = ((bits + 7) / 8) as usize;
 
-        let (left, right) = bytes.split_at(bytes_offset + 1);
-        if let Some(left) = left.last() {
-            ok!(builder.store_small_uint(*left << rem, 8 - rem));
+            let (prefix, mut bytes) = if signed {
+                let bytes = int.to_signed_bytes_le();
+                (
+                    bytes
+                        .last()
+                        .map(|first| (first >> 7) * 255)
+                        .unwrap_or_default(),
+                    bytes,
+                )
+            } else {
+                (0, int.to_bytes_le().1)
+            };
+            bytes.resize(minimal_bytes, prefix);
+            bytes.reverse();
+
+            builder.store_raw(&bytes, bits)
         }
-        if !right.is_empty() {
-            ok!(builder.store_raw(right, (right.len() * 8) as u16));
-        }
-        Ok(())
     }
 }
 
@@ -240,4 +244,26 @@ pub fn rc_ptr_eq<T1: ?Sized, T2: ?Sized>(lhs: &Rc<T1>, rhs: &Rc<T2>) -> bool {
     let lhs = Rc::as_ptr(lhs) as *const ();
     let rhs = Rc::as_ptr(rhs) as *const ();
     lhs == rhs
+}
+
+#[cfg(test)]
+mod tests {
+    use num_traits::ToPrimitive;
+
+    use super::*;
+
+    #[test]
+    fn store_int_to_builder_works() -> anyhow::Result<()> {
+        let bits = 19;
+        let value = BigInt::from(106029);
+
+        let mut builder1 = CellBuilder::new();
+        store_int_to_builder(&value, bits, false, &mut builder1)?;
+
+        let mut builder2 = CellBuilder::new();
+        builder2.store_uint(value.to_u64().unwrap(), bits)?;
+
+        assert_eq!(builder1, builder2);
+        Ok(())
+    }
 }

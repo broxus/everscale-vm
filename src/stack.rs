@@ -647,7 +647,7 @@ impl StackValue for BigInt {
         _: &mut dyn CellContext,
     ) -> Result<(), Error> {
         ok!(builder.store_uint(0x0200 >> 1, 15));
-        store_int_to_builder(self, 257, builder)
+        store_int_to_builder(self, 257, true, builder)
     }
 
     fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
