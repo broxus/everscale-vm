@@ -179,7 +179,7 @@ pub fn store_varint_to_builder(int: &BigInt, bits: u16, builder: &mut CellBuilde
         return Err(Error::CellUnderflow);
     }
     builder.store_uint(len as u64, bits)?;
-    store_int_to_builder(int, len * 8, builder)?;
+    store_int_to_builder(int, len * 8, signed, builder)?;
     Ok(true)
 }
 
