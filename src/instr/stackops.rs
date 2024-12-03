@@ -285,6 +285,7 @@ impl Stackops {
     fn exec_roll(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut i = ok!(stack.pop_smallint_range(0, 255));
+        st.gas.try_consume(std::cmp::max(i as u64 - 255, 0))?;
         while i > 1 {
             ok!(stack.swap(i as _, (i - 1) as _));
             i -= 1;
@@ -296,6 +297,7 @@ impl Stackops {
     fn exec_rollrev(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let x = ok!(stack.pop_smallint_range(0, 255));
+        st.gas.try_consume(std::cmp::max(x as u64 - 255, 0))?;
         for i in 0..x {
             ok!(stack.swap(i as _, (i + 1) as _));
         }
@@ -308,6 +310,7 @@ impl Stackops {
         let y = ok!(stack.pop_smallint_range(0, 255));
         let x = ok!(stack.pop_smallint_range(0, 255));
         if x > 0 && y > 0 {
+            //st.gas.try_consume(std::cmp::max((x + y) as u64 - 255, 0))?; //TODO: is it needed here
             ok!(stack.reverse_range(y as _, x as _));
             ok!(stack.reverse_range(0, y as _));
             ok!(stack.reverse_range(0, (x + y) as _));
@@ -320,6 +323,7 @@ impl Stackops {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_smallint_range(0, 255));
         let x = ok!(stack.pop_smallint_range(0, 255));
+        st.gas.try_consume(std::cmp::max(x as u64 - 255, 0))?;
         ok!(stack.reverse_range(y as _, x as _));
         Ok(0)
     }
@@ -371,6 +375,7 @@ impl Stackops {
             vm_bail!(StackUnderflow(x));
         };
         if d > 0 {
+            st.gas.try_consume(std::cmp::max(x as u64 - 255, 0))?;
             stack.items.drain(..d);
         }
         stack.items.truncate(x);
