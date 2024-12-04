@@ -797,10 +797,24 @@ impl GasConsumer {
     const FREE_SIGNATURE_CHECKS: u64 = 10;
     const STACK_VALUE_GAS_PRICE: u64 = 1;
     const TUPLE_ENTRY_GAS_PRICE: u64 = 1;
+    const HASH_EXT_ENTRY_GAS_PRICE: u64 = 1;
     const CHK_SGN_GAS_PRICE: u64 = 4000;
     const IMPLICIT_JMPREF_GAS_PRICE: u64 = 10;
     const IMPLICIT_RET_GAS_PRICE: u64 = 5;
     const EXCEPTION_GAS_PRICE: u64 = 50;
+
+    pub fn calc_hash_ext_consumption(i: usize, total_bits: usize, hash_id: u32) -> u64 {
+        let bytes_per_gas_unit = match hash_id {
+            0 => 33, //sha256
+            1 => 16, //sha512
+            2 => 19, //blake2b
+            3 => 11, //keccak
+            4 => 6,  //keccak
+            _ => unimplemented!("hasher is not supported"),
+        };
+
+        (i as u64 + 1) * Self::HASH_EXT_ENTRY_GAS_PRICE + total_bits as u64 / 8 / bytes_per_gas_unit
+    }
 
     pub fn try_consume_exception_gas(&mut self) -> Result<(), Error> {
         self.try_consume(Self::EXCEPTION_GAS_PRICE)

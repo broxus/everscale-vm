@@ -10,6 +10,7 @@ members = ["proc"]
 ahash = "0.8"
 anyhow = "1.0"
 bitflags = "2.4"
+blake2 = "0.10.6"
 bumpalo = "3.14"
 dyn-clone = "1.0"
 num-bigint = "0.4"
