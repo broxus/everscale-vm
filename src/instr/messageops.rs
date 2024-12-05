@@ -168,24 +168,24 @@ fn install_output_actions(regs: &mut ControlRegs, action_head: Cell) -> VmResult
 
 #[cfg(test)]
 mod tests {
+    use crate::cont::OrdCont;
+    use crate::stack::StackValueType::Cont;
     use crate::stack::{RcStackValue, Stack};
     use crate::util::OwnedCellSlice;
     use crate::VmState;
+    use anyhow::Context;
     use everscale_types::cell::{Cell, CellBuilder, CellSlice};
+    use everscale_types::dict::{Dict, RawDict};
     use everscale_types::models::{
         ExtInMsgInfo, GlobalCapabilities, GlobalCapability, OwnedMessage, StdAddr,
     };
     use everscale_types::prelude::{Boc, CellFamily, HashBytes, Load, Store};
     use everscale_vm::stack::Tuple;
+    use everscale_vm::util::store_int_to_builder;
     use num_bigint::BigInt;
     use std::rc::Rc;
     use std::str::FromStr;
-    use anyhow::Context;
-    use everscale_types::dict::{Dict, RawDict};
     use tracing_test::traced_test;
-    use everscale_vm::util::store_int_to_builder;
-    use crate::cont::OrdCont;
-    use crate::stack::StackValueType::Cont;
 
     #[test]
     #[traced_test]
@@ -399,13 +399,11 @@ mod tests {
         let balance_tuple: Tuple = vec![Rc::new(BigInt::from(1931553923u64)), Stack::make_null()];
 
         let addr =
-            StdAddr::from_str("0:fa67d0c7739331fbc3c8f08e018c65f47763616a969100ad760a0b2dc1e36832")
+            StdAddr::from_str("0:2a0c78148c73416b63250b990efdfbf9d5897bf3b33e2f5498a2fe0617174bb8")
                 .unwrap();
         let addr = OwnedCellSlice::from(CellBuilder::build_from(addr).unwrap());
 
-
-        let default =
-            StdAddr::default();
+        let default = StdAddr::default();
         let default = OwnedCellSlice::from(CellBuilder::build_from(default).unwrap());
 
         let c7: Vec<RcStackValue> = vec![
@@ -429,7 +427,6 @@ mod tests {
 
         println!("{}", c4_data.repr_hash());
 
-
         let stack: Vec<RcStackValue> = vec![
             Rc::new(default),
             Rc::new(BigInt::from(103289)),
@@ -449,7 +446,16 @@ mod tests {
             .build()
             .unwrap();
         vm_state.cr.set(4, Rc::new(c4_data)).unwrap();
-        vm_state.cr.set(3, Rc::new(OrdCont::simple(code.clone(), crate::instr::codepage0().id()))).unwrap();
+        vm_state
+            .cr
+            .set(
+                3,
+                Rc::new(OrdCont::simple(
+                    code.clone(),
+                    crate::instr::codepage0().id(),
+                )),
+            )
+            .unwrap();
 
         let result = !vm_state.run();
         println!("code {result}");
