@@ -1,4 +1,5 @@
 use std::fmt::Formatter;
+use std::ptr::hash;
 use std::rc::Rc;
 use std::string::ToString;
 
@@ -151,14 +152,17 @@ pub fn calc_hash_ext<'a>(
     let mut gas_consumed: u64 = 0;
     let mut hasher = Hasher::new();
 
-    let mut buffer = [0u8; 129];
+    let mut remaining_bits_in_buffer: usize = 128 * 8;
+    let mut filled_bits: usize = 0;
+
+    let mut buffer = [0u8; 128];
 
     for i in 0..cnt {
-        let previous_empty_bits = buffer[0];
         let idx = if is_rev { i } else { cnt - 1 - i };
 
         let stack_value_opt: Option<&RcStackValue> = stack.items.get(idx);
 
+        //load next slice on stack
         let mut data_slice = match get_data_slice(stack_value_opt) {
             Ok(data) => data,
             Err(e) => {
@@ -166,47 +170,77 @@ pub fn calc_hash_ext<'a>(
                 return Err(e);
             }
         };
-        let filled = match previous_empty_bits {
+        // check if we have remaining bits from previous step. 0 is for first step
+        let remaining_filled = match remaining_bits_in_buffer {
             p if p > 0 && p < 8 => {
+                // we have remaining bits lt one byte.
                 let rem = data_slice.load_small_uint(p as u16)?;
-                buffer[128] |= rem;
+                buffer[127] |= rem;
+                remaining_bits_in_buffer -= p;
+                filled_bits += p;
                 true
             }
             p if p == 8 => {
+                // exactly one byte
                 let rem = data_slice.load_small_uint(p as u16)?;
-                buffer[128] = rem;
+                buffer[127] = rem;
+                remaining_bits_in_buffer -= p;
+                filled_bits += p;
                 true
             }
             p if p > 8 => {
-                let target_len = ((p + 7) / 8) as usize;
-                let (byte_count, bit_remainder) = p.div_rem(&8u8);
+                // more than one byte
+                let target_len = ((p + 7) / 8); //compute how many bytes we need to fill in remaining bits
+                let (byte_count, bit_remainder) = p.div_rem(&8usize);
                 let rem = data_slice.load_small_uint(bit_remainder as u16)?;
-                buffer[129 - target_len] |= rem;
-                data_slice.load_raw(
-                    &mut buffer[(129 - byte_count as usize)..],
-                    bit_remainder as u16,
-                )?;
-                true
+                buffer[128 - target_len] |= rem;
+                let loaded = data_slice
+                    .load_raw(&mut buffer[(128 - byte_count)..], byte_count as u16 * 8)?;
+                remaining_bits_in_buffer -= loaded.len();
+                filled_bits += loaded.len();
+
+                match remaining_bits_in_buffer {
+                    0 => true,
+                    x if x < 0 => panic!("remaining bits in buffer is negative"),
+                    _ => false,
+                }
             }
             _ => false, // remaining bits cannot be negative
         };
 
-        if filled {
-            hasher.append(hash_id, buffer[1..129].as_ref());
+        if remaining_filled {
+            hasher.append(hash_id, buffer.as_ref());
+            remaining_bits_in_buffer = 128 * 8;
+            filled_bits = 0;
+            buffer.fill(0);
         }
 
-        total_bits += data_slice.size_bits() as usize;
-
-        data_slice = data_slice.load_remaining();
+        let size = data_slice.size_bits() as usize;
+        total_bits += size;
 
         let gas_total = GasConsumer::calc_hash_ext_consumption(i, total_bits, hash_id);
         gas.try_consume(gas_total - gas_consumed)?;
         gas_consumed = gas_total;
 
-        data_slice.load_raw(&mut buffer[1..129], data_slice.size_bits())?;
+        if data_slice.has_remaining(data_slice.offset_bits(), 0) {
+            data_slice = data_slice.load_remaining();
+            data_slice.load_raw(&mut buffer, data_slice.size_bits())?;
 
-        let new_empty_bits = 1024 - data_slice.size_bits();
-        buffer[0] = new_empty_bits as u8;
+            remaining_bits_in_buffer -= data_slice.size_bits() as usize;
+            filled_bits += data_slice.size_bits() as usize;
+        } else {
+            remaining_bits_in_buffer = 0;
+            filled_bits = filled_bits + size;
+        }
+
+        // final step. We have to force finish hasher update
+        if i == cnt - 1 {
+            // check if we still can hash
+            if filled_bits % 8 != 0 {
+                vm_bail!(CellError(Error::CellUnderflow)) // data does not consist of an integer number of bytes
+            }
+            hasher.append(hash_id, buffer[0..filled_bits / 8].as_ref());
+        }
     }
 
     ok!(stack.pop_many(cnt));
@@ -254,12 +288,12 @@ impl HashArgsExt {
         self.0 & 255
     }
 
-    fn hash_id_display(&self) -> i64 {
+    fn hash_id_display(&self) -> i32 {
         let id = self.hash_id();
         if id == 255 {
             -1
         } else {
-            id as i64
+            id as i32
         }
     }
 
@@ -272,7 +306,11 @@ pub struct DisplayHashArgsExt(u32);
 
 impl std::fmt::Display for DisplayHashArgsExt {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        let args = HashArgsExt(self.0);
+        let if_append = if args.is_append() { "A" } else { "" };
+        let is_rev = if args.is_rev() { "R" } else { "" };
+        let hash_id = args.hash_id_display();
+        write!(f, "HASHEXT{if_append}{is_rev} {hash_id}")
     }
 }
 
