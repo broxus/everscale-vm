@@ -3,16 +3,16 @@ use crate::error::{VmError, VmResult};
 use crate::stack::{RcStackValue, StackValueType};
 use crate::util::{store_int_to_builder, OwnedCellSlice};
 use crate::VmState;
-use everscale_types::cell::{CellBuilder};
+use everscale_types::cell::CellBuilder;
 use everscale_types::dict::{DictBound, SetMode};
 use everscale_types::error::Error;
 use everscale_types::prelude::{Cell, CellFamily, Store};
 use everscale_vm::cont::OrdCont;
+use everscale_vm::util::load_int_from_slice;
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
 use std::fmt::Formatter;
 use std::rc::Rc;
-use everscale_vm::util::load_int_from_slice;
 
 pub struct Dictops;
 
@@ -375,7 +375,7 @@ impl Dictops {
             let int: Rc<BigInt> = ok!(stack.pop_int());
             ok!(check_key_sign(s.is_unsigned(), int.clone()));
             builder = CellBuilder::new();
-            store_int_to_builder(&int, n, s.is_signed(),  &mut builder)?;
+            store_int_to_builder(&int, n, s.is_signed(), &mut builder)?;
             let key = builder.as_data_slice();
             if key.is_empty() {
                 ok!(stack.push_opt(dict));
@@ -414,7 +414,7 @@ impl Dictops {
             let int = ok!(stack.pop_int());
             ok!(check_key_sign(s.is_unsigned(), int.clone()));
             builder = CellBuilder::new();
-            store_int_to_builder(&int, n, s.is_signed(),  &mut builder)?;
+            store_int_to_builder(&int, n, s.is_signed(), &mut builder)?;
             let key = builder.as_data_slice();
             if key.is_empty() {
                 match dict {
@@ -533,7 +533,8 @@ impl Dictops {
             let int = ok!(stack.pop_int());
             ok!(check_key_sign(s.is_unsigned(), int.clone()));
             builder = CellBuilder::new();
-            store_int_to_builder(&int, n, s.is_signed(),  &mut builder).map(|_| builder.as_data_slice())
+            store_int_to_builder(&int, n, s.is_signed(), &mut builder)
+                .map(|_| builder.as_data_slice())
         } else {
             key_slice = stack.pop_cs()?;
             key_slice.apply()
@@ -756,7 +757,7 @@ impl Dictops {
             let int = ok!(stack.pop_int());
             ok!(check_key_sign(s.is_unsigned(), int.clone()));
             let mut builder = CellBuilder::new();
-            let result = match store_int_to_builder(&int, n, s.is_signed(),  &mut builder)
+            let result = match store_int_to_builder(&int, n, s.is_signed(), &mut builder)
                 .map(|_| builder.as_data_slice())
             {
                 Ok(key) => everscale_types::dict::dict_find_owned(
@@ -811,7 +812,8 @@ impl Dictops {
             let int = ok!(stack.pop_int());
             ok!(check_key_sign(s.is_unsigned(), int.clone()));
             builder = CellBuilder::new();
-            store_int_to_builder(&int, k, s.is_signed(),  &mut builder).map(|_| builder.as_data_slice())?
+            store_int_to_builder(&int, k, s.is_signed(), &mut builder)
+                .map(|_| builder.as_data_slice())?
         } else {
             key_slice = stack.pop_cs()?;
             key_slice.apply()?
@@ -845,9 +847,8 @@ impl Dictops {
 
         ok!(check_key_sign(s.is_unsigned(), idx.clone()));
 
-
         let mut builder = CellBuilder::new();
-        store_int_to_builder(&idx, n as u16, s.is_signed(),  &mut builder)?;
+        store_int_to_builder(&idx, n as u16, s.is_signed(), &mut builder)?;
         let key_slice = builder.as_data_slice();
 
         let dict = dict.as_deref();
@@ -860,13 +861,10 @@ impl Dictops {
         )?;
 
         if let Some(entry) = entry {
-            println!("entry: {:?}", entry);
             let cont = Rc::new(OrdCont::simple(entry.into(), st.cp.id()));
             return if s.is_exec() {
-                println!("we here2222");
                 st.call(cont)
             } else {
-                println!("we here3333");
                 st.jump(cont)
             };
         }
@@ -1253,7 +1251,7 @@ pub mod tests {
         let another_int: RcStackValue = make_new_int_value(3);
 
         let mut builder = CellBuilder::new();
-        store_int_to_builder(&BigInt::one(), int_kbl(), true,  &mut builder).unwrap();
+        store_int_to_builder(&BigInt::one(), int_kbl(), true, &mut builder).unwrap();
         let result: RcStackValue = Rc::new(builder.build().unwrap());
 
         assert_run_vm!(
@@ -1746,7 +1744,7 @@ pub mod tests {
     fn make_new_cell(value: i32) -> Cell {
         let value = BigInt::from(value);
         let mut builder = CellBuilder::new();
-        store_int_to_builder(&value, int_kbl(), true,  &mut builder).unwrap();
+        store_int_to_builder(&value, int_kbl(), true, &mut builder).unwrap();
         builder.build().unwrap()
     }
 

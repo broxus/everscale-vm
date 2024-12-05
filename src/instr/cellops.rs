@@ -6,6 +6,8 @@ use everscale_types::cell::{
     Cell, CellBuilder, CellContext, CellFamily, CellSlice, CellType, DynCell, HashBytes, LoadMode,
 };
 use everscale_types::error::Error;
+use everscale_types::models::StdAddr;
+use everscale_types::prelude::Load;
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
 use num_traits::ToPrimitive;
@@ -659,8 +661,12 @@ impl Cellops {
         let stack = Rc::make_mut(&mut st.stack);
         let cell = ok!(stack.pop_cell());
 
-        // TODO: Load with gas consumer
-        let cs = OwnedCellSlice::new(Rc::unwrap_or_clone(cell));
+        let cell = st
+            .gas
+            .context()
+            .load_cell(Rc::unwrap_or_clone(cell), LoadMode::UseGas)?;
+        let cs = OwnedCellSlice::new(cell);
+
         ok!(stack.push(cs));
         Ok(0)
     }
@@ -707,7 +713,7 @@ impl Cellops {
 
         let mut slice = cs.apply_allow_special();
         let cell = slice.load_reference_cloned()?;
-        // TODO: Load with gas consumer
+        let cell = st.gas.context().load_cell(cell, LoadMode::UseGas);
         ok!(stack.push(OwnedCellSlice::new(cell)));
 
         let range = slice.range();
@@ -1294,8 +1300,10 @@ fn exec_push_ref_common(
     let stack = Rc::make_mut(&mut st.stack);
     ok!(match mode {
         PushRefMode::Cell => stack.push(cell),
-        // TODO: Load with gas consumer
-        PushRefMode::Slice => stack.push(OwnedCellSlice::new(cell)),
+        PushRefMode::Slice => {
+            let cell = st.gas.context().load_cell(cell, LoadMode::UseGas)?;
+            stack.push(OwnedCellSlice::new(cell))
+        }
         PushRefMode::Cont => {
             let code = st.gas.context().load_cell(cell, LoadMode::Full)?;
             let cont = Rc::new(OrdCont::simple(code.into(), st.cp.id()));

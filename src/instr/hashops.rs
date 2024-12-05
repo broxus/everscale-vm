@@ -44,29 +44,23 @@ impl Hashops {
     }
 
     #[instr(
-        code = "f90$01ss",
-        fmt = ("{}", s.display()),
-        args(s = HashArgsExt(args))
+        code = "f90$01pr#nn",
+        fmt = ("{}", DisplayHashArgsExt {p,r,n}),
+        args(p = ((args >> 9) & 1) != 0, r = ((args >> 8) & 1) != 0)
     )]
-    fn exec_hash_ext(st: &mut VmState, s: HashArgsExt) -> VmResult<i32> {
+    fn exec_hash_ext(st: &mut VmState, p: bool, r: bool, n: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-
-        let mut hash_id = s.hash_id();
+        let mut hash_id = n;
         if hash_id == 255 {
             hash_id = ok!(stack.pop_smallint_range(0, 254));
         };
 
         let cnt = ok!(stack.pop_smallint_range(0, (stack.depth() - 1) as u32));
-        let hash: Vec<u8> = ok!(calc_hash_ext(
-            stack,
-            &mut st.gas,
-            hash_id,
-            cnt as usize,
-            s.is_rev()
-        ));
+
+        let hash: Vec<u8> = ok!(calc_hash_ext(stack, &mut st.gas, hash_id, cnt as usize, r));
 
         let len = (hash.len() * 8) as u16;
-        if s.is_append() {
+        if p {
             let mut rc_builder: Rc<CellBuilder> = ok!(stack.pop_builder());
             if !rc_builder.has_capacity(len, 0) {
                 vm_bail!(CellError(Error::CellOverflow))
@@ -160,7 +154,7 @@ pub fn calc_hash_ext<'a>(
     for i in 0..cnt {
         let idx = if is_rev { i } else { cnt - 1 - i };
 
-        let stack_value_opt: Option<&RcStackValue> = stack.items.get(idx);
+        let stack_value_opt: Option<&RcStackValue> = stack.items.get(stack.items.len() - 1 - idx);
 
         //load next slice on stack
         let mut data_slice = match get_data_slice(stack_value_opt) {
@@ -170,8 +164,10 @@ pub fn calc_hash_ext<'a>(
                 return Err(e);
             }
         };
+
         // check if we have remaining bits from previous step. 0 is for first step
         let remaining_filled = match remaining_bits_in_buffer {
+            1024 => false,
             p if p > 0 && p < 8 => {
                 // we have remaining bits lt one byte.
                 let rem = data_slice.load_small_uint(p as u16)?;
@@ -222,12 +218,12 @@ pub fn calc_hash_ext<'a>(
         gas.try_consume(gas_total - gas_consumed)?;
         gas_consumed = gas_total;
 
-        if data_slice.has_remaining(data_slice.offset_bits(), 0) {
+        if data_slice.has_remaining(data_slice.size_bits(), 0) {
             data_slice = data_slice.load_remaining();
-            data_slice.load_raw(&mut buffer, data_slice.size_bits())?;
+            let result = data_slice.load_raw(&mut buffer, data_slice.size_bits())?;
 
-            remaining_bits_in_buffer -= data_slice.size_bits() as usize;
-            filled_bits += data_slice.size_bits() as usize;
+            remaining_bits_in_buffer -= result.len() * 8;
+            filled_bits += result.len() * 8;
         } else {
             remaining_bits_in_buffer = 0;
             filled_bits = filled_bits + size;
@@ -256,7 +252,6 @@ pub fn get_data_slice(stack_value_opt: Option<&RcStackValue>) -> VmResult<CellSl
             actual: StackValueType::Null
         }) //TODO: or builder type because can be expected
     };
-
     match stack_value.as_slice() {
         Some(slice) => Ok(slice.apply()?),
         None => {
@@ -275,41 +270,17 @@ pub fn get_data_slice(stack_value_opt: Option<&RcStackValue>) -> VmResult<CellSl
 
 pub struct HashArgsExt(u32);
 
-impl HashArgsExt {
-    fn is_rev(&self) -> bool {
-        (self.0 >> 8) & 1 != 0
-    }
-
-    fn is_append(&self) -> bool {
-        (self.0 >> 9) & 1 != 0
-    }
-
-    fn hash_id(&self) -> u32 {
-        self.0 & 255
-    }
-
-    fn hash_id_display(&self) -> i32 {
-        let id = self.hash_id();
-        if id == 255 {
-            -1
-        } else {
-            id as i32
-        }
-    }
-
-    pub fn display(&self) -> DisplayHashArgsExt {
-        DisplayHashArgsExt(self.0)
-    }
+pub struct DisplayHashArgsExt {
+    p: bool,
+    r: bool,
+    n: u32,
 }
-
-pub struct DisplayHashArgsExt(u32);
 
 impl std::fmt::Display for DisplayHashArgsExt {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let args = HashArgsExt(self.0);
-        let if_append = if args.is_append() { "A" } else { "" };
-        let is_rev = if args.is_rev() { "R" } else { "" };
-        let hash_id = args.hash_id_display();
+        let if_append = if self.p { "A" } else { "" };
+        let is_rev = if self.r { "R" } else { "" };
+        let hash_id = if self.n == 255 { -1 } else { self.n as i32 };
         write!(f, "HASHEXT{if_append}{is_rev} {hash_id}")
     }
 }

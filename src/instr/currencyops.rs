@@ -1,7 +1,9 @@
 use crate::stack::{Stack, StackValueType};
-use everscale_types::cell::{CellBuilder, CellSlice};
+use crate::state::GasConsumer;
+use everscale_types::cell::{CellBuilder, CellSlice, LoadMode};
 use everscale_types::error::Error;
 use everscale_types::num::SplitDepth;
+use everscale_types::prelude::CellContext;
 use everscale_vm::error::VmResult;
 use everscale_vm::stack::Tuple;
 use everscale_vm::util::{load_var_int_from_slice, store_varint_to_builder, OwnedCellSlice};
@@ -135,11 +137,31 @@ impl CurrencyOps {
         Ok(0)
     }
 
-    #[instr(code = "fa44", fmt = "REWRITESTDADDR", args(allow_var_addr = false, quiet = false))]
-    #[instr(code = "fa45", fmt = "REWRITESTDADDRQ", args(allow_var_addr = false, quiet = true))]
-    #[instr(code = "fa46", fmt = "REWRITEVARADDR", args(allow_var_addr = true, quiet = false))]
-    #[instr(code = "fa47", fmt = "REWRITEVARADDR", args(allow_var_addr = true, quiet = true))]
-    fn exec_rewrite_message_addr(st: &mut VmState, allow_var_addr: bool, quiet: bool) -> VmResult<i32> {
+    #[instr(
+        code = "fa44",
+        fmt = "REWRITESTDADDR",
+        args(allow_var_addr = false, quiet = false)
+    )]
+    #[instr(
+        code = "fa45",
+        fmt = "REWRITESTDADDRQ",
+        args(allow_var_addr = false, quiet = true)
+    )]
+    #[instr(
+        code = "fa46",
+        fmt = "REWRITEVARADDR",
+        args(allow_var_addr = true, quiet = false)
+    )]
+    #[instr(
+        code = "fa47",
+        fmt = "REWRITEVARADDR",
+        args(allow_var_addr = true, quiet = true)
+    )]
+    fn exec_rewrite_message_addr(
+        st: &mut VmState,
+        allow_var_addr: bool,
+        quiet: bool,
+    ) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut cs: Rc<OwnedCellSlice> = ok!(stack.pop_cs());
         let owned_cell_slice = Rc::make_mut(&mut cs);
@@ -153,13 +175,19 @@ impl CurrencyOps {
         }
         let t_opt = tuple.first();
         let Some(t) = t_opt else {
-           vm_bail!(InvalidType { expected: StackValueType::Int, actual: StackValueType::Null})
+            vm_bail!(InvalidType {
+                expected: StackValueType::Int,
+                actual: StackValueType::Null
+            })
         };
 
         let t = match t.as_int().and_then(|x| x.to_u64()) {
             Some(t) => t,
             None => {
-                vm_bail!(InvalidType { expected: StackValueType::Int, actual: StackValueType::Null})
+                vm_bail!(InvalidType {
+                    expected: StackValueType::Int,
+                    actual: StackValueType::Null
+                })
             }
         };
 
@@ -173,15 +201,24 @@ impl CurrencyOps {
 
         let address_opt = tuple.get(3);
         let Some(address_slice) = address_opt else {
-            vm_bail!(InvalidType { expected: StackValueType::Slice, actual: StackValueType::Null})
+            vm_bail!(InvalidType {
+                expected: StackValueType::Slice,
+                actual: StackValueType::Null
+            })
         };
         let Some(address_slice) = address_slice.as_slice() else {
-            vm_bail!(InvalidType { expected: StackValueType::Slice, actual: address_slice.ty()})
+            vm_bail!(InvalidType {
+                expected: StackValueType::Slice,
+                actual: address_slice.ty()
+            })
         };
 
         let prefix_opt = tuple.get(1);
         let Some(prefix_slice) = prefix_opt else {
-            vm_bail!(InvalidType { expected: StackValueType::Slice, actual: StackValueType::Null})
+            vm_bail!(InvalidType {
+                expected: StackValueType::Slice,
+                actual: StackValueType::Null
+            })
         };
 
         let prefix_slice = prefix_slice.as_slice();
@@ -205,19 +242,22 @@ impl CurrencyOps {
                     let prefix = prefix.apply()?;
                     let prefix = prefix.get_raw(0, &mut rw_addr.0, prefix.range().size_bits())?;
                     int_address = BigInt::from_bytes_be(Sign::Plus, prefix);
-                },
-                None => ()
+                }
+                None => (),
             };
-
 
             let address_opt = tuple.get(2);
             let Some(address_slice) = address_opt else {
-                vm_bail!(InvalidType { expected: StackValueType::Slice, actual: StackValueType::Null})
+                vm_bail!(InvalidType {
+                    expected: StackValueType::Slice,
+                    actual: StackValueType::Null
+                })
             };
             ok!(stack.push_raw(address_slice.clone()));
             ok!(stack.push_int(int_address));
         } else {
-            let rewrited = do_rewrite_addr(address_slice.clone(), prefix_slice.cloned());
+            let rewrited =
+                do_rewrite_addr(&mut st.gas, address_slice.clone(), prefix_slice.cloned());
             match rewrited {
                 Err(e) => {
                     if quiet {
@@ -229,7 +269,10 @@ impl CurrencyOps {
                 Ok(slice) => {
                     let address_opt = tuple.get(2);
                     let Some(address_slice) = address_opt else {
-                        vm_bail!(InvalidType { expected: StackValueType::Slice, actual: StackValueType::Null})
+                        vm_bail!(InvalidType {
+                            expected: StackValueType::Slice,
+                            actual: StackValueType::Null
+                        })
                     };
                     ok!(stack.push_raw(address_slice.clone()));
                     ok!(stack.push_raw(Rc::new(slice)));
@@ -244,22 +287,26 @@ impl CurrencyOps {
     }
 }
 
-fn do_rewrite_addr<'a>(addr: OwnedCellSlice, prefix: Option<OwnedCellSlice>) -> Result<OwnedCellSlice, Error> {
+fn do_rewrite_addr<'a>(
+    gas: &mut GasConsumer,
+    addr: OwnedCellSlice,
+    prefix: Option<OwnedCellSlice>,
+) -> Result<OwnedCellSlice, Error> {
     let mut addr_slice = addr.apply()?;
     let prefix = match prefix {
         None => return Ok(addr),
-        Some(prefix)  => prefix,
+        Some(prefix) => prefix,
     };
     let prefix_slice = prefix.apply()?;
     if prefix_slice.is_empty() {
         return Ok(addr);
     }
     if prefix_slice.size_bits() > addr_slice.size_bits() {
-        return Err(Error::InvalidCell)
+        return Err(Error::InvalidCell);
     }
 
     if prefix_slice.size_bits() == addr_slice.size_bits() {
-        return Ok(prefix)
+        return Ok(prefix);
     }
 
     let mut cb = CellBuilder::new();
@@ -268,9 +315,8 @@ fn do_rewrite_addr<'a>(addr: OwnedCellSlice, prefix: Option<OwnedCellSlice>) -> 
     cb.store_slice(addr_slice)?;
     let cell = cb.build()?;
 
-    //TODO: consume gas here ??
+    let cell = gas.context().load_cell(cell, LoadMode::UseGas)?;
     Ok(OwnedCellSlice::from(cell))
-
 }
 
 fn parse_message_address(owned_slice: &mut OwnedCellSlice) -> Result<(bool, Tuple), Error> {
