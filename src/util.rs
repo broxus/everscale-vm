@@ -127,6 +127,72 @@ pub fn ensure_empty_slice(slice: &CellSlice) -> Result<(), Error> {
     }
 }
 
+pub fn load_var_int_from_slice(
+    slice: &mut CellSlice<'_>,
+    len_bits: u16,
+    signed: bool,
+) -> Result<BigInt, Error> {
+    let len = slice.load_uint(len_bits)? as u16;
+    load_int_from_slice(slice, len * 8, signed)
+}
+
+pub fn load_int_from_slice(
+    slice: &mut CellSlice<'_>,
+    bits: u16,
+    signed: bool,
+) -> Result<BigInt, Error> {
+    match bits {
+        0 => Ok(BigInt::zero()),
+        0..=64 if !signed => slice.load_uint(bits).map(BigInt::from),
+        0..=64 if signed => slice.load_uint(bits).map(|mut int| {
+            if bits < 64 {
+                // Clone sign bit into all high bits
+                int |= ((int >> (bits - 1)) * u64::MAX) << (bits - 1);
+            }
+            BigInt::from(int as i64)
+        }),
+        _ => {
+            let rem = bits % 8;
+            let mut buffer = [0u8; 33];
+            slice.load_raw(&mut buffer, bits).map(|buffer| {
+                let mut int = if signed {
+                    BigInt::from_signed_bytes_be(buffer)
+                } else {
+                    BigInt::from_bytes_be(Sign::Plus, buffer)
+                };
+                if bits % 8 != 0 {
+                    int >>= 8 - rem;
+                }
+                int
+            })
+        }
+    }
+}
+
+pub fn store_varint_to_builder(
+    int: &BigInt,
+    bits: u16,
+    builder: &mut CellBuilder,
+    signed: bool,
+    quite: bool,
+) -> Result<bool, Error> {
+    let bitsize = bitsize(int, signed);
+    let len = (bitsize + 7) >> 3;
+    if len >= (1 << bits) {
+        return Err(Error::InvalidData); //TODO: range check
+    }
+
+    if !builder.has_capacity(bits + len * 8, 0) {
+        if quite {
+            return Ok(false);
+        }
+        return Err(Error::CellUnderflow);
+    }
+    builder.store_uint(len as u64, bits)?;
+    store_int_to_builder(int, len * 8, signed, builder)?;
+    Ok(true)
+}
+
 pub fn store_int_to_builder(
     x: &BigInt,
     bits: u16,
