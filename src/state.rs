@@ -46,6 +46,19 @@ pub struct GasParameters {
     pub gas_base: u64,
 }
 
+impl GasParameters {
+    pub fn new(gas_max: u64, gas_limit: u64, gas_credit: u64) -> Self {
+        let remaining = gas_limit + gas_credit;
+        Self {
+            gas_max,
+            gas_limit,
+            gas_credit,
+            gas_remaining: remaining,
+            gas_base: remaining,
+        }
+    }
+}
+
 impl VmStateBuilder {
     pub fn new() -> Self {
         Self::default()
@@ -109,6 +122,10 @@ impl VmStateBuilder {
         self
     }
 
+    pub fn with_gas(mut self, gas: GasParameters) -> Self {
+        self.gas = gas;
+        self
+    }
     pub fn with_gas_max(mut self, value: u64) -> Self {
         self.gas.gas_max = value;
         self
