@@ -233,18 +233,20 @@ impl CurrencyOps {
                 _ => vm_bail!(CellError(Error::CellUnderflow)),
             }
             let address_slice = address_slice.apply()?;
-            let mut rw_addr = address_slice.get_u256(0)?;
+            let mut hash_bytes = address_slice.get_u256(0)?;
+            let rw_addr = hash_bytes.as_mut_array();
 
             let mut int_address = BigInt::default();
 
-            match prefix_slice {
+            let rw_addr = match prefix_slice {
                 Some(prefix) => {
-                    let prefix = prefix.apply()?;
-                    let prefix = prefix.get_raw(0, &mut rw_addr.0, prefix.range().size_bits())?;
-                    int_address = BigInt::from_bytes_be(Sign::Plus, prefix);
+                    let mut prefix = prefix.apply()?;
+                    prefix.load_raw(rw_addr, prefix.range().size_bits())?
                 }
-                None => (),
+                None => rw_addr,
             };
+
+            int_address = BigInt::from_bytes_be(Sign::Plus, rw_addr);
 
             let address_opt = tuple.get(2);
             let Some(address_slice) = address_opt else {

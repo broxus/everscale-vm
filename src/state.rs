@@ -254,9 +254,10 @@ impl VmState {
                     }
                 }
             };
-            // for value in self.stack.items.iter() {
-            //     println!("{}", value.display_list());
-            // }
+
+            for value in self.stack.items.iter() {
+                println!("{}", value.display_list());
+            }
 
             // TODO: handle out of gas
 

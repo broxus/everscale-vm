@@ -403,8 +403,8 @@ mod tests {
                 .unwrap();
         let addr = OwnedCellSlice::from(CellBuilder::build_from(addr).unwrap());
 
-        let default = StdAddr::default();
-        let default = OwnedCellSlice::from(CellBuilder::build_from(default).unwrap());
+        //let default = StdAddr::default();
+        //let default = OwnedCellSlice::from(CellBuilder::build_from(default).unwrap());
 
         let c7: Vec<RcStackValue> = vec![
             Rc::new(BigInt::from(0x076ef1ea)),
@@ -417,7 +417,7 @@ mod tests {
             Rc::new(balance_tuple),
             Rc::new(addr.clone()),
             Stack::make_null(),
-            Rc::new(code.clone()),
+            //Rc::new(code.clone()),
         ];
 
         let c4_data = Boc::decode_base64(
@@ -425,12 +425,10 @@ mod tests {
         )
             .unwrap();
 
-        println!("{}", c4_data.repr_hash());
-
         let stack: Vec<RcStackValue> = vec![
-            Rc::new(default),
-            Rc::new(BigInt::from(103289)),
-            //Rc::new(BigInt::from(106029))
+            //Rc::new(addr),
+            //Rc::new(BigInt::from(103289)),
+            Rc::new(BigInt::from(106029)),
         ];
 
         let mut builder = VmState::builder();
