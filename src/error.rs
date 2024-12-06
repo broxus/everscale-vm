@@ -95,6 +95,31 @@ impl VmException {
     }
 }
 
+impl TryFrom<u8> for VmException {
+    type Error = &'static str;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(VmException::Ok),
+            1 => Ok(VmException::Alternative),
+            2 => Ok(VmException::StackUnderflow),
+            3 => Ok(VmException::StackOverflow),
+            4 => Ok(VmException::IntOverflow),
+            5 => Ok(VmException::RangeCheck),
+            6 => Ok(VmException::InvalidOpcode),
+            7 => Ok(VmException::TypeCheck),
+            8 => Ok(VmException::CellOverflow),
+            9 => Ok(VmException::CellUnderflow),
+            10 => Ok(VmException::DictError),
+            11 => Ok(VmException::Unknown),
+            12 => Ok(VmException::Fatal),
+            13 => Ok(VmException::OutOfGas),
+            14 => Ok(VmException::VirtError),
+            _ => Err("Unknown exit code"),
+        }
+    }
+}
+
 impl std::fmt::Display for VmException {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
