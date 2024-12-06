@@ -1,5 +1,4 @@
 use std::fmt::Formatter;
-use std::ptr::hash;
 use std::rc::Rc;
 use std::string::ToString;
 
@@ -68,18 +67,16 @@ impl Hashops {
             let builder = Rc::make_mut(&mut rc_builder);
             builder.store_raw(hash.as_slice(), len)?;
             ok!(stack.push_raw(rc_builder));
+        } else if hash.len() <= 32 {
+            let int = BigInt::from_bytes_be(Sign::Plus, hash.as_slice());
+            ok!(stack.push_int(int));
         } else {
-            if hash.len() <= 32 {
-                let int = BigInt::from_bytes_be(Sign::Plus, hash.as_slice());
-                ok!(stack.push_int(int));
-            } else {
-                let mut tuple = Tuple::new();
-                for i in hash.chunks(32) {
-                    let int = BigInt::from_bytes_be(Sign::Plus, i);
-                    tuple.push(Rc::new(int));
-                }
-                ok!(stack.push_raw(Rc::new(tuple)));
+            let mut tuple = Tuple::new();
+            for i in hash.chunks(32) {
+                let int = BigInt::from_bytes_be(Sign::Plus, i);
+                tuple.push(Rc::new(int));
             }
+            ok!(stack.push_raw(Rc::new(tuple)));
         }
 
         Ok(0)
@@ -186,7 +183,7 @@ pub fn calc_hash_ext<'a>(
             }
             p if p > 8 => {
                 // more than one byte
-                let target_len = ((p + 7) / 8); //compute how many bytes we need to fill in remaining bits
+                let target_len = (p + 7) / 8; //compute how many bytes we need to fill in remaining bits
                 let (byte_count, bit_remainder) = p.div_rem(&8usize);
                 let rem = data_slice.load_small_uint(bit_remainder as u16)?;
                 buffer[128 - target_len] |= rem;
@@ -195,10 +192,10 @@ pub fn calc_hash_ext<'a>(
                 remaining_bits_in_buffer -= loaded.len();
                 filled_bits += loaded.len();
 
-                match remaining_bits_in_buffer {
-                    0 => true,
-                    x if x < 0 => panic!("remaining bits in buffer is negative"),
-                    _ => false,
+                if remaining_bits_in_buffer == 0 {
+                    true
+                } else {
+                    false
                 }
             }
             _ => false, // remaining bits cannot be negative
@@ -226,7 +223,7 @@ pub fn calc_hash_ext<'a>(
             filled_bits += result.len() * 8;
         } else {
             remaining_bits_in_buffer = 0;
-            filled_bits = filled_bits + size;
+            filled_bits += size;
         }
 
         // final step. We have to force finish hasher update
@@ -321,7 +318,7 @@ impl Hasher {
         }
     }
 
-    pub fn append(&mut self, hash_id: u32, data: &[u8]) -> () {
+    pub fn append(&mut self, hash_id: u32, data: &[u8]) {
         match hash_id {
             0 => Digest::update(&mut self.sha256, data),
             1 => Digest::update(&mut self.sha512, data),

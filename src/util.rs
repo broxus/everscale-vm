@@ -127,7 +127,11 @@ pub fn ensure_empty_slice(slice: &CellSlice) -> Result<(), Error> {
     }
 }
 
-pub fn load_var_int_from_slice(slice: &mut CellSlice<'_>, len_bits: u16, signed: bool) -> Result<BigInt, Error> {
+pub fn load_var_int_from_slice(
+    slice: &mut CellSlice<'_>,
+    len_bits: u16,
+    signed: bool,
+) -> Result<BigInt, Error> {
     let len = slice.load_uint(len_bits)? as u16;
     load_int_from_slice(slice, len * 8, signed)
 }
@@ -165,7 +169,13 @@ pub fn load_int_from_slice(
     }
 }
 
-pub fn store_varint_to_builder(int: &BigInt, bits: u16, builder: &mut CellBuilder, signed: bool, quite: bool) -> Result<bool, Error> {
+pub fn store_varint_to_builder(
+    int: &BigInt,
+    bits: u16,
+    builder: &mut CellBuilder,
+    signed: bool,
+    quite: bool,
+) -> Result<bool, Error> {
     let bitsize = bitsize(int, signed);
     let len = (bitsize + 7) >> 3;
     if len >= (1 << bits) {

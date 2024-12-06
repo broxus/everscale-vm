@@ -713,7 +713,7 @@ impl Cellops {
 
         let mut slice = cs.apply_allow_special();
         let cell = slice.load_reference_cloned()?;
-        let cell = st.gas.context().load_cell(cell, LoadMode::UseGas);
+        let cell = st.gas.context().load_cell(cell, LoadMode::UseGas)?;
         ok!(stack.push(OwnedCellSlice::new(cell)));
 
         let range = slice.range();
