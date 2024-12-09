@@ -141,10 +141,13 @@ pub fn calc_hash_ext<'a>(
 ) -> VmResult<Vec<u8>> {
     let mut total_bits: usize = 0;
     let mut gas_consumed: u64 = 0;
-    let mut hasher = Hasher::new();
+    let mut hasher = Hasher::new(hash_id);
 
-    let mut remaining_bits_in_buffer: usize = 128 * 8;
+    let mut remaining_bits_in_buffer: usize = 1024;
     let mut filled_bits: usize = 0;
+
+    let mut rem_bits_from_prev_step: u8 = 0;
+    let mut rem_value: Option<CellSlice> = None;
 
     let mut buffer = [0u8; 128];
 
@@ -161,36 +164,23 @@ pub fn calc_hash_ext<'a>(
                 return Err(e);
             }
         };
-
         // check if we have remaining bits from previous step. 0 is for first step
         let remaining_filled = match remaining_bits_in_buffer {
+            0 => true,
             1024 => false,
-            p if p > 0 && p < 8 => {
-                // we have remaining bits lt one byte.
-                let rem = data_slice.load_small_uint(p as u16)?;
-                buffer[127] |= rem;
-                remaining_bits_in_buffer -= p;
-                filled_bits += p;
-                true
-            }
-            p if p == 8 => {
-                // exactly one byte
-                let rem = data_slice.load_small_uint(p as u16)?;
-                buffer[127] = rem;
-                remaining_bits_in_buffer -= p;
-                filled_bits += p;
-                true
-            }
-            p if p > 8 => {
-                // more than one byte
-                let target_len = (p + 7) / 8; //compute how many bytes we need to fill in remaining bits
-                let (byte_count, bit_remainder) = p.div_rem(&8usize);
-                let rem = data_slice.load_small_uint(bit_remainder as u16)?;
-                buffer[128 - target_len] |= rem;
-                let loaded = data_slice
-                    .load_raw(&mut buffer[(128 - byte_count)..], byte_count as u16 * 8)?;
-                remaining_bits_in_buffer -= loaded.len();
-                filled_bits += loaded.len();
+            _ => {
+                match (rem_bits_from_prev_step > 0, rem_value) {
+                    (true, Some(mut rem_value)) => {
+                        let int = data_slice.load_small_uint(8 - rem_bits_from_prev_step as u16)?;
+                        let value =
+                            rem_value.load_small_uint(rem_bits_from_prev_step as u16)? | int;
+
+                        buffer[filled_bits / 8] = value;
+                        remaining_bits_in_buffer -= 8;
+                        filled_bits += 8;
+                    }
+                    _ => (),
+                }
 
                 if remaining_bits_in_buffer == 0 {
                     true
@@ -198,46 +188,76 @@ pub fn calc_hash_ext<'a>(
                     false
                 }
             }
-            _ => false, // remaining bits cannot be negative
         };
-
         if remaining_filled {
-            hasher.append(hash_id, buffer.as_ref());
+            hasher.append(buffer.as_ref());
             remaining_bits_in_buffer = 128 * 8;
             filled_bits = 0;
             buffer.fill(0);
         }
 
-        let size = data_slice.size_bits() as usize;
-        total_bits += size;
+        let (bytes, rem_bits) = data_slice.size_bits().div_rem(&8);
+        if remaining_bits_in_buffer >= data_slice.size_bits() as usize {
+            let nb = data_slice.load_raw(&mut buffer[(filled_bits / 8)..], bytes * 8)?;
+            remaining_bits_in_buffer -= bytes as usize * 8;
+            filled_bits += bytes as usize * 8;
 
-        let gas_total = GasConsumer::calc_hash_ext_consumption(i, total_bits, hash_id);
-        gas.try_consume(gas_total - gas_consumed)?;
-        gas_consumed = gas_total;
+            if rem_bits != 0 {
+                rem_bits_from_prev_step = rem_bits as u8;
+                rem_value = Some(data_slice.load_remaining());
+            }
 
-        if data_slice.has_remaining(data_slice.size_bits(), 0) {
-            data_slice = data_slice.load_remaining();
-            let result = data_slice.load_raw(&mut buffer, data_slice.size_bits())?;
-
-            remaining_bits_in_buffer -= result.len() * 8;
-            filled_bits += result.len() * 8;
+            total_bits += filled_bits;
+            let gas_total = GasConsumer::calc_hash_ext_consumption(i, total_bits, hash_id);
+            gas.try_consume(gas_total - gas_consumed)?;
+            gas_consumed = gas_total;
         } else {
-            remaining_bits_in_buffer = 0;
-            filled_bits += size;
-        }
+            //load what we can to a remaining buffer
+            data_slice.load_raw(
+                &mut buffer[(filled_bits / 8)..],
+                remaining_bits_in_buffer as u16,
+            )?;
+
+            total_bits += filled_bits;
+            let gas_total = GasConsumer::calc_hash_ext_consumption(i, total_bits, hash_id);
+            gas.try_consume(gas_total - gas_consumed)?;
+            gas_consumed = gas_total;
+
+            // append hasher and update buffer
+            hasher.append(buffer.as_ref());
+            remaining_bits_in_buffer = 128 * 8;
+            filled_bits = 0;
+            buffer.fill(0);
+
+            //load rest of slice to a new buffer
+            let (bytes, rem_bits) = data_slice.size_bits().div_rem(&8);
+            data_slice.load_raw(&mut buffer, bytes * 8)?;
+            if rem_bits != 0 {
+                rem_bits_from_prev_step = rem_bits as u8;
+                rem_value = Some(data_slice.load_remaining());
+            }
+            remaining_bits_in_buffer -= bytes as usize * 8;
+            filled_bits += bytes as usize * 8;
+
+            total_bits += filled_bits;
+            let gas_total = GasConsumer::calc_hash_ext_consumption(i, total_bits, hash_id);
+            gas.try_consume(gas_total - gas_consumed)?;
+            gas_consumed = gas_total;
+        };
 
         // final step. We have to force finish hasher update
         if i == cnt - 1 {
             // check if we still can hash
-            if filled_bits % 8 != 0 {
+            if rem_bits_from_prev_step != 0 {
+                vm_log!("Can not hash data with bit len % 8 != 0");
                 vm_bail!(CellError(Error::CellUnderflow)) // data does not consist of an integer number of bytes
             }
-            hasher.append(hash_id, buffer[0..filled_bits / 8].as_ref());
+            hasher.append(buffer[0..filled_bits / 8].as_ref());
         }
     }
 
     ok!(stack.pop_many(cnt));
-    let hash = hasher.finalize(hash_id);
+    let hash = hasher.finalize();
 
     Ok(hash)
 }
@@ -304,35 +324,182 @@ impl std::fmt::Display for DisplayHashArgs {
 }
 
 pub struct Hasher {
+    hash_id: u32,
     sha256: Sha256,
     sha512: Sha512,
     blake2b: Blake2b512,
 }
 
 impl Hasher {
-    pub fn new() -> Hasher {
+    pub fn new(hash_id: u32) -> Hasher {
         Self {
+            hash_id,
             sha256: Sha256::new(),
             sha512: Sha512::new(),
             blake2b: Blake2b512::new(),
         }
     }
 
-    pub fn append(&mut self, hash_id: u32, data: &[u8]) {
-        match hash_id {
+    pub fn append(&mut self, data: &[u8]) {
+        println!("append data {data:?}");
+        match self.hash_id {
             0 => Digest::update(&mut self.sha256, data),
             1 => Digest::update(&mut self.sha512, data),
             2 => Digest::update(&mut self.blake2b, data),
-            _ => unimplemented!("hash_id {} not supported", hash_id),
+            _ => unimplemented!("hash_id {} not supported", self.hash_id),
         }
     }
 
-    pub fn finalize(self, hash_id: u32) -> Vec<u8> {
-        match hash_id {
+    pub fn finalize(self) -> Vec<u8> {
+        match self.hash_id {
             0 => self.sha256.finalize().to_vec(),
             1 => self.sha512.finalize().to_vec(),
             2 => self.blake2b.finalize().to_vec(),
-            _ => unimplemented!("hash_id {} not supported", hash_id),
+            _ => unimplemented!("hash_id {} not supported", self.hash_id),
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::stack::RcStackValue;
+    use crate::stack::StackValueType::Cell;
+    use crate::util::OwnedCellSlice;
+    use everscale_types::cell::CellBuilder;
+    use num_bigint::{BigInt, Sign};
+    use sha2::Digest;
+    use std::rc::Rc;
+    use tracing_test::traced_test;
+
+    #[test]
+    #[traced_test]
+    fn extended_hash_1() {
+        let mut sha256 = sha2::Sha256::new();
+
+        let x = [1u8; 32];
+        sha256.update(x.as_ref());
+        let mut cb = CellBuilder::new();
+        cb.store_raw(x.as_ref(), 256).unwrap();
+        let cell1 = cb.build().unwrap();
+
+        let y = [2u8; 32];
+        sha256.update(y.as_ref());
+        let mut cb = CellBuilder::new();
+        cb.store_raw(y.as_ref(), 256).unwrap();
+        let cell2 = cb.build().unwrap();
+
+        let slice1 = OwnedCellSlice::from(cell1);
+        let slice2 = OwnedCellSlice::from(cell2);
+
+        let raw1: RcStackValue = Rc::new(slice1);
+        let raw2: RcStackValue = Rc::new(slice2);
+
+        let hash: Vec<u8> = sha256.finalize().to_vec();
+        let int1: RcStackValue = Rc::new(BigInt::from_bytes_be(Sign::Plus, hash.as_ref()));
+
+        assert_run_vm!(
+            "HASHEXT_SHA256",
+            [raw raw1, raw raw2, int 2] => [raw int1]
+        );
+    }
+
+    #[test]
+    #[traced_test]
+    fn extended_hash_2() {
+        let mut sha256 = sha2::Sha256::new();
+
+        let x = [3u8; 64];
+        sha256.update(x.as_ref());
+        let mut cb = CellBuilder::new();
+        cb.store_raw(x.as_ref(), 512).unwrap();
+        let cell1 = cb.build().unwrap();
+
+        let y = [4u8; 64];
+        sha256.update(y.as_ref());
+        let mut cb = CellBuilder::new();
+        cb.store_raw(y.as_ref(), 512).unwrap();
+        let cell2 = cb.build().unwrap();
+
+        let slice1 = OwnedCellSlice::from(cell1);
+        let slice2 = OwnedCellSlice::from(cell2);
+
+        let raw1: RcStackValue = Rc::new(slice1);
+        let raw2: RcStackValue = Rc::new(slice2);
+
+        let hash: Vec<u8> = sha256.finalize().to_vec();
+        let int1: RcStackValue = Rc::new(BigInt::from_bytes_be(Sign::Plus, hash.as_ref()));
+
+        assert_run_vm!(
+            "HASHEXT_SHA256",
+            [raw raw1, raw raw2, int 2] => [raw int1]
+        );
+    }
+
+    #[test]
+    #[traced_test]
+    fn extended_hash_3() {
+        let mut sha256 = sha2::Sha256::new();
+
+        let x = [3u8; 64];
+        sha256.update(x.as_ref());
+        let mut cb = CellBuilder::new();
+        cb.store_raw(x.as_ref(), 512).unwrap();
+        let cell1 = cb.build().unwrap();
+
+        let y = [4u8; 64];
+        sha256.update(y.as_ref());
+        let mut cb = CellBuilder::new();
+        cb.store_raw(y.as_ref(), 511).unwrap();
+        let cell2 = cb.build().unwrap();
+
+        let slice1 = OwnedCellSlice::from(cell1);
+        let slice2 = OwnedCellSlice::from(cell2);
+
+        let raw1: RcStackValue = Rc::new(slice1);
+        let raw2: RcStackValue = Rc::new(slice2);
+
+        let hash: Vec<u8> = sha256.finalize().to_vec();
+        let int1: RcStackValue = Rc::new(BigInt::from_bytes_be(Sign::Plus, hash.as_ref()));
+
+        assert_run_vm!(
+            "HASHEXT_SHA256",
+            [raw raw1, raw raw2, int 2] => [],
+            exit_code: 9
+        );
+    }
+
+    // #[test]
+    // #[traced_test]
+    // fn extended_hash_4() {
+    //     let mut sha256 = sha2::Sha256::new();
+    //
+    //     let mut cb = CellBuilder::new();
+    //     let x = [1u8; 31];
+    //     let int1: u8 = 0b1111111;
+    //     cb.store_raw(x.as_ref(), x.len() as u16 * 8).unwrap();
+    //     cb.store_small_uint(int1, 7).unwrap();
+    //     let cell1 = cb.build().unwrap();
+    //
+    //     let mut cb = CellBuilder::new();
+    //     let y = [2u8; 32];
+    //     let int2: u8 = 0b1;
+    //     cb.store_raw(x.as_ref(), x.len() as u16 * 8).unwrap();
+    //     cb.store_small_uint(int1, 1).unwrap();
+    //     let cell2 = cb.build().unwrap();
+    //
+    //     let slice1 = OwnedCellSlice::from(cell1);
+    //     let slice2 = OwnedCellSlice::from(cell2);
+    //
+    //     let raw1: RcStackValue = Rc::new(slice1);
+    //     let raw2: RcStackValue = Rc::new(slice2);
+    //
+    //     let hash: Vec<u8> = sha256.finalize().to_vec();
+    //     let int1: RcStackValue = Rc::new(BigInt::from_bytes_be(Sign::Plus, hash.as_ref()));
+    //
+    //     assert_run_vm!(
+    //         "HASHEXT_SHA256",
+    //         [raw raw1, raw raw2, int 2] => [],
+    //         exit_code: 9
+    //     );
+    // }
 }

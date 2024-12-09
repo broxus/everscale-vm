@@ -6,8 +6,6 @@ use everscale_types::cell::{
     Cell, CellBuilder, CellContext, CellFamily, CellSlice, CellType, DynCell, HashBytes, LoadMode,
 };
 use everscale_types::error::Error;
-use everscale_types::models::StdAddr;
-use everscale_types::prelude::Load;
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
 use num_traits::ToPrimitive;
@@ -1188,7 +1186,7 @@ impl Cellops {
                 false => Cell::all_zeros_ref(),
                 true => Cell::all_ones_ref(),
             };
-            let target = unsafe { target.as_slice_unchecked() };
+            let target = unsafe { target.as_slice_allow_pruned() };
 
             let mut slice = cs.apply_allow_special();
             let prefix = slice.longest_common_data_prefix(&target);
