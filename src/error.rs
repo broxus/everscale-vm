@@ -33,6 +33,8 @@ pub enum VmError {
     OutOfGas,
     #[error(transparent)]
     CellError(#[from] Error),
+    #[error("Unknown error. {0}")]
+    Unknown(String),
 }
 
 impl VmError {
@@ -47,6 +49,7 @@ impl VmError {
             Self::InvalidOpcode => VmException::InvalidOpcode,
             Self::InvalidType { .. } => VmException::TypeCheck,
             Self::OutOfGas => VmException::OutOfGas,
+            Self::Unknown(_) => VmException::Unknown,
             Self::CellError(e) => match e {
                 Error::CellUnderflow => VmException::CellUnderflow,
                 Error::CellOverflow => VmException::CellOverflow,
