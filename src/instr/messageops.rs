@@ -1,13 +1,22 @@
 use crate::cont::ControlRegs;
 use crate::error::VmResult;
+use crate::stack::RcStackValue;
+use crate::util::OwnedCellSlice;
 use crate::VmState;
-use everscale_types::cell::{CellBuilder, HashBytes};
-use everscale_types::num::Tokens;
-use everscale_types::prelude::{Cell, CellFamily, Store};
+use everscale_types::cell::{CellBuilder, CellSlice, CellSliceParts, HashBytes, StorageStat};
+use everscale_types::error::Error;
+use everscale_types::models::{
+    BaseMessage, BlockchainConfig, MsgForwardPrices, OwnedRelaxedMessage, RelaxedMsgInfo,
+};
+use everscale_types::num::{SplitDepth, Tokens};
+use everscale_types::prelude::{Cell, CellFamily, Load, Store};
+use everscale_vm::stack::StackValueType;
+use everscale_vm::util::{get_param_from_c7, load_uint_leq};
 use everscale_vm_proc::vm_module;
 use num_bigint::BigInt;
-use num_traits::ToPrimitive;
+use num_traits::{ToPrimitive, Zero};
 use std::fmt::Formatter;
+use std::ops::{Add, AddAssign, Mul, Shr, Sub};
 use std::rc::Rc;
 
 pub struct MessageOps;
@@ -15,7 +24,6 @@ pub struct MessageOps;
 const OUTPUT_ACTIONS_IDX: usize = 5;
 #[vm_module]
 impl MessageOps {
-    //TODO: add new SENDMSG opcode
     #[instr(code = "fb00", fmt = "SENDRAWMSG")]
     fn exec_send_message_raw(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
@@ -32,6 +40,274 @@ impl MessageOps {
         cb.store_reference(cell.as_ref().clone())?;
 
         install_output_actions(&mut st.cr, cb.build()?)
+    }
+
+    #[instr(code = "fb08", fmt = "SENDMSG")]
+    fn exec_send_message(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let mode = ok!(stack.pop_smallint_range(0, 2047));
+        let send = (mode & 1024) == 0;
+        let mode = mode & !1024;
+        if mode >= 256 {
+            vm_bail!(IntegerOverflow) //TODO: Range error
+        }
+
+        let msg_cell: Rc<Cell> = ok!(stack.pop_cell());
+
+        let msg_cell_cloned = Rc::unwrap_or_clone(msg_cell);
+        let owned_slice = OwnedCellSlice::from(msg_cell_cloned.clone());
+
+        let mut cs = owned_slice.apply()?;
+        let relaxed_message: BaseMessage<RelaxedMsgInfo, CellSliceParts> =
+            OwnedRelaxedMessage::load_from(&mut cs)?;
+        let my_addr_value: &RcStackValue = ok!(get_param_from_c7(&st.cr, 8));
+        let my_addr = my_addr_value.as_slice();
+        let Some(my_addr) = my_addr else {
+            vm_bail!(InvalidType {
+                expected: StackValueType::Slice,
+                actual: StackValueType::Null
+            });
+        };
+
+        let mut value: BigInt = BigInt::zero();
+        let mut have_extra_currencies = false;
+        let ihr_disabled;
+
+        let user_fwd_fee: BigInt;
+        let user_ihr_fee: BigInt;
+
+        let mut my_addr_sc = my_addr.apply()?;
+        let my_wc: i8 = ok!(parse_address_workchain(&mut my_addr_sc));
+
+        let (is_masterchain, is_external, dst_bit_len) = match &relaxed_message.info {
+            RelaxedMsgInfo::Int(info) => {
+                have_extra_currencies = !info.value.other.is_empty();
+                ihr_disabled = info.ihr_disabled;
+                user_fwd_fee = BigInt::from(info.fwd_fee.into_inner());
+                user_ihr_fee = BigInt::from(info.ihr_fee.into_inner());
+                (
+                    my_wc == -1 || info.dst.is_masterchain(),
+                    false,
+                    info.dst.bit_len(),
+                )
+            }
+            RelaxedMsgInfo::ExtOut(info) => {
+                ihr_disabled = true;
+                user_fwd_fee = BigInt::zero();
+                user_ihr_fee = BigInt::zero();
+                (
+                    false,
+                    true,
+                    info.dst.as_ref().map(|x| x.bit_len()).unwrap_or(0),
+                )
+            }
+        };
+
+        let message_prices: MsgForwardPrices = ok!(get_message_prices(is_masterchain, &st.cr));
+        let max_cells: usize = 1 << 13;
+
+        let mut storage_stat = StorageStat::with_limit(max_cells);
+        let mut cs = owned_slice.apply()?;
+        cs.skip_first(cs.size_bits(), 0)?;
+        storage_stat.add_slice(&cs);
+
+        match is_external {
+            true if mode & 128 != 0 => {
+                let balances: &[RcStackValue] = ok!(get_balances(&st.cr, 7));
+
+                let Some(balances_value) = balances.first() else {
+                    vm_bail!(InvalidType {
+                        expected: StackValueType::Int,
+                        actual: StackValueType::Null
+                    })
+                };
+
+                let Some(balance) = balances_value.as_int() else {
+                    vm_bail!(InvalidType {
+                        expected: StackValueType::Int,
+                        actual: balances_value.ty()
+                    })
+                };
+
+                value = balance.clone();
+
+                let Some(extra_balance_value) = balances.get(1) else {
+                    vm_bail!(InvalidType {
+                        expected: StackValueType::Int,
+                        actual: StackValueType::Null
+                    })
+                };
+
+                let extra_balances_opt = extra_balance_value.as_cell();
+                have_extra_currencies |= extra_balances_opt.is_some();
+            }
+            true if mode & 64 != 0 => {
+                let balances: &[RcStackValue] = ok!(get_balances(&st.cr, 11));
+                let Some(balances_value) = balances.first() else {
+                    vm_bail!(InvalidType {
+                        expected: StackValueType::Int,
+                        actual: StackValueType::Null
+                    })
+                };
+                let Some(balance) = balances_value.as_int() else {
+                    vm_bail!(InvalidType {
+                        expected: StackValueType::Int,
+                        actual: balances_value.ty()
+                    })
+                };
+                let Some(extra_balance_value) = balances.get(1) else {
+                    vm_bail!(InvalidType {
+                        expected: StackValueType::Int,
+                        actual: StackValueType::Null
+                    })
+                };
+
+                let extra_balances_opt = extra_balance_value.as_cell();
+                have_extra_currencies |= extra_balances_opt.is_some();
+                value.add_assign(balance);
+            }
+            _ => (),
+        };
+
+        let (have_init, mut init_is_ref, init_bit_len, init_refs) = match relaxed_message.init {
+            Some(init) => (
+                true,
+                relaxed_message.layout.unwrap().init_to_cell,
+                init.exact_size_const().bits,
+                init.exact_size_const().refs,
+            ), //TODO: we 100% have layout due to relaxed message parsing
+            None => (false, false, 0, 0),
+        };
+
+        let body_owned_slice = OwnedCellSlice::from(relaxed_message.body);
+        let body_cs = body_owned_slice.apply()?;
+        let body_bit_len = body_cs.size_bits();
+        let body_refs = body_cs.size_refs();
+        let body_is_ref = body_cs.get_bit(0)?;
+
+        let mut fwd_fee = BigInt::zero();
+        let mut ihr_fee = BigInt::zero();
+
+        let mut total_cells = storage_stat.stats().cell_count;
+        let mut total_bits = storage_stat.stats().bit_count;
+
+        let (new_fwd_fee, new_ihr_fee) = compute_fees(
+            ihr_disabled,
+            total_bits,
+            total_cells,
+            &message_prices,
+            &fwd_fee,
+            &ihr_fee,
+            &user_fwd_fee,
+            &user_ihr_fee,
+        );
+        fwd_fee = new_fwd_fee;
+        ihr_fee = new_ihr_fee;
+
+        let my_addr = my_addr.apply()?;
+
+        let bits = msg_root_bits(
+            is_external,
+            have_init,
+            init_is_ref,
+            body_is_ref,
+            init_bit_len,
+            body_bit_len,
+            dst_bit_len,
+            &message_prices,
+            &fwd_fee,
+            &ihr_fee,
+            &my_addr,
+            &value,
+        );
+
+        let refs = msg_root_refs(
+            is_external,
+            have_extra_currencies,
+            have_init,
+            init_is_ref,
+            init_refs,
+            body_is_ref,
+            body_refs,
+        );
+
+        if have_init && !init_is_ref && (bits > 1023 || refs > 4) {
+            init_is_ref = true;
+            total_cells += 1;
+            total_bits += init_bit_len as u64 - 1;
+            let (new_fwd_fee, new_ihr_fee) = compute_fees(
+                ihr_disabled,
+                total_bits,
+                total_cells,
+                &message_prices,
+                &fwd_fee,
+                &ihr_fee,
+                &user_fwd_fee,
+                &user_ihr_fee,
+            );
+            fwd_fee = new_fwd_fee;
+            ihr_fee = new_ihr_fee;
+        };
+
+        let bits = msg_root_bits(
+            is_external,
+            have_init,
+            init_is_ref,
+            body_is_ref,
+            init_bit_len,
+            body_bit_len,
+            dst_bit_len,
+            &message_prices,
+            &fwd_fee,
+            &ihr_fee,
+            &my_addr,
+            &value,
+        );
+
+        let refs = msg_root_refs(
+            is_external,
+            have_extra_currencies,
+            have_init,
+            init_is_ref,
+            init_refs,
+            body_is_ref,
+            body_refs,
+        );
+
+        if !body_is_ref && (bits > 1023 || refs > 4) {
+            //body_is_ref = true;
+            total_cells += 1;
+            total_bits += body_bit_len as u64 - 1;
+            let (new_fwd_fee, new_ihr_fee) = compute_fees(
+                ihr_disabled,
+                total_bits,
+                total_cells,
+                &message_prices,
+                &fwd_fee,
+                &ihr_fee,
+                &user_fwd_fee,
+                &user_ihr_fee,
+            );
+            fwd_fee = new_fwd_fee;
+            ihr_fee = new_ihr_fee;
+        }
+
+        ok!(stack.push_int(fwd_fee + ihr_fee));
+
+        if send {
+            let mut cb = CellBuilder::new();
+            let Some(actions) = st.cr.get_d(OUTPUT_ACTIONS_IDX) else {
+                vm_bail!(ControlRegisterOutOfRange(5))
+            };
+            cb.store_reference(actions)?;
+            cb.store_uint(0x0ec3c86d, 32)?;
+            cb.store_uint(mode as u64, 8)?;
+            cb.store_reference(msg_cell_cloned)?;
+            let cell = cb.build()?;
+            return install_output_actions(&mut st.cr, cell);
+        }
+
+        Ok(0)
     }
 
     #[instr(code = "fbss", range_from = "fb02", range_to = "fb04", fmt = ("{}", s.display()), args(s = ReserveArgs(args)))]
@@ -138,6 +414,155 @@ impl MessageOps {
         cb.store_uint((mode * 2) as u64, 8)?;
         cb.store_u256(&hash_bytes)?;
         install_output_actions(&mut st.cr, cb.build()?)
+    }
+}
+
+fn msg_root_bits(
+    is_external: bool,
+    have_init: bool,
+    init_is_ref: bool,
+    body_is_ref: bool,
+    init_bit_len: u16,
+    body_bit_len: u16,
+    dst_bit_len: u16,
+    message_prices: &MsgForwardPrices,
+    fwd_fee: &BigInt,
+    ihr_fee: &BigInt,
+    my_addr: &CellSlice,
+    value: &BigInt,
+) -> u16 {
+    let mut bits = 0;
+    if is_external {
+        bits = 2 + my_addr.size_bits() + dst_bit_len + 32 + 64;
+    } else {
+        bits = my_addr.size_bits() + dst_bit_len + stored_tokens_len(value) + 1 + 32 + 64;
+        let fwd_fee_first = (fwd_fee * (message_prices.first_frac)) >> 16;
+        bits += stored_tokens_len(&fwd_fee.sub(fwd_fee_first));
+        bits += stored_tokens_len(&ihr_fee);
+    };
+
+    bits += 1;
+
+    if have_init {
+        bits += 1;
+        bits += if init_is_ref { 0 } else { init_bit_len * 2 - 1 };
+    }
+    bits += 1;
+    bits += if body_is_ref { 0 } else { body_bit_len - 1 };
+    bits
+}
+
+fn msg_root_refs(
+    is_external: bool,
+    have_extra_currencies: bool,
+    have_init: bool,
+    init_is_ref: bool,
+    init_refs: u8,
+    body_is_ref: bool,
+    body_refs: u8,
+) -> u8 {
+    let mut refs = match (is_external, have_extra_currencies) {
+        (true, _) => 0,
+        (false, true) => 1,
+        (false, false) => 0,
+    };
+
+    if have_init {
+        refs += if init_is_ref { 1 } else { init_refs };
+    }
+    refs += if body_is_ref { 1 } else { body_refs };
+    refs
+}
+
+fn compute_fees(
+    ihr_disabled: bool,
+    total_bits: u64,
+    total_cells: u64,
+    message_prices: &MsgForwardPrices,
+    fwd_fee: &BigInt,
+    ihr_fee: &BigInt,
+    user_fwd_fee: &BigInt,
+    user_ihr_fee: &BigInt,
+) -> (BigInt, BigInt) {
+    let fwd_fee_short = message_prices.lump_price
+        + (message_prices.bit_price) //TODO: u128?
+            .mul(total_bits)
+            .add((message_prices.cell_price).mul(total_cells))
+            .add(0xffff)
+            .shr(16) as u64;
+
+    let ihr_fee_short = if ihr_disabled {
+        0u64
+    } else {
+        fwd_fee_short
+            .mul(message_prices.ihr_price_factor as u64)
+            .shr(16)
+    };
+    let mut new_fwd_fee = BigInt::from(fwd_fee_short);
+    let mut new_ihr_fee = BigInt::from(ihr_fee_short);
+    new_fwd_fee = std::cmp::max(fwd_fee.clone(), user_fwd_fee.clone());
+    if !ihr_disabled {
+        new_ihr_fee = std::cmp::max(ihr_fee.clone(), user_ihr_fee.clone());
+    }
+
+    (new_fwd_fee, new_ihr_fee)
+}
+
+fn stored_tokens_len(x: &BigInt) -> u16 {
+    let bits = x.bits();
+    4 + ((bits + 7) & !7) as u16
+}
+fn get_balances(regs: &ControlRegs, index: usize) -> VmResult<&'_ [RcStackValue]> {
+    let balance: &RcStackValue = ok!(get_param_from_c7(regs, index));
+    let Some(balances) = balance.as_tuple() else {
+        vm_bail!(InvalidType {
+            expected: StackValueType::Tuple,
+            actual: StackValueType::Null
+        })
+    };
+    Ok(balances)
+}
+
+fn get_message_prices(is_masterchain: bool, regs: &ControlRegs) -> VmResult<MsgForwardPrices> {
+    let config = ok!(get_param_from_c7(regs, 9));
+
+    let Some(config_slice) = config.as_slice() else {
+        vm_bail!(InvalidType {
+            expected: StackValueType::Slice,
+            actual: config.ty()
+        })
+    };
+    let mut config = config_slice.apply()?;
+    let config = BlockchainConfig::load_from(&mut config)?;
+    let Ok(msg_prices) = config.get_msg_forward_prices(is_masterchain) else {
+        vm_bail!(CellError(Error::CellUnderflow))
+    };
+
+    Ok(msg_prices)
+}
+
+pub fn parse_address_workchain(cs: &mut CellSlice) -> VmResult<i8> {
+    let t = cs.load_bit()?;
+    if !t {
+        vm_bail!(IntegerOutOfRange {
+            min: 1,
+            max: 1,
+            actual: t.to_string()
+        })
+    }
+
+    let is_var = cs.load_bit()?;
+    let anycast = cs.load_bit()?;
+    if anycast {
+        let depth = SplitDepth::new(load_uint_leq(cs, 30)? as u8)?;
+        cs.skip_first(depth.into_bit_len(), 0)?;
+    }
+
+    if is_var {
+        cs.skip_first(9, 0)?;
+        Ok(cs.load_u32()? as i8)
+    } else {
+        Ok(cs.load_u8()? as i8)
     }
 }
 

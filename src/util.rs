@@ -1,9 +1,13 @@
 use std::borrow::Cow;
 use std::rc::Rc;
 
+use crate::cont::ControlRegs;
+use crate::error::VmResult;
+use crate::stack::{RcStackValue, Tuple};
 use everscale_types::dict::DictKey;
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
+use everscale_vm::stack::StackValueType;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{One, ToPrimitive, Zero};
 
@@ -233,6 +237,58 @@ pub fn store_int_to_builder(
 
             builder.store_raw(&bytes, bits)
         }
+    }
+}
+
+pub fn get_unpacked_config_tuple(regs: &ControlRegs) -> VmResult<Rc<Tuple>> {
+    let param = ok!(get_param_from_c7(regs, 14));
+    param.clone().into_tuple()
+}
+
+pub fn get_param_from_c7(regs: &ControlRegs, index: usize) -> VmResult<&RcStackValue> {
+    let Some(c7) = &regs.c7 else {
+        vm_bail!(ControlRegisterOutOfRange(7))
+    };
+
+    let Some(control_params) = c7.first() else {
+        vm_bail!(InvalidType {
+            expected: StackValueType::Tuple,
+            actual: StackValueType::Null
+        })
+    };
+
+    let Some(intermediate_value) = control_params.as_tuple_range(0, 255) else {
+        vm_bail!(InvalidType {
+            expected: StackValueType::Tuple,
+            actual: control_params.ty()
+        })
+    };
+
+    let param: &RcStackValue = match intermediate_value.get(index) {
+        Some(param) => param,
+        None => vm_bail!(ControlRegisterOutOfRange(index)),
+    };
+
+    Ok(param)
+}
+
+pub fn load_uint_leq(cs: &mut CellSlice, upper_bound: u32) -> Result<u64, Error> {
+    let leading_zeros = if upper_bound == 0 {
+        32
+    } else {
+        upper_bound.leading_zeros()
+    };
+    let bits = 32 - leading_zeros;
+    if bits > 32 || bits > cs.size_bits() as u32 {
+        Err(Error::IntOverflow)
+    } else {
+        let result = cs.get_uint(cs.offset_bits(), bits as u16)?;
+        if result > upper_bound as u64 {
+            return Err(Error::IntOverflow);
+        };
+
+        cs.skip_first(bits as u16, 0)?;
+        Ok(result)
     }
 }
 

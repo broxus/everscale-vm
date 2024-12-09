@@ -7,7 +7,9 @@ use everscale_types::prelude::{Cell, CellBuilder, CellFamily, Load};
 use everscale_vm::cont::ControlRegs;
 use everscale_vm::instr::dictops::check_key_sign;
 use everscale_vm::stack::{StackValue, StackValueType};
-use everscale_vm::util::{load_int_from_slice, store_int_to_builder};
+use everscale_vm::util::{
+    get_param_from_c7, get_unpacked_config_tuple, load_int_from_slice, store_int_to_builder,
+};
 use everscale_vm::VmState;
 use everscale_vm_proc::vm_module;
 use num_bigint::BigInt;
@@ -83,7 +85,7 @@ impl ConfigOps {
 
         let stack = Rc::make_mut(&mut st.stack);
 
-        let param: &RcStackValue = ok!(get_param(&mut st.cr, 13));
+        let param: &RcStackValue = ok!(get_param_from_c7(&mut st.cr, 13));
 
         let Some(t2) = param.as_tuple_range(0, 255) else {
             vm_bail!(InvalidType {
@@ -105,7 +107,7 @@ impl ConfigOps {
     fn exec_get_global_id(st: &mut VmState) -> VmResult<i32> {
         //TODO: add global id as separate parameter
 
-        let param: &RcStackValue = ok!(get_param(&mut st.cr, 13));
+        let param: &RcStackValue = ok!(get_param_from_c7(&mut st.cr, 13));
         let dict = param.as_cell();
         if dict.is_none() {
             vm_bail!(InvalidType {
@@ -508,39 +510,7 @@ fn set_global_common(
 }
 
 fn get_and_push_param(regs: &mut ControlRegs, stack: &mut Stack, index: usize) -> VmResult<i32> {
-    let param = ok!(get_param(regs, index));
+    let param = ok!(get_param_from_c7(regs, index));
     ok!(stack.push_raw(param.clone()));
     Ok(0)
-}
-
-fn get_unpacked_config_tuple(regs: &mut ControlRegs) -> VmResult<Rc<Tuple>> {
-    let param = ok!(get_param(regs, 14));
-    param.clone().into_tuple()
-}
-
-fn get_param(regs: &mut ControlRegs, index: usize) -> VmResult<&RcStackValue> {
-    let Some(c7) = &regs.c7 else {
-        vm_bail!(ControlRegisterOutOfRange(7))
-    };
-
-    let Some(control_params) = c7.first() else {
-        vm_bail!(InvalidType {
-            expected: StackValueType::Tuple,
-            actual: StackValueType::Null
-        })
-    };
-
-    let Some(intermediate_value) = control_params.as_tuple_range(0, 255) else {
-        vm_bail!(InvalidType {
-            expected: StackValueType::Tuple,
-            actual: control_params.ty()
-        })
-    };
-
-    let param: &RcStackValue = match intermediate_value.get(index) {
-        Some(param) => param,
-        None => vm_bail!(ControlRegisterOutOfRange(index)),
-    };
-
-    Ok(param)
 }

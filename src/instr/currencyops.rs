@@ -6,7 +6,9 @@ use everscale_types::num::SplitDepth;
 use everscale_types::prelude::CellContext;
 use everscale_vm::error::VmResult;
 use everscale_vm::stack::Tuple;
-use everscale_vm::util::{load_var_int_from_slice, store_varint_to_builder, OwnedCellSlice};
+use everscale_vm::util::{
+    load_uint_leq, load_var_int_from_slice, store_varint_to_builder, OwnedCellSlice,
+};
 use everscale_vm::VmState;
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
@@ -449,26 +451,6 @@ fn parse_maybe_anycast<'a>(cs: &mut CellSlice<'a>) -> Result<Option<CellSlice<'a
     cs.skip_first(depth.into_bit_len(), 0)?;
 
     Ok(Some(prefix))
-}
-
-fn load_uint_leq(cs: &mut CellSlice, upper_bound: u32) -> Result<u64, Error> {
-    let leading_zeros = if upper_bound == 0 {
-        32
-    } else {
-        upper_bound.leading_zeros()
-    };
-    let bits = 32 - leading_zeros;
-    if bits > 32 || bits > cs.size_bits() as u32 {
-        Err(Error::IntOverflow)
-    } else {
-        let result = cs.get_uint(cs.offset_bits(), bits as u16)?;
-        if result > upper_bound as u64 {
-            return Err(Error::IntOverflow);
-        };
-
-        cs.skip_first(bits as u16, 0)?;
-        Ok(result)
-    }
 }
 
 pub struct VarIntegerArgs {
