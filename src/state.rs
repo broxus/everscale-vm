@@ -40,19 +40,17 @@ pub struct VmStateBuilder {
 pub struct GasParameters {
     pub gas_max: u64,
     pub gas_limit: u64,
-    pub gas_limit_max: u64,
     pub gas_credit: u64,
     pub gas_remaining: u64,
     pub gas_base: u64,
 }
 
 impl GasParameters {
-    pub fn new(gas_max: u64, gas_limit: u64, gas_limit_max: u64, gas_credit: u64) -> Self {
+    pub fn new(gas_max: u64, gas_limit: u64, gas_credit: u64) -> Self {
         let remaining = gas_limit + gas_credit;
         Self {
             gas_max,
             gas_limit,
-            gas_limit_max,
             gas_credit,
             gas_remaining: remaining,
             gas_base: remaining,
