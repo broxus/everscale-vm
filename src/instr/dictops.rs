@@ -149,13 +149,8 @@ impl Dictops {
             key_slice.apply()?
         };
 
-        let cs = everscale_types::dict::dict_get_owned(
-            dict.as_deref(),
-            n,
-            key,
-            &mut Cell::empty_context(),
-        )?
-        .map(OwnedCellSlice::from);
+        let cs = everscale_types::dict::dict_get_owned(dict.as_deref(), n, key, st.gas.context())?
+            .map(OwnedCellSlice::from);
 
         if s.is_ref() {
             match cs {
@@ -250,7 +245,7 @@ impl Dictops {
             n,
             value_ref,
             mode,
-            &mut Cell::empty_context(),
+            st.gas.context(),
         );
 
         ok!(stack.push_opt(dict));
@@ -342,7 +337,7 @@ impl Dictops {
             n,
             value_ref,
             mode,
-            &mut Cell::empty_context(),
+            st.gas.context(),
         )?;
         ok!(stack.push_opt(dict));
 
@@ -393,7 +388,7 @@ impl Dictops {
             &mut key,
             n,
             true,
-            &mut Cell::empty_context(),
+            st.gas.context(),
         )?;
         ok!(stack.push_opt(dict));
         ok!(stack.push_bool(result.is_some()));
@@ -437,7 +432,7 @@ impl Dictops {
             &mut key,
             n,
             false,
-            &mut Cell::empty_context(),
+            st.gas.context(),
         )?;
 
         match dict {
@@ -500,13 +495,8 @@ impl Dictops {
             Err(e) => vm_bail!(CellError(e)),
         };
 
-        let cs = everscale_types::dict::dict_get_owned(
-            dict.as_deref(),
-            n,
-            key,
-            &mut Cell::empty_context(),
-        )?
-        .map(OwnedCellSlice::from);
+        let cs = everscale_types::dict::dict_get_owned(dict.as_deref(), n, key, st.gas.context())?
+            .map(OwnedCellSlice::from);
         match cs {
             None => ok!(stack.push_null()),
             Some(slice) => {
@@ -555,7 +545,7 @@ impl Dictops {
                 n,
                 &cell,
                 SetMode::Set,
-                &mut Cell::empty_context(),
+                st.gas.context(),
             )
             .map(|res| res.1)?,
             None => everscale_types::dict::dict_remove_owned(
@@ -563,7 +553,7 @@ impl Dictops {
                 &mut key,
                 n,
                 false,
-                &mut Cell::empty_context(),
+                st.gas.context(),
             )?,
         };
         ok!(stack.push_opt(dict));
@@ -603,7 +593,7 @@ impl Dictops {
             n,
             &new_value.apply()?,
             mode,
-            &mut Cell::empty_context(),
+            st.gas.context(),
         )?;
         ok!(stack.push_opt(dict));
         ok!(stack.push_bool(result));
@@ -624,7 +614,7 @@ impl Dictops {
             &mut key_slice,
             n,
             false,
-            &mut Cell::empty_context(),
+            st.gas.context(),
         )?;
         ok!(stack.push_opt(dict));
         ok!(stack.push_bool(res.is_some()));
@@ -662,7 +652,7 @@ impl Dictops {
                 n,
                 bound,
                 s.is_signed(),
-                &mut Cell::empty_context(),
+                st.gas.context(),
             )?
         } else {
             everscale_types::dict::dict_find_bound_owned(
@@ -670,7 +660,7 @@ impl Dictops {
                 n,
                 bound,
                 s.is_signed(),
-                &mut Cell::empty_context(),
+                st.gas.context(),
             )?
         };
 
@@ -739,7 +729,7 @@ impl Dictops {
                 towards,
                 s.is_eq(),
                 s.is_signed(),
-                &mut Cell::empty_context(),
+                st.gas.context(),
             )?;
 
             match nearest {
@@ -767,14 +757,14 @@ impl Dictops {
                     towards,
                     s.is_eq(),
                     s.is_signed(),
-                    &mut Cell::empty_context(),
+                    st.gas.context(),
                 )?,
                 Err(Error::IntOverflow) => everscale_types::dict::dict_find_bound_owned(
                     dict_deref.as_ref(),
                     n,
                     towards,
                     s.is_signed(),
-                    &mut Cell::empty_context(),
+                    st.gas.context(),
                 )?,
                 Err(e) => vm_bail!(CellError(e)),
             };
@@ -824,7 +814,7 @@ impl Dictops {
             dict_deref.as_ref(),
             32,
             &mut prefix,
-            &mut Cell::empty_context(),
+            st.gas.context(),
         )?;
 
         ok!(stack.push_opt(subdict));
@@ -853,12 +843,8 @@ impl Dictops {
 
         let dict = dict.as_deref();
 
-        let entry = everscale_types::dict::dict_get_owned(
-            dict,
-            n as u16,
-            key_slice,
-            &mut Cell::empty_context(),
-        )?;
+        let entry =
+            everscale_types::dict::dict_get_owned(dict, n as u16, key_slice, st.gas.context())?;
 
         if let Some(entry) = entry {
             let cont = Rc::new(OrdCont::simple(entry.into(), st.cp.id()));

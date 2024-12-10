@@ -3,7 +3,7 @@ use crate::stack::{RcStackValue, Stack, Tuple};
 use crate::state::GasConsumer;
 use crate::util::OwnedCellSlice;
 use everscale_types::models::BlockchainConfig;
-use everscale_types::prelude::{Cell, CellBuilder, CellFamily, Load};
+use everscale_types::prelude::{Cell, CellBuilder, Load};
 use everscale_vm::cont::ControlRegs;
 use everscale_vm::instr::dictops::check_key_sign;
 use everscale_vm::stack::{StackValue, StackValueType};
@@ -54,9 +54,8 @@ impl ConfigOps {
         let key = builder.as_data_slice();
 
         let dict = dict.as_deref();
-        let result =
-            everscale_types::dict::dict_get_owned(dict, kbl, key, &mut Cell::empty_context())?
-                .map(OwnedCellSlice::from);
+        let result = everscale_types::dict::dict_get_owned(dict, kbl, key, st.gas.context())?
+            .map(OwnedCellSlice::from);
 
         let ref_cell = match result {
             Some(slice) => {
@@ -85,7 +84,7 @@ impl ConfigOps {
 
         let stack = Rc::make_mut(&mut st.stack);
 
-        let param: &RcStackValue = ok!(get_param_from_c7(&mut st.cr, 13));
+        let param: &RcStackValue = ok!(get_param_from_c7(&st.cr, 13));
 
         let Some(t2) = param.as_tuple_range(0, 255) else {
             vm_bail!(InvalidType {
@@ -107,7 +106,7 @@ impl ConfigOps {
     fn exec_get_global_id(st: &mut VmState) -> VmResult<i32> {
         //TODO: add global id as separate parameter
 
-        let param: &RcStackValue = ok!(get_param_from_c7(&mut st.cr, 13));
+        let param: &RcStackValue = ok!(get_param_from_c7(&st.cr, 13));
         let dict = param.as_cell();
         if dict.is_none() {
             vm_bail!(InvalidType {
@@ -121,9 +120,8 @@ impl ConfigOps {
         store_int_to_builder(&BigInt::from(19), kbl, true, &mut builder)?;
         let key = builder.as_data_slice();
 
-        let result =
-            everscale_types::dict::dict_get_owned(dict, kbl, key, &mut Cell::empty_context())?
-                .map(OwnedCellSlice::from);
+        let result = everscale_types::dict::dict_get_owned(dict, kbl, key, st.gas.context())?
+            .map(OwnedCellSlice::from);
 
         let ref_cell = match result {
             Some(slice) => {
@@ -156,7 +154,7 @@ impl ConfigOps {
         let stack = Rc::make_mut(&mut st.stack);
         let is_masterchain = ok!(stack.pop_bool());
         let gas = ok!(stack.pop_long_range(0, u64::MAX));
-        let unpacked_config: Rc<Tuple> = ok!(get_unpacked_config_tuple(&mut st.cr));
+        let unpacked_config: Rc<Tuple> = ok!(get_unpacked_config_tuple(&st.cr));
 
         let index = if is_masterchain { 2 } else { 3 };
 
@@ -196,7 +194,7 @@ impl ConfigOps {
         let bits: u64 = ok!(stack.pop_long_range(0, u64::MAX));
         let cells: u64 = ok!(stack.pop_long_range(0, u64::MAX));
 
-        let unpacked_config: Rc<Tuple> = ok!(get_unpacked_config_tuple(&mut st.cr));
+        let unpacked_config: Rc<Tuple> = ok!(get_unpacked_config_tuple(&st.cr));
 
         let Some(value) = unpacked_config.first() else {
             vm_bail!(InvalidType {
@@ -239,7 +237,7 @@ impl ConfigOps {
         let bits: u64 = ok!(stack.pop_long_range(0, u64::MAX));
         let cells: u64 = ok!(stack.pop_long_range(0, u64::MAX));
 
-        let unpacked_config: Rc<Tuple> = ok!(get_unpacked_config_tuple(&mut st.cr));
+        let unpacked_config: Rc<Tuple> = ok!(get_unpacked_config_tuple(&st.cr));
         let index = if is_masterchain { 4 } else { 5 };
 
         let Some(value) = unpacked_config.get(index as usize) else {
@@ -288,7 +286,7 @@ impl ConfigOps {
             })
         }
 
-        let unpacked_config: Rc<Tuple> = ok!(get_unpacked_config_tuple(&mut st.cr));
+        let unpacked_config: Rc<Tuple> = ok!(get_unpacked_config_tuple(&st.cr));
         let index = if is_masterchain { 4 } else { 5 };
 
         let Some(value) = unpacked_config.get(index as usize) else {
@@ -338,7 +336,7 @@ impl ConfigOps {
         let stack = Rc::make_mut(&mut st.stack);
         let is_masterchain = ok!(stack.pop_bool());
         let gas: u64 = ok!(stack.pop_long_range(0, u64::MAX));
-        let unpacked_config: Rc<Tuple> = ok!(get_unpacked_config_tuple(&mut st.cr));
+        let unpacked_config: Rc<Tuple> = ok!(get_unpacked_config_tuple(&st.cr));
 
         let index = if is_masterchain { 2 } else { 3 };
 
@@ -372,7 +370,7 @@ impl ConfigOps {
         let bits: u64 = ok!(stack.pop_long_range(0, u64::MAX));
         let cells: u64 = ok!(stack.pop_long_range(0, u64::MAX));
 
-        let unpacked_config: Rc<Tuple> = ok!(get_unpacked_config_tuple(&mut st.cr));
+        let unpacked_config: Rc<Tuple> = ok!(get_unpacked_config_tuple(&st.cr));
         let index = if is_masterchain { 4 } else { 5 };
 
         let Some(value) = unpacked_config.get(index as usize) else {

@@ -285,8 +285,6 @@ pub fn get_data_slice(stack_value_opt: Option<&RcStackValue>) -> VmResult<CellSl
     }
 }
 
-pub struct HashArgsExt(u32);
-
 pub struct DisplayHashArgsExt {
     p: bool,
     r: bool,
