@@ -17,23 +17,25 @@ use crate::dispatch::{DispatchTable, Opcodes};
 use crate::instr::compops::CompOps;
 use crate::instr::currencyops::CurrencyOps;
 use crate::instr::hashops::Hashops;
+use crate::instr::miscops::Miscops;
 use crate::instr::shiftops::Shiftops;
 
 mod arithops;
 mod basicgasops;
 mod cellops;
+mod compops;
 mod configops;
 mod contops;
 mod currencyops;
 mod debugops;
 mod dictops;
+mod hashops;
 mod messageops;
+mod miscops;
 mod randops;
+mod shiftops;
 mod stackops;
 mod tupleops;
-mod compops;
-mod shiftops;
-mod hashops;
 
 pub fn codepage(n: u16) -> Option<&'static DispatchTable> {
     match n {
@@ -60,6 +62,7 @@ pub fn codepage0() -> &'static DispatchTable {
         MessageOps.init(&mut cp)?;
         Hashops.init(&mut cp)?;
         CurrencyOps.init(&mut cp)?;
+        Miscops.init(&mut cp)?;
         Ok(cp.build())
     }
 
