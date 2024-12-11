@@ -488,22 +488,22 @@ fn compute_fees(
             .shr(16)) as u64;
 
     // Calculate new forward fee
-    fwd_fee.assign(fwd_fee_short);
+    *fwd_fee = BigInt::from(fwd_fee_short);
     if user_fwd_fee > fwd_fee {
-        fwd_fee.assign(user_fwd_fee);
+        *fwd_fee = user_fwd_fee.clone();
     }
 
     // Calculate new IHR fee only if not disabled
     if ihr_disabled {
-        ihr_fee.assign(0);
+        *ihr_fee = BigInt::zero();
     } else {
         let ihr_fee_short = fwd_fee_short
             .mul(message_prices.ihr_price_factor as u64)
             .shr(16);
-        ihr_fee.assign(ihr_fee_short);
+        *ihr_fee = BigInt::from(ihr_fee_short);
 
         if user_ihr_fee > ihr_fee {
-            ihr_fee.assign(user_ihr_fee);
+            *ihr_fee = user_ihr_fee.clone();
         }
     }
 }
