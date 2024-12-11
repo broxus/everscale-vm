@@ -40,7 +40,6 @@ pub struct VmStateBuilder {
 pub struct GasParameters {
     pub gas_max: u64,
     pub gas_limit: u64,
-    pub gas_limit_max: u64,
     pub gas_credit: u64,
     pub gas_remaining: u64,
     pub gas_base: u64,
