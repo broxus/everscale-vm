@@ -191,18 +191,16 @@ impl MessageOps {
         let mut total_cells = storage_stat.stats().cell_count;
         let mut total_bits = storage_stat.stats().bit_count;
 
-        let (new_fwd_fee, new_ihr_fee) = compute_fees(
+        compute_fees(
             ihr_disabled,
             total_bits,
             total_cells,
             &message_prices,
-            &fwd_fee,
-            &ihr_fee,
+            &mut fwd_fee,
+            &mut ihr_fee,
             &user_fwd_fee,
             &user_ihr_fee,
         );
-        fwd_fee = new_fwd_fee;
-        ihr_fee = new_ihr_fee;
 
         let my_addr = my_addr.apply()?;
 
@@ -235,18 +233,17 @@ impl MessageOps {
             init_is_ref = true;
             total_cells += 1;
             total_bits += init_bit_len as u64 - 1;
-            let (new_fwd_fee, new_ihr_fee) = compute_fees(
+
+            compute_fees(
                 ihr_disabled,
                 total_bits,
                 total_cells,
                 &message_prices,
-                &fwd_fee,
-                &ihr_fee,
+                &mut fwd_fee,
+                &mut ihr_fee,
                 &user_fwd_fee,
                 &user_ihr_fee,
             );
-            fwd_fee = new_fwd_fee;
-            ihr_fee = new_ihr_fee;
         };
 
         let bits = msg_root_bits(
@@ -278,18 +275,16 @@ impl MessageOps {
             //body_is_ref = true;
             total_cells += 1;
             total_bits += body_bit_len as u64 - 1;
-            let (new_fwd_fee, new_ihr_fee) = compute_fees(
+            compute_fees(
                 ihr_disabled,
                 total_bits,
                 total_cells,
                 &message_prices,
-                &fwd_fee,
-                &ihr_fee,
+                &mut fwd_fee,
+                &mut ihr_fee,
                 &user_fwd_fee,
                 &user_ihr_fee,
             );
-            fwd_fee = new_fwd_fee;
-            ihr_fee = new_ihr_fee;
         }
 
         ok!(stack.push_int(fwd_fee + ihr_fee));
@@ -479,33 +474,38 @@ fn compute_fees(
     total_bits: u64,
     total_cells: u64,
     message_prices: &MsgForwardPrices,
-    fwd_fee: &BigInt,
-    ihr_fee: &BigInt,
+    fwd_fee: &mut BigInt,
+    ihr_fee: &mut BigInt,
     user_fwd_fee: &BigInt,
     user_ihr_fee: &BigInt,
-) -> (BigInt, BigInt) {
+) {
     let fwd_fee_short = message_prices.lump_price
-        + (message_prices.bit_price) //TODO: u128?
+        + (message_prices
+            .bit_price
             .mul(total_bits)
-            .add((message_prices.cell_price).mul(total_cells))
+            .add(message_prices.cell_price.mul(total_cells))
             .add(0xffff)
-            .shr(16) as u64;
+            .shr(16)) as u64;
 
-    let ihr_fee_short = if ihr_disabled {
-        0u64
-    } else {
-        fwd_fee_short
-            .mul(message_prices.ihr_price_factor as u64)
-            .shr(16)
-    };
-    let mut new_fwd_fee = BigInt::from(fwd_fee_short);
-    let mut new_ihr_fee = BigInt::from(ihr_fee_short);
-    new_fwd_fee = std::cmp::max(fwd_fee.clone(), user_fwd_fee.clone());
-    if !ihr_disabled {
-        new_ihr_fee = std::cmp::max(ihr_fee.clone(), user_ihr_fee.clone());
+    // Calculate new forward fee
+    fwd_fee.assign(fwd_fee_short);
+    if user_fwd_fee > fwd_fee {
+        fwd_fee.assign(user_fwd_fee);
     }
 
-    (new_fwd_fee, new_ihr_fee)
+    // Calculate new IHR fee only if not disabled
+    if ihr_disabled {
+        ihr_fee.assign(0);
+    } else {
+        let ihr_fee_short = fwd_fee_short
+            .mul(message_prices.ihr_price_factor as u64)
+            .shr(16);
+        ihr_fee.assign(ihr_fee_short);
+
+        if user_ihr_fee > ihr_fee {
+            ihr_fee.assign(user_ihr_fee);
+        }
+    }
 }
 
 fn stored_tokens_len(x: &BigInt) -> u16 {
