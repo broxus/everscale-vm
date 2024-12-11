@@ -763,6 +763,59 @@ impl Contops {
         ok!(stack.push_raw(cont.into_stack_value()));
         Ok(0)
     }
+    #[instr(code = "ede3xx", fmt = "SETCONTCTRMANY {x}", args(x = args & 0xff))]
+    fn exec_setcont_ctr_many(st: &mut VmState, x: u32) -> VmResult<i32> {
+        if x & (1 << 6) != 0 {
+            vm_bail!(ControlRegisterOutOfRange(6));
+        }
+        let stack = Rc::make_mut(&mut st.stack);
+        let mut cont = ok!(stack.pop_cont());
+
+        for i in 1..=8 {
+            if x & (1 << i) != 0 {
+                let Some(st_value) = st.cr.get_as_stack_value(i) else {
+                    //TODO: other error
+                    vm_bail!(InvalidType {
+                        expected: StackValueType::Cont,
+                        actual: StackValueType::Null
+                    })
+                };
+                ok!(force_cdata(&mut cont).save.define(i, st_value));
+            }
+        }
+
+        ok!(stack.push_raw(cont.into_stack_value()));
+
+        Ok(0)
+    }
+
+    #[instr(code = "ede4", fmt = "SETCONTCTRMANYX")]
+    fn exec_setcont_ctr_many_var(st: &mut VmState) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let mask = ok!(stack.pop_smallint_range(0, 255));
+        if mask & (1 << 6) != 0 {
+            vm_bail!(ControlRegisterOutOfRange(6))
+        }
+
+        let mut cont = ok!(stack.pop_cont());
+
+        for i in 1..=8 {
+            if mask & (1 << i) != 0 {
+                let Some(st_value) = st.cr.get_as_stack_value(i) else {
+                    //TODO: other error
+                    vm_bail!(InvalidType {
+                        expected: StackValueType::Cont,
+                        actual: StackValueType::Null
+                    })
+                };
+                ok!(force_cdata(&mut cont).save.define(i, st_value));
+            }
+        }
+
+        ok!(stack.push_raw(cont.into_stack_value()));
+
+        Ok(0)
+    }
 
     #[instr(code = "edf0", fmt = "BOOLAND", args(op = Compose::And))]
     #[instr(code = "edf1", fmt = "BOOLOR", args(op = Compose::Or))]
