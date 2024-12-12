@@ -299,7 +299,7 @@ impl Cellops {
     }
 
     #[instr(
-        code = "cf0$1sss#n",
+        code = "cf0$1sss#nn",
         fmt = ("{} {n}", s.display()),
         args(s = StoreIntArgs(args >> 8), n = (args & 0xff) + 1),
     )]

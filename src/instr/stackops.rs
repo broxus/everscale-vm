@@ -266,7 +266,7 @@ impl Stackops {
     #[instr(code = "5fij", range_from = "5f10", fmt = "BLKPUSH {i},{j}")]
     fn exec_blkpush(st: &mut VmState, mut i: u32, j: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        while i > 1 {
+        while i >= 1 {
             ok!(stack.push_nth(j as _));
             i -= 1;
         }
