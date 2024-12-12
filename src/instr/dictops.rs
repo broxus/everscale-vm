@@ -176,11 +176,11 @@ impl Dictops {
     }
 
     #[instr(code = "f4ss", range_from = "f412", range_to = "f418", fmt = ("{}", s.display()), args(s = DictOpArgs::new("SET", args), mode = SetMode::Set))]
-    #[instr(code = "f4ss", range_from = "f432", range_to = "f438", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("SET", args), mode = SetMode::Set))]
+    #[instr(code = "f4ss", range_from = "f432", range_to = "f438", fmt = ("{}", s.display()), args(s = DictOpArgs::new("ADD", args), mode = SetMode::Add))]
     #[instr(code = "f4ss", range_from = "f422", range_to = "f428", fmt = ("{}", s.display()), args(s = DictOpArgs::new("REPLACE", args), mode = SetMode::Replace))]
-    #[instr(code = "f4ss", range_from = "f449", range_to = "f44c", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("REPLACE", args), mode = SetMode::Replace))]
-    #[instr(code = "f4ss", range_from = "f441", range_to = "f444", fmt = ("{}", s.display()), args(s = DictOpArgs::new("ADD", args), mode = SetMode::Add))]
+    #[instr(code = "f4ss", range_from = "f441", range_to = "f444", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("SET", args), mode = SetMode::Set))]
     #[instr(code = "f4ss", range_from = "f451", range_to = "f454", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("ADD", args), mode = SetMode::Add))]
+    #[instr(code = "f4ss", range_from = "f449", range_to = "f44c", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("REPLACE", args), mode = SetMode::Replace))]
     fn exec_dict_set(st: &mut VmState, s: DictOpArgs, mode: SetMode) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
@@ -933,7 +933,7 @@ impl DictOpArgs {
     pub fn new_bld(name: &str, args: u32) -> Self {
         Self {
             name: name.to_string(),
-            args,
+            args: args << 1,
             is_bld: true,
         }
     }

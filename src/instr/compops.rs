@@ -48,7 +48,7 @@ impl CompOps {
 
     #[instr(code = "c0yy", fmt = "EQINT {y}", args(y = args as i8, mode = 0x878, quiet = false))]
     #[instr(code = "c1yy", fmt = "LESSINT {y}", args(y = args as i8, mode = 0x887, quiet = false))]
-    #[instr(code = "c2yy", fmt = "GTINT {y}", args(y = args as i8, mode = 0x778, quiet = false))]
+    #[instr(code = "c2yy", fmt = "GTINT {y}", args(y = args as i8, mode = 0x788, quiet = false))]
     #[instr(code = "c3yy", fmt = "NEQINT {y}", args(y = args as i8, mode = 0x787, quiet = false))]
     #[instr(code = "b7c0yy", fmt = "QEQINT {y}", args(y = args as i8, mode = 0x878, quiet = true))]
     #[instr(code = "b7c1yy", fmt = "QLESSINT {y}", args(y = args as i8, mode = 0x887, quiet = true))]
