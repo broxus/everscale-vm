@@ -90,7 +90,7 @@ impl Dictops {
         let mut owned_cs = stack.pop_cs()?;
         let range = owned_cs.range();
         let is_empty = range.is_empty();
-        let cs = owned_cs.apply()?;
+        let mut cs = owned_cs.apply()?;
 
         if is_empty {
             if !quiet {
@@ -108,17 +108,10 @@ impl Dictops {
             ok!(stack.push_opt(cell_opt));
 
             if !preload {
-                let prefix = cs.get_prefix(1, range.size_refs());
-                let subslice = cs.strip_data_prefix(&prefix);
-
-                match subslice {
-                    Some(ss) => {
-                        let new_range = ss.range();
-                        Rc::make_mut(&mut owned_cs).set_range(new_range);
-                        ok!(stack.push_raw(owned_cs))
-                    }
-                    None => ok!(stack.push_raw(owned_cs)),
-                }
+                cs.skip_first(1, range.size_refs())?;
+                let new_range = cs.range();
+                Rc::make_mut(&mut owned_cs).set_range(new_range);
+                ok!(stack.push_raw(owned_cs))
             }
         }
 
