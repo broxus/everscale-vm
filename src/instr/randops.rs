@@ -1,44 +1,43 @@
-use crate::cont::ControlRegs;
-use crate::error::VmResult;
-use crate::stack::{RcStackValue, StackValueType};
-use crate::state::GasConsumer;
-use crate::VmState;
-use everscale_types::cell::HashBytes;
-use everscale_vm::stack::{Stack, Tuple};
-use everscale_vm_proc::vm_module;
-use num_bigint::{BigInt, Sign};
-use num_traits::ToBytes;
-use sha2::Digest;
-use std::ops::ShrAssign;
 use std::rc::Rc;
 
+use everscale_types::cell::HashBytes;
+use everscale_vm::stack::Stack;
+use everscale_vm_proc::vm_module;
+use num_bigint::{BigInt, Sign};
+use sha2::Digest;
+
+use crate::cont::ControlRegs;
+use crate::error::VmResult;
+use crate::stack::StackValueType;
+use crate::state::{GasConsumer, VmState};
+
 pub struct RandOps;
-const RANDCEED_ID: usize = 6;
 
 #[vm_module]
 impl RandOps {
     #[instr(code = "f810", fmt = "RANDU256")]
     fn exec_randu256(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let random_bytes: HashBytes = ok!(generate_random_u256(&mut st.cr, &mut st.gas));
+        let random_bytes = ok!(generate_random_u256(&mut st.cr, &mut st.gas));
         let random = BigInt::from_bytes_be(Sign::Plus, random_bytes.as_ref());
         ok!(stack.push_int(random));
         Ok(0)
     }
+
     #[instr(code = "f811", fmt = "RAND")]
     fn exec_rand_int(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let int: Rc<BigInt> = ok!(stack.pop_int());
-        let random_bytes: HashBytes = ok!(generate_random_u256(&mut st.cr, &mut st.gas));
+        let mut int = ok!(stack.pop_int());
+        let random_bytes = ok!(generate_random_u256(&mut st.cr, &mut st.gas));
         let random = BigInt::from_bytes_be(Sign::Plus, random_bytes.as_ref());
 
-        let Some(mut temp) = int.checked_mul(&random) else {
-            vm_bail!(IntegerOverflow)
-        };
+        {
+            let int = Rc::make_mut(&mut int);
+            *int *= random;
+            *int >>= 256;
+        }
 
-        temp.shr_assign(256);
-        ok!(stack.push_int(temp));
-
+        ok!(stack.push_raw(int));
         Ok(0)
     }
 
@@ -46,9 +45,9 @@ impl RandOps {
     #[instr(code = "f815", fmt = "ADDRAND", args(mix = true))]
     fn exec_set_rand(st: &mut VmState, mix: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let mut int: Rc<BigInt> = ok!(stack.pop_int());
 
-        if int.bits() > 256 {
+        let mut int = ok!(stack.pop_int());
+        if int.sign() == Sign::Minus || int.bits() > 256 {
             vm_bail!(IntegerOutOfRange {
                 min: 0,
                 max: 256,
@@ -60,183 +59,209 @@ impl RandOps {
             vm_bail!(ControlRegisterOutOfRange(7))
         };
 
-        let control_params_opt = c7.first();
-        let Some(control_params) = control_params_opt else {
+        let Some(t1v) = c7.first().cloned() else {
             vm_bail!(InvalidType {
                 expected: StackValueType::Tuple,
                 actual: StackValueType::Null
             })
         };
 
-        let intermediate_tuple_opt = control_params.as_tuple_range(0, 255);
-        let Some(intermediate_value) = intermediate_tuple_opt else {
+        let Some(t1) = t1v.as_tuple_range(0, 255) else {
             vm_bail!(InvalidType {
                 expected: StackValueType::Tuple,
-                actual: control_params.ty()
+                actual: t1v.ty()
             })
         };
 
         if mix {
-            let value: Option<&RcStackValue> = intermediate_value.get(RANDCEED_ID);
-
-            let ceed: Rc<BigInt> = match value {
-                Some(value) => ok!(value.clone().into_int()),
+            let bytes = match t1.get(RANDSEED_IDX) {
+                Some(value) => {
+                    let value = ok!(value.clone().into_int());
+                    ok!(to_bytes_be(&value))
+                }
                 None => vm_bail!(InvalidType {
                     expected: StackValueType::Int,
                     actual: StackValueType::Null
                 }),
             };
 
-            let mut data = [0u8; 64];
-            data[0..32].copy_from_slice(&ceed.to_be_bytes());
-            data[32..64].copy_from_slice(&int.to_be_bytes());
+            let mut buffer = [0u8; 64];
+            buffer[32 - bytes.len()..32].copy_from_slice(&bytes);
+            drop(bytes);
 
-            let mut hasher = sha2::Sha256::new();
-            hasher.update(data);
-            let hash = hasher.finalize();
-            int = Rc::new(BigInt::from_bytes_be(Sign::Plus, &hash));
+            let bytes = ok!(to_bytes_be(&int));
+            buffer[64 - bytes.len()..64].copy_from_slice(&bytes);
+            drop(bytes);
+
+            let new_seed = sha2::Sha256::digest(buffer);
+            int = Rc::new(BigInt::from_bytes_be(Sign::Plus, &new_seed));
         }
 
-        //TODO: should clean c7 first
-        let mut new_intermediate = Tuple::from(intermediate_value);
-        let updated = if RANDCEED_ID < intermediate_value.len() {
-            new_intermediate[RANDCEED_ID] = int;
-            new_intermediate.len()
-        } else {
-            new_intermediate.resize(RANDCEED_ID + 1, Stack::make_null());
-            new_intermediate[RANDCEED_ID] = int;
-            RANDCEED_ID + 1
-        };
+        // NOTE: Make sure that we have a unique instance of the `c7` tuple
+        //       (at least make sure that this situation is possible).
+        let mut c7 = st.cr.c7.take().unwrap();
 
-        if updated > 0 {
-            st.gas.try_consume_tuple_gas(updated as u64)?;
-        }
+        // NOTE: Make sure that the `t1v` instance is unique
+        //       (at least make sure that this situation is possible).
+        Rc::make_mut(&mut c7)[0] = Stack::make_null();
 
-        let mut new_c7 = c7.as_ref().clone();
-        new_c7[0] = Rc::new(new_intermediate);
+        let mut t1v = t1v.into_tuple().expect("t1 was checked as tuple");
+        Rc::make_mut(&mut t1v)[RANDSEED_IDX] = int;
+        let t1_len = t1v.len();
 
-        st.gas.try_consume_tuple_gas(new_c7.len() as u64)?;
-        st.cr.set_c7(Rc::new(new_c7));
+        // NOTE: Restore c7 and control registers state.
+        Rc::make_mut(&mut c7)[0] = t1v;
+        let c7_len = c7.len();
+        st.cr.c7 = Some(c7);
+
+        st.gas.try_consume_tuple_gas(t1_len as _)?;
+        st.gas.try_consume_tuple_gas(c7_len as _)?;
 
         Ok(0)
     }
 }
 
-fn generate_random_u256(
-    regs: &mut ControlRegs,
-    gas_consumer: &mut GasConsumer,
-) -> VmResult<HashBytes> {
-    let c7_opt = &regs.c7;
-    let Some(c7) = c7_opt else {
+fn generate_random_u256(regs: &mut ControlRegs, gas: &mut GasConsumer) -> VmResult<HashBytes> {
+    let Some(c7) = regs.c7.as_ref() else {
         vm_bail!(ControlRegisterOutOfRange(7))
     };
 
-    let control_params_opt: Option<&RcStackValue> = c7.first();
-    let Some(control_params) = control_params_opt else {
+    let Some(t1v) = c7.first().cloned() else {
         vm_bail!(InvalidType {
             expected: StackValueType::Tuple,
             actual: StackValueType::Null
         })
     };
-
-    let intermediate_tuple = control_params.as_tuple_range(0, 255);
-    let Some(intermediate_value) = intermediate_tuple else {
+    let Some(t1) = t1v.as_tuple_range(0, 255) else {
         vm_bail!(InvalidType {
             expected: StackValueType::Tuple,
-            actual: control_params.ty()
+            actual: t1v.ty()
         })
     };
 
-    let value: Option<&RcStackValue> = intermediate_value.get(RANDCEED_ID);
-    let ceed: Rc<BigInt> = match value {
-        Some(value) => ok!(value.clone().into_int()),
+    let hash: [u8; 64] = match t1.get(RANDSEED_IDX) {
+        Some(value) => {
+            let value = ok!(value.clone().into_int());
+            let bytes = ok!(to_bytes_be(&value));
+
+            let mut seed_bytes = [0u8; 32];
+            seed_bytes[32 - bytes.len()..].copy_from_slice(&bytes);
+            sha2::Sha512::digest(seed_bytes).into()
+        }
         None => vm_bail!(InvalidType {
             expected: StackValueType::Int,
             actual: StackValueType::Null
         }),
     };
 
-    let seed_bytes = ceed.to_be_bytes();
-    let mut hasher = sha2::Sha512::new();
-    hasher.update(seed_bytes);
-    let hash = hasher.finalize();
+    let new_seedv = Rc::new(BigInt::from_bytes_be(Sign::Plus, &hash[..32]));
+    let res = HashBytes::from_slice(&hash[32..]);
 
-    let new_ceed = BigInt::from_bytes_be(Sign::Plus, &hash[0..32]);
+    // NOTE: Make sure that we have a unique instance of the `c7` tuple
+    //       (at least make sure that this situation is possible).
+    let mut c7 = regs.c7.take().unwrap();
 
-    let mut random_bytes = [0u8; 32];
-    random_bytes.copy_from_slice(&hash[32..64]);
-    let random = HashBytes::from(random_bytes);
+    // NOTE: Make sure that the `t1v` instance is unique
+    //       (at least make sure that this situation is possible).
+    Rc::make_mut(&mut c7)[0] = Stack::make_null();
 
-    //TODO: should clean c7 first
-    let mut new_intermediate = Tuple::from(intermediate_value);
-    new_intermediate[RANDCEED_ID] = Rc::new(new_ceed);
-    gas_consumer.try_consume_tuple_gas(new_intermediate.len() as u64)?;
+    let mut t1v = t1v.into_tuple().expect("t1 was checked as tuple");
+    Rc::make_mut(&mut t1v)[RANDSEED_IDX] = new_seedv;
+    let t1_len = t1v.len();
 
-    let mut new_c7 = c7.as_ref().clone();
-    new_c7[0] = Rc::new(new_intermediate);
+    // NOTE: Restore c7 and control registers state.
+    Rc::make_mut(&mut c7)[0] = t1v;
+    let c7_len = c7.len();
+    regs.c7 = Some(c7);
 
-    gas_consumer.try_consume_tuple_gas(new_c7.len() as u64)?;
-    regs.set_c7(Rc::new(new_c7));
-    Ok(random)
+    gas.try_consume_tuple_gas(t1_len as _)?;
+    gas.try_consume_tuple_gas(c7_len as _)?;
+
+    Ok(res)
 }
+
+fn to_bytes_be(int: &BigInt) -> VmResult<Vec<u8>> {
+    vm_ensure!(
+        int.sign() != Sign::Minus,
+        IntegerOutOfRange {
+            min: 0,
+            max: isize::MAX,
+            actual: "negative".to_owned()
+        }
+    );
+
+    let mut bytes = int.magnitude().to_bytes_le();
+    bytes.truncate(32);
+    bytes.reverse();
+    Ok(bytes)
+}
+
+const RANDSEED_IDX: usize = 6;
 
 #[cfg(test)]
 pub mod test {
-    use crate::stack::{RcStackValue, StackValue};
-    use everscale_vm::stack::Tuple;
-    use num_bigint::{BigInt, Sign};
-    use std::rc::Rc;
+    use super::*;
+    use crate::stack::RcStackValue;
+
     use tracing_test::traced_test;
 
-    #[test]
-    #[tracing_test::traced_test]
-    fn random() {
-        let bytes = hex::decode("576f8d6b5ac3bcc80844b7d50b1cc6603444bbe7cfcf8fc0aa1ee3c636d9e339")
-            .unwrap();
-        let value: RcStackValue = Rc::new(BigInt::from_bytes_be(Sign::Plus, &bytes));
-
-        let result_bytes =
-            hex::decode("504C79E96A1A3D91262EDE19D9F064E9752EEA03E21A5E208D7BDCAF2D6610EE")
-                .unwrap();
-        let result: RcStackValue = Rc::new(BigInt::from_bytes_be(Sign::Plus, &result_bytes));
-
-        let tuple: Tuple = vec![
-            value.clone(),
-            value.clone(),
-            value.clone(),
-            value.clone(),
-            value.clone(),
-            value.clone(),
-            value.clone(),
-        ];
-        let tuple2: Tuple = vec![Rc::new(tuple)];
-
-        assert_run_vm_with_c7!("RAND", [tuple2], [raw value] => [raw result] )
+    fn uint256(str: &str) -> BigInt {
+        let value = hex::decode(str).unwrap();
+        BigInt::from_bytes_be(Sign::Plus, &value)
     }
 
     #[test]
     #[traced_test]
-    fn random_u256() {
-        let bytes = hex::decode("576f8d6b5ac3bcc80844b7d50b1cc6603444bbe7cfcf8fc0aa1ee3c636d9e339")
-            .unwrap();
-
-        let result_bytes =
-            hex::decode("EB1A91B388F714F56EE88C7B1B0902FF713FE8EBA39F64FC8F7F2F618601BBF5")
-                .unwrap();
-        let result: RcStackValue = Rc::new(BigInt::from_bytes_be(Sign::Plus, &result_bytes));
-
-        let value: RcStackValue = Rc::new(BigInt::from_bytes_be(Sign::Plus, &bytes));
-        let tuple: Tuple = vec![
-            value.clone(),
-            value.clone(),
-            value.clone(),
-            value.clone(),
-            value.clone(),
-            value.clone(),
-            value.clone(),
+    fn random() {
+        let value = uint256("576f8d6b5ac3bcc80844b7d50b1cc6603444bbe7cfcf8fc0aa1ee3c636d9e339");
+        let t1 = stack![
+            null,              // 0
+            null,              // 1
+            null,              // 2
+            null,              // 3
+            null,              // 4
+            null,              // 5
+            int value.clone(), // RANDSEED_IDX
         ];
-        let tuple2: Tuple = vec![Rc::new(tuple)];
+        let c7 = vec![Rc::new(t1) as RcStackValue];
 
-        assert_run_vm_with_c7!("RANDU256", [tuple2], [] => [raw result] )
+        let result = uint256("504C79E96A1A3D91262EDE19D9F064E9752EEA03E21A5E208D7BDCAF2D6610EE");
+        assert_run_vm_with_c7!("RAND", [c7.clone()], [int value.clone()] => [int result]);
+
+        let result = uint256("EB1A91B388F714F56EE88C7B1B0902FF713FE8EBA39F64FC8F7F2F618601BBF5");
+        assert_run_vm_with_c7!("RANDU256", [c7.clone()], [] => [int result]);
+
+        assert_run_vm_with_c7!(
+            r#"
+                INT 123
+                SETRAND
+                GETPARAM 6
+            "#,
+            [c7.clone()], [] => [int 123],
+        );
+
+        let new_rand = BigInt::from_bytes_be(
+            Sign::Plus,
+            &sha2::Sha256::digest({
+                let mut buffer = [0u8; 64];
+
+                let mut old_rand = value.magnitude().to_bytes_le();
+                old_rand.truncate(32);
+                old_rand.reverse();
+                buffer[32 - old_rand.len()..32].copy_from_slice(&old_rand);
+
+                buffer[63] = 123;
+                buffer
+            }),
+        );
+
+        assert_run_vm_with_c7!(
+            r#"
+                INT 123
+                ADDRAND
+                GETPARAM 6
+            "#,
+            [c7], [] => [int new_rand],
+        );
     }
 }

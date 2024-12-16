@@ -440,7 +440,7 @@ impl std::fmt::Display for DisplayConfigOpsArgs {
             3 => "NOW",
             4 => "BLOCKLT",
             5 => "LTIME",
-            6 => "RANDCEED",
+            6 => "RANDSEED",
             7 => "BALANCE",
             8 => "MYADDR",
             9 => "CONFIGROOT",
