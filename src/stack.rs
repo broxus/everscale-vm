@@ -43,6 +43,11 @@ impl Stack {
         self.items.len()
     }
 
+    /// Reserves capacity for at least `additional` more elements to be inserted.
+    pub fn reserve(&mut self, additional: usize) {
+        self.items.reserve(additional);
+    }
+
     pub fn push<T: StackValue + 'static>(&mut self, item: T) -> VmResult<()> {
         self.push_raw(Rc::new(item))
     }
