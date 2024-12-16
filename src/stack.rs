@@ -297,7 +297,7 @@ impl Stack {
         vm_ensure!(lhs < depth, StackUnderflow(lhs));
         vm_ensure!(rhs < depth, StackUnderflow(rhs));
         self.items.swap(depth - lhs - 1, depth - rhs - 1);
-        //eprintln!("AFTER SWAP: {}", self.display_dump());
+        // eprintln!("AFTER SWAP: {}", self.display_dump());
         Ok(())
     }
 

@@ -1,8 +1,6 @@
-use crate::dispatch::Opcodes;
-use crate::error::{VmError, VmResult};
-use crate::stack::{RcStackValue, StackValueType};
-use crate::util::{store_int_to_builder, OwnedCellSlice};
-use crate::VmState;
+use std::fmt::Formatter;
+use std::rc::Rc;
+
 use everscale_types::cell::CellBuilder;
 use everscale_types::dict::{DictBound, SetMode};
 use everscale_types::error::Error;
@@ -11,8 +9,12 @@ use everscale_vm::cont::OrdCont;
 use everscale_vm::util::load_int_from_slice;
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
-use std::fmt::Formatter;
-use std::rc::Rc;
+
+use crate::dispatch::Opcodes;
+use crate::error::{VmError, VmResult};
+use crate::stack::{RcStackValue, StackValueType};
+use crate::util::{store_int_to_builder, OwnedCellSlice};
+use crate::VmState;
 
 pub struct Dictops;
 
@@ -825,7 +827,7 @@ impl Dictops {
         let idx: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
 
         let Some(idx) = idx else {
-            vm_bail!(IntegerOverflow) //TODO: proper error
+            vm_bail!(IntegerOverflow) // TODO: proper error
         };
 
         ok!(check_key_sign(s.is_unsigned(), idx.clone()));
@@ -861,7 +863,7 @@ pub fn check_key_sign(is_unsigned: bool, int: Rc<BigInt>) -> VmResult<i32> {
         (true, Sign::Minus) => {
             vm_bail!(IntegerOutOfRange {
                 min: 0,
-                max: u32::MAX as isize, //TODO: proper max value
+                max: u32::MAX as isize, // TODO: proper max value
                 actual: int.to_string()
             })
         }
@@ -1152,9 +1154,8 @@ impl std::fmt::Display for DisplaySimpleOpArgs {
 
 #[cfg(test)]
 pub mod tests {
-    use crate::cont::load_cont;
-    use crate::stack::RcStackValue;
-    use crate::util::OwnedCellSlice;
+    use std::rc::Rc;
+
     use everscale_types::cell::{CellBuilder, CellSliceRange};
     use everscale_types::dict::{DictKey, SetMode};
     use everscale_types::prelude::{Cell, CellFamily, Dict, Store};
@@ -1162,8 +1163,11 @@ pub mod tests {
     use everscale_vm::util::store_int_to_builder;
     use num_bigint::{BigInt, Sign};
     use num_traits::One;
-    use std::rc::Rc;
     use tracing_test::traced_test;
+
+    use crate::cont::load_cont;
+    use crate::stack::RcStackValue;
+    use crate::util::OwnedCellSlice;
 
     #[test]
     #[traced_test]

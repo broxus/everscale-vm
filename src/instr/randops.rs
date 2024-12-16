@@ -181,14 +181,11 @@ fn generate_random_u256(regs: &mut ControlRegs, gas: &mut GasConsumer) -> VmResu
 }
 
 fn to_bytes_be(int: &BigInt) -> VmResult<Vec<u8>> {
-    vm_ensure!(
-        int.sign() != Sign::Minus,
-        IntegerOutOfRange {
-            min: 0,
-            max: isize::MAX,
-            actual: "negative".to_owned()
-        }
-    );
+    vm_ensure!(int.sign() != Sign::Minus, IntegerOutOfRange {
+        min: 0,
+        max: isize::MAX,
+        actual: "negative".to_owned()
+    });
 
     let mut bytes = int.magnitude().to_bytes_le();
     bytes.truncate(32);
@@ -200,10 +197,10 @@ const RANDSEED_IDX: usize = 6;
 
 #[cfg(test)]
 pub mod test {
+    use tracing_test::traced_test;
+
     use super::*;
     use crate::stack::RcStackValue;
-
-    use tracing_test::traced_test;
 
     fn uint256(str: &str) -> BigInt {
         let value = hex::decode(str).unwrap();

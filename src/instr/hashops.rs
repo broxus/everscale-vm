@@ -88,7 +88,7 @@ impl Hashops {
         let key_int = ok!(stack.pop_int());
         let signature_cs: Rc<OwnedCellSlice> = ok!(stack.pop_cs());
 
-        //let data_len: u16;
+        // let data_len: u16;
         let mut data = Vec::with_capacity(128);
         let mut key = [0u8; 32];
         let mut signature = [0u8; 64];
@@ -106,7 +106,7 @@ impl Hashops {
             let hash_int: Rc<BigInt> = ok!(stack.pop_int());
             let hash_bytes = hash_int.to_bytes_be().1;
             vm_ensure!(hash_bytes.len() == 32usize, IntegerOverflow);
-            //data_len = 32;
+            // data_len = 32;
             data.extend_from_slice(hash_bytes.as_slice());
         }
 
@@ -156,7 +156,7 @@ pub fn calc_hash_ext<'a>(
 
         let stack_value_opt: Option<&RcStackValue> = stack.items.get(stack.items.len() - 1 - idx);
 
-        //load next slice on stack
+        // load next slice on stack
         let mut data_slice = match get_data_slice(stack_value_opt) {
             Ok(data) => data,
             Err(e) => {
@@ -212,7 +212,7 @@ pub fn calc_hash_ext<'a>(
             gas.try_consume(gas_total - gas_consumed)?;
             gas_consumed = gas_total;
         } else {
-            //load what we can to a remaining buffer
+            // load what we can to a remaining buffer
             data_slice.load_raw(
                 &mut buffer[(filled_bits / 8)..],
                 remaining_bits_in_buffer as u16,
@@ -229,7 +229,7 @@ pub fn calc_hash_ext<'a>(
             filled_bits = 0;
             buffer.fill(0);
 
-            //load rest of slice to a new buffer
+            // load rest of slice to a new buffer
             let (bytes, rem_bits) = data_slice.size_bits().div_rem(&8);
             data_slice.load_raw(&mut buffer, bytes * 8)?;
             if rem_bits != 0 {
@@ -267,7 +267,7 @@ pub fn get_data_slice(stack_value_opt: Option<&RcStackValue>) -> VmResult<CellSl
         vm_bail!(InvalidType {
             expected: StackValueType::Slice,
             actual: StackValueType::Null
-        }) //TODO: or builder type because can be expected
+        }) // TODO: or builder type because can be expected
     };
     match stack_value.as_slice() {
         Some(slice) => Ok(slice.apply()?),
@@ -278,7 +278,7 @@ pub fn get_data_slice(stack_value_opt: Option<&RcStackValue>) -> VmResult<CellSl
                     vm_bail!(InvalidType {
                         expected: StackValueType::Builder,
                         actual: stack_value.ty()
-                    }) //TODO: or slice as expected
+                    }) // TODO: or slice as expected
                 }
             }
         }
@@ -360,14 +360,16 @@ impl Hasher {
 
 #[cfg(test)]
 mod tests {
-    use crate::stack::RcStackValue;
-    use crate::stack::StackValueType::Cell;
-    use crate::util::OwnedCellSlice;
+    use std::rc::Rc;
+
     use everscale_types::cell::CellBuilder;
     use num_bigint::{BigInt, Sign};
     use sha2::Digest;
-    use std::rc::Rc;
     use tracing_test::traced_test;
+
+    use crate::stack::RcStackValue;
+    use crate::stack::StackValueType::Cell;
+    use crate::util::OwnedCellSlice;
 
     #[test]
     #[traced_test]

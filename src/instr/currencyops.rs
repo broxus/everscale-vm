@@ -1,5 +1,7 @@
-use crate::stack::{Stack, StackValueType};
-use crate::state::GasConsumer;
+use std::fmt::Formatter;
+use std::ops::Deref;
+use std::rc::Rc;
+
 use everscale_types::cell::{CellBuilder, CellSlice, LoadMode};
 use everscale_types::error::Error;
 use everscale_types::num::SplitDepth;
@@ -13,9 +15,9 @@ use everscale_vm::VmState;
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
 use num_traits::{One, ToPrimitive, Zero};
-use std::fmt::Formatter;
-use std::ops::Deref;
-use std::rc::Rc;
+
+use crate::stack::{Stack, StackValueType};
+use crate::state::GasConsumer;
 
 pub struct CurrencyOps;
 
@@ -93,12 +95,12 @@ impl CurrencyOps {
         let (success, address) = load_message_address_q(&mut slice, quiet)?;
 
         if success {
-            //push address
+            // push address
             let mut cloned = cs.clone();
             cloned.set_range(address.range());
             ok!(stack.push_raw(Rc::new(cloned)));
 
-            //push remainder of cell
+            // push remainder of cell
             let mut rest = cs.clone();
             rest.set_range(slice.range());
             ok!(stack.push_raw(Rc::new(rest)));
@@ -106,7 +108,7 @@ impl CurrencyOps {
                 ok!(stack.push_bool(true));
             }
         } else {
-            //push original cell
+            // push original cell
             let mut cs = cs.clone();
             cs.set_range(slice.range());
             ok!(stack.push_raw(Rc::new(cs)));
@@ -504,16 +506,18 @@ impl std::fmt::Display for DisplayVarIntegerArgs {
 
 #[cfg(test)]
 mod test {
-    use crate::stack::{RcStackValue, Tuple};
-    use crate::util::{store_varint_to_builder, OwnedCellSlice};
+    use std::rc::Rc;
+    use std::str::FromStr;
+
     use everscale_types::cell::CellSliceRange;
     use everscale_types::models::StdAddr;
     use everscale_types::prelude::CellBuilder;
     use everscale_vm::stack::Stack;
     use num_bigint::BigInt;
-    use std::rc::Rc;
-    use std::str::FromStr;
     use tracing_test::traced_test;
+
+    use crate::stack::{RcStackValue, Tuple};
+    use crate::util::{store_varint_to_builder, OwnedCellSlice};
 
     #[test]
     #[traced_test]

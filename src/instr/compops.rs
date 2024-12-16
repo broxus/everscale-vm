@@ -1,10 +1,12 @@
-use crate::error::VmResult;
-use crate::VmState;
-use everscale_vm_proc::vm_module;
-use num_bigint::BigInt;
 use std::cmp::Ordering;
 use std::ops::Deref;
 use std::rc::Rc;
+
+use everscale_vm_proc::vm_module;
+use num_bigint::BigInt;
+
+use crate::error::VmResult;
+use crate::VmState;
 
 pub struct CompOps;
 
