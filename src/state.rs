@@ -23,6 +23,8 @@ use crate::instr::{codepage, codepage0};
 use crate::stack::{RcStackValue, Stack, StackValue};
 use crate::util::OwnedCellSlice;
 
+const VM_VERSION: u32 = 9;
+
 #[derive(Default)]
 pub struct VmStateBuilder {
     pub code: OwnedCellSlice,
@@ -32,6 +34,7 @@ pub struct VmStateBuilder {
     pub c7: Option<Vec<RcStackValue>>,
     pub gas: GasParameters,
     pub same_c3: bool,
+    pub version: u32,
     pub without_push0: bool,
     pub debug: Option<Box<dyn std::fmt::Write>>,
 }
@@ -97,6 +100,11 @@ impl VmStateBuilder {
             },
             cp,
             debug: self.debug,
+            version: if self.version == 0 {
+                VM_VERSION
+            } else {
+                self.version
+            },
         })
     }
 
@@ -173,6 +181,11 @@ impl VmStateBuilder {
         self.c7 = Some(c7);
         self
     }
+
+    pub fn with_version(mut self, version: u32) -> Self {
+        self.version = version;
+        self
+    }
 }
 
 pub struct VmState {
@@ -186,6 +199,7 @@ pub struct VmState {
     pub gas: GasConsumer,
     pub cp: &'static DispatchTable,
     pub debug: Option<Box<dyn std::fmt::Write>>,
+    pub version: u32,
 }
 
 impl VmState {
@@ -739,6 +753,14 @@ impl VmState {
         };
         self.cp = cp;
         Ok(())
+    }
+
+    pub fn require_version(&self, version: u32) -> VmResult<i32> {
+        if self.version < version {
+            vm_bail!(InvalidOpcode)
+        }
+
+        Ok(0)
     }
 
     fn take_c0(&mut self) -> VmResult<RcCont> {
