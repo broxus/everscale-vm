@@ -709,7 +709,7 @@ mod tests {
             Rc::new(BigInt::from(1732042729)),        //unix_time
             Rc::new(BigInt::from(55364288000000u64)), //block_logical_time
             Rc::new(BigInt::from(55396331000001u64)), // transaction_logical_time
-            Rc::new(BigInt::from(0)),                 //rand_ceed
+            Rc::new(BigInt::from(0)),                 //rand_seed
             Rc::new(balance_tuple),
             Rc::new(addr),
             Stack::make_null(),
@@ -772,7 +772,7 @@ mod tests {
             Rc::new(BigInt::from(1732048342)),        //unix_time
             Rc::new(BigInt::from(55398352000001u64)), //block_logical_time
             Rc::new(BigInt::from(55398317000004u64)), // transaction_logical_time
-            Rc::new(BigInt::from(0)),                 //rand_ceed
+            Rc::new(BigInt::from(0)),                 //rand_seed
             Rc::new(balance_tuple),
             Rc::new(addr),
             Stack::make_null(),
@@ -836,7 +836,7 @@ mod tests {
             Rc::new(BigInt::from(1733142533)),        //unix_time
             Rc::new(BigInt::from(50899537000013u64)), //block_logical_time
             Rc::new(BigInt::from(50899537000013u64)), // transaction_logical_time
-            Rc::new(BigInt::from(0)),                 //rand_ceed
+            Rc::new(BigInt::from(0)),                 //rand_seed
             Rc::new(balance_tuple),
             Rc::new(addr.clone()),
             Stack::make_null(),
@@ -913,7 +913,7 @@ mod tests {
             Rc::new(BigInt::from(1733142533)),        //unix_time
             Rc::new(BigInt::from(50899537000013u64)), //block_logical_time
             Rc::new(BigInt::from(50899537000013u64)), // transaction_logical_time
-            Rc::new(BigInt::from(0)),                 //rand_ceed
+            Rc::new(BigInt::from(0)),                 //rand_seed
             Rc::new(balance_tuple),
             Rc::new(addr.clone()),
             Stack::make_null(),
