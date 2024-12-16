@@ -3,7 +3,8 @@ use std::rc::Rc;
 use everscale_vm_proc::vm_module;
 
 use crate::error::VmResult;
-use crate::state::VmState;
+use crate::stack::Stack;
+use crate::state::{VmState, VmVersion};
 
 pub struct Stackops;
 
@@ -276,8 +277,7 @@ impl Stackops {
     #[instr(code = "60", fmt = "PICK")]
     fn exec_pick(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        // TODO: Allow using more than 255 items.
-        let i = ok!(stack.pop_smallint_range(0, 255));
+        let i = ok!(stack.pop_smallint_range(0, max_stack_size(st.version)));
         ok!(stack.push_nth(i as _));
         Ok(0)
     }
@@ -286,9 +286,8 @@ impl Stackops {
     fn exec_roll(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
 
-        // TODO: Allow using more than 255 items.
-        let mut i = ok!(stack.pop_smallint_range(0, 255));
-        if let Some(diff) = i.checked_sub(255) {
+        let mut i = ok!(stack.pop_smallint_range(0, max_stack_size(st.version)));
+        if let Some(diff) = i.checked_sub(STACK_FEE_THRESHOLD) {
             st.gas.try_consume(diff as u64)?;
         }
 
@@ -303,9 +302,8 @@ impl Stackops {
     fn exec_rollrev(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
 
-        // TODO: Allow using more than 255 items.
-        let x = ok!(stack.pop_smallint_range(0, 255));
-        if let Some(diff) = x.checked_sub(255) {
+        let x = ok!(stack.pop_smallint_range(0, max_stack_size(st.version)));
+        if let Some(diff) = x.checked_sub(STACK_FEE_THRESHOLD) {
             st.gas.try_consume(diff as u64)?;
         }
 
@@ -319,13 +317,16 @@ impl Stackops {
     fn exec_blkswap_x(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
 
-        // TODO: Allow using more than 255 items.
-        let y = ok!(stack.pop_smallint_range(0, 255));
-        // TODO: Allow using more than 255 items.
-        let x = ok!(stack.pop_smallint_range(0, 255));
+        let y = ok!(stack.pop_smallint_range(0, max_stack_size(st.version)));
+        let x = ok!(stack.pop_smallint_range(0, max_stack_size(st.version)));
 
         if x > 0 && y > 0 {
-            //st.gas.try_consume(std::cmp::max((x + y) as u64 - 255, 0))?; //TODO: is it needed here
+            if should_consume_gas(st.version) {
+                if let Some(diff) = (x as u64 + y as u64).checked_sub(STACK_FEE_THRESHOLD as _) {
+                    st.gas.try_consume(diff)?;
+                }
+            }
+
             ok!(stack.reverse_range(y as _, x as _));
             ok!(stack.reverse_range(0, y as _));
             ok!(stack.reverse_range(0, (x + y) as _));
@@ -337,12 +338,11 @@ impl Stackops {
     fn exec_reverse_x(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
 
-        // TODO: Allow using more than 255 items.
-        let y = ok!(stack.pop_smallint_range(0, 255));
-        // TODO: Allow using more than 255 items.
-        let x = ok!(stack.pop_smallint_range(0, 255));
-
-        st.gas.try_consume(std::cmp::max(x as u64 - 255, 0))?;
+        let y = ok!(stack.pop_smallint_range(0, max_stack_size(st.version)));
+        let x = ok!(stack.pop_smallint_range(0, max_stack_size(st.version)));
+        if let Some(diff) = x.checked_sub(STACK_FEE_THRESHOLD) {
+            st.gas.try_consume(diff as _)?;
+        }
         ok!(stack.reverse_range(y as _, x as _));
         Ok(0)
     }
@@ -350,10 +350,7 @@ impl Stackops {
     #[instr(code = "65", fmt = "DROPX")]
     fn exec_drop_x(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-
-        // TODO: Allow using more than 255 items.
-        let x = ok!(stack.pop_smallint_range(0, 255));
-
+        let x = ok!(stack.pop_smallint_range(0, max_stack_size(st.version)));
         ok!(stack.pop_many(x as _));
         Ok(0)
     }
@@ -369,8 +366,7 @@ impl Stackops {
     #[instr(code = "67", fmt = "XCHGX")]
     fn exec_xchg_x(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        // TODO: Allow using more than 255 items.
-        let x = ok!(stack.pop_smallint_range(0, 255));
+        let x = ok!(stack.pop_smallint_range(0, max_stack_size(st.version)));
         ok!(stack.swap(0, x as _));
         Ok(0)
     }
@@ -385,8 +381,7 @@ impl Stackops {
     #[instr(code = "69", fmt = "CHKDEPTH")]
     fn exec_chkdepth(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        // TODO: Allow using more than 255 items.
-        let x = ok!(stack.pop_smallint_range(0, 255)) as usize;
+        let x = ok!(stack.pop_smallint_range(0, max_stack_size(st.version))) as usize;
         vm_ensure!(x <= stack.depth(), StackUnderflow(x));
         Ok(0)
     }
@@ -395,14 +390,13 @@ impl Stackops {
     fn exec_onlytop_x(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
 
-        // TODO: Allow using more than 255 items.
-        let x = ok!(stack.pop_smallint_range(0, 255)) as usize;
+        let x = ok!(stack.pop_smallint_range(0, max_stack_size(st.version))) as usize;
         let Some(d) = stack.depth().checked_sub(x) else {
             vm_bail!(StackUnderflow(x));
         };
 
         if d > 0 {
-            if let Some(diff) = d.checked_sub(255) {
+            if let Some(diff) = x.checked_sub(STACK_FEE_THRESHOLD as _) {
                 st.gas.try_consume(diff as u64)?;
             }
             stack.items.drain(..d);
@@ -416,9 +410,7 @@ impl Stackops {
     #[instr(code = "6b", fmt = "ONLYX")]
     fn exec_only_x(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-
-        // TODO: Allow using more than 255 items.
-        let x = ok!(stack.pop_smallint_range(0, 255)) as usize;
+        let x = ok!(stack.pop_smallint_range(0, max_stack_size(st.version))) as usize;
         let Some(d) = stack.depth().checked_sub(x) else {
             vm_bail!(StackUnderflow(x));
         };
@@ -439,6 +431,21 @@ impl Stackops {
         Ok(0)
     }
 }
+
+fn should_consume_gas(version: VmVersion) -> bool {
+    version.is_ton(4)
+}
+
+fn max_stack_size(version: VmVersion) -> u32 {
+    if should_consume_gas(version) {
+        // FIXME: Ton uses `(1 << 30) - 1` but its a bit too much.
+        Stack::MAX_DEPTH as u32
+    } else {
+        STACK_FEE_THRESHOLD
+    }
+}
+
+const STACK_FEE_THRESHOLD: u32 = 255;
 
 #[cfg(test)]
 mod tests {

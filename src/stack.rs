@@ -16,7 +16,7 @@ pub struct Stack {
 }
 
 impl Stack {
-    const MAX_DEPTH: usize = 0xffffff;
+    pub const MAX_DEPTH: usize = 0xffffff;
 
     pub fn make_null() -> RcStackValue {
         thread_local! {

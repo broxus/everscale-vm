@@ -23,8 +23,6 @@ use crate::instr::{codepage, codepage0};
 use crate::stack::{RcStackValue, Stack, StackValue};
 use crate::util::OwnedCellSlice;
 
-const VM_VERSION: u32 = 9;
-
 #[derive(Default)]
 pub struct VmStateBuilder {
     pub code: OwnedCellSlice,
@@ -34,7 +32,7 @@ pub struct VmStateBuilder {
     pub c7: Option<Vec<RcStackValue>>,
     pub gas: GasParameters,
     pub same_c3: bool,
-    pub version: u32,
+    pub version: Option<VmVersion>,
     pub without_push0: bool,
     pub debug: Option<Box<dyn std::fmt::Write>>,
 }
@@ -100,11 +98,7 @@ impl VmStateBuilder {
             },
             cp,
             debug: self.debug,
-            version: if self.version == 0 {
-                VM_VERSION
-            } else {
-                self.version
-            },
+            version: self.version.unwrap_or(VmState::DEFAULT_VERSION),
         })
     }
 
@@ -182,8 +176,8 @@ impl VmStateBuilder {
         self
     }
 
-    pub fn with_version(mut self, version: u32) -> Self {
-        self.version = version;
+    pub fn with_version(mut self, version: VmVersion) -> Self {
+        self.version = Some(version);
         self
     }
 }
@@ -199,10 +193,12 @@ pub struct VmState {
     pub gas: GasConsumer,
     pub cp: &'static DispatchTable,
     pub debug: Option<Box<dyn std::fmt::Write>>,
-    pub version: u32,
+    pub version: VmVersion,
 }
 
 impl VmState {
+    pub const DEFAULT_VERSION: VmVersion = VmVersion::Ton(9);
+
     pub const MAX_DATA_DEPTH: u16 = 512;
 
     thread_local! {
@@ -755,14 +751,6 @@ impl VmState {
         Ok(())
     }
 
-    pub fn require_version(&self, version: u32) -> VmResult<i32> {
-        if self.version < version {
-            vm_bail!(InvalidOpcode)
-        }
-
-        Ok(0)
-    }
-
     fn take_c0(&mut self) -> VmResult<RcCont> {
         let Some(cont) = std::mem::replace(&mut self.cr.c[0], Some(self.quit0.clone())) else {
             vm_bail!(InvalidOpcode);
@@ -775,6 +763,23 @@ impl VmState {
             vm_bail!(InvalidOpcode);
         };
         Ok(cont)
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum VmVersion {
+    Everscale(u32),
+    Ton(u32),
+}
+
+impl VmVersion {
+    pub fn is_ton(&self, at_least: u32) -> bool {
+        matches!(self, Self::Ton(version) if *version >= at_least)
+    }
+
+    pub fn require_ton(&self, at_least: u32) -> VmResult<()> {
+        vm_ensure!(self.is_ton(at_least), InvalidOpcode);
+        Ok(())
     }
 }
 
