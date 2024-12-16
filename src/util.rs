@@ -1,15 +1,16 @@
 use std::borrow::Cow;
 use std::rc::Rc;
 
-use crate::cont::ControlRegs;
-use crate::error::VmResult;
-use crate::stack::{RcStackValue, Tuple};
 use everscale_types::dict::DictKey;
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
 use everscale_vm::stack::StackValueType;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{One, ToPrimitive, Zero};
+
+use crate::cont::ControlRegs;
+use crate::error::VmResult;
+use crate::stack::{RcStackValue, Tuple};
 
 #[derive(Default, Debug, Clone)]
 #[repr(transparent)]
@@ -183,7 +184,7 @@ pub fn store_varint_to_builder(
     let bitsize = bitsize(int, signed);
     let len = (bitsize + 7) >> 3;
     if len >= (1 << bits) {
-        return Err(Error::InvalidData); //TODO: range check
+        return Err(Error::InvalidData); // TODO: range check
     }
 
     if !builder.has_capacity(bits + len * 8, 0) {

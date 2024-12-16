@@ -277,14 +277,11 @@ fn make_tuple_impl(stack: &mut Stack, n: usize, gas_consumer: &mut GasConsumer) 
 
 fn tuple_index_impl(stack: &mut Stack, i: usize) -> VmResult<i32> {
     let tuple = ok!(stack.pop_tuple_range(0, 255));
-    vm_ensure!(
-        i < tuple.len(),
-        IntegerOutOfRange {
-            actual: i.to_string(),
-            min: 0,
-            max: tuple.len() as _,
-        }
-    );
+    vm_ensure!(i < tuple.len(), IntegerOutOfRange {
+        actual: i.to_string(),
+        min: 0,
+        max: tuple.len() as _,
+    });
     ok!(stack.push_raw(tuple[i].clone()));
     Ok(0)
 }
@@ -341,14 +338,11 @@ fn do_explode_tuple(
 fn tuple_set_index_impl(stack: &mut Stack, i: usize, gas: &mut GasConsumer) -> VmResult<i32> {
     let x = ok!(stack.pop());
     let mut tuple = ok!(stack.pop_tuple_range(0, 255));
-    vm_ensure!(
-        i < tuple.len(),
-        IntegerOutOfRange {
-            min: 0,
-            max: tuple.len() as _,
-            actual: i.to_string()
-        }
-    );
+    vm_ensure!(i < tuple.len(), IntegerOutOfRange {
+        min: 0,
+        max: tuple.len() as _,
+        actual: i.to_string()
+    });
     Rc::make_mut(&mut tuple)[i] = x;
     gas.try_consume_tuple_gas(tuple.len() as u64)?;
     ok!(stack.push_raw(tuple));
@@ -362,14 +356,11 @@ fn tuple_set_index_quiet_impl(
 ) -> VmResult<i32> {
     let x = ok!(stack.pop());
     let mut tuple = ok!(stack.pop_opt_tuple_range(0, 255));
-    vm_ensure!(
-        i < 255,
-        IntegerOutOfRange {
-            min: 0,
-            max: 255,
-            actual: i.to_string()
-        }
-    );
+    vm_ensure!(i < 255, IntegerOutOfRange {
+        min: 0,
+        max: 255,
+        actual: i.to_string()
+    });
 
     let updated_items = match &mut tuple {
         None if x.is_null() => 0,

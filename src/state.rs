@@ -9,7 +9,6 @@ use everscale_types::error::Error;
 use everscale_types::models::SimpleLib;
 use num_bigint::BigInt;
 use num_traits::Zero;
-
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -266,7 +265,7 @@ impl VmState {
                     }
                 }
             };
-            //println!("TOTAL GAS USED: {}", self.gas.gas_consumed());
+            // println!("TOTAL GAS USED: {}", self.gas.gas_consumed());
             // for value in self.stack.items.iter() {
             //     println!("{}", value.display_list());
             // }
@@ -835,11 +834,11 @@ impl GasConsumer {
 
     pub fn calc_hash_ext_consumption(i: usize, total_bits: usize, hash_id: u32) -> u64 {
         let bytes_per_gas_unit = match hash_id {
-            0 => 33, //sha256
-            1 => 16, //sha512
-            2 => 19, //blake2b
-            3 => 11, //keccak
-            4 => 6,  //keccak
+            0 => 33, // sha256
+            1 => 16, // sha512
+            2 => 19, // blake2b
+            3 => 11, // keccak
+            4 => 6,  // keccak
             _ => unimplemented!("hasher is not supported"),
         };
 

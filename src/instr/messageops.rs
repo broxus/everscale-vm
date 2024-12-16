@@ -1,8 +1,7 @@
-use crate::cont::ControlRegs;
-use crate::error::VmResult;
-use crate::stack::RcStackValue;
-use crate::util::OwnedCellSlice;
-use crate::VmState;
+use std::fmt::Formatter;
+use std::ops::{Add, AddAssign, Mul, Shr, Sub};
+use std::rc::Rc;
+
 use everscale_types::cell::{CellBuilder, CellSlice, CellSliceParts, HashBytes, StorageStat};
 use everscale_types::error::Error;
 use everscale_types::models::{
@@ -15,9 +14,12 @@ use everscale_vm::util::{get_param_from_c7, load_uint_leq};
 use everscale_vm_proc::vm_module;
 use num_bigint::BigInt;
 use num_traits::{ToPrimitive, Zero};
-use std::fmt::Formatter;
-use std::ops::{Add, AddAssign, Mul, Shr, Sub};
-use std::rc::Rc;
+
+use crate::cont::ControlRegs;
+use crate::error::VmResult;
+use crate::stack::RcStackValue;
+use crate::util::OwnedCellSlice;
+use crate::VmState;
 
 pub struct MessageOps;
 
@@ -49,7 +51,7 @@ impl MessageOps {
         let send = (mode & 1024) == 0;
         let mode = mode & !1024;
         if mode >= 256 {
-            vm_bail!(IntegerOverflow) //TODO: Range error
+            vm_bail!(IntegerOverflow) // TODO: Range error
         }
 
         let msg_cell: Rc<Cell> = ok!(stack.pop_cell());
@@ -175,7 +177,7 @@ impl MessageOps {
                 relaxed_message.layout.unwrap().init_to_cell,
                 init.exact_size_const().bits,
                 init.exact_size_const().refs,
-            ), //TODO: we 100% have layout due to relaxed message parsing
+            ), // TODO: we 100% have layout due to relaxed message parsing
             None => (false, false, 0, 0),
         };
 
@@ -272,7 +274,7 @@ impl MessageOps {
         );
 
         if !body_is_ref && (bits > 1023 || refs > 4) {
-            //body_is_ref = true;
+            // body_is_ref = true;
             total_cells += 1;
             total_bits += body_bit_len as u64 - 1;
             compute_fees(
@@ -593,11 +595,9 @@ fn install_output_actions(regs: &mut ControlRegs, action_head: Cell) -> VmResult
 
 #[cfg(test)]
 mod tests {
-    use crate::cont::OrdCont;
-    use crate::stack::StackValueType::Cont;
-    use crate::stack::{RcStackValue, Stack};
-    use crate::util::OwnedCellSlice;
-    use crate::VmState;
+    use std::rc::Rc;
+    use std::str::FromStr;
+
     use anyhow::Context;
     use everscale_types::cell::{Cell, CellBuilder, CellSlice};
     use everscale_types::dict::{Dict, RawDict};
@@ -609,9 +609,13 @@ mod tests {
     use everscale_vm::stack::Tuple;
     use everscale_vm::util::store_int_to_builder;
     use num_bigint::BigInt;
-    use std::rc::Rc;
-    use std::str::FromStr;
     use tracing_test::traced_test;
+
+    use crate::cont::OrdCont;
+    use crate::stack::StackValueType::Cont;
+    use crate::stack::{RcStackValue, Stack};
+    use crate::util::OwnedCellSlice;
+    use crate::VmState;
 
     #[test]
     #[traced_test]
@@ -704,12 +708,12 @@ mod tests {
 
         let c7: Vec<RcStackValue> = vec![
             Rc::new(BigInt::from(0x076ef1ea)),
-            Rc::new(BigInt::from(0)),                 //actions
-            Rc::new(BigInt::from(0)),                 //msgs_sent
-            Rc::new(BigInt::from(1732042729)),        //unix_time
-            Rc::new(BigInt::from(55364288000000u64)), //block_logical_time
+            Rc::new(BigInt::from(0)),                 // actions
+            Rc::new(BigInt::from(0)),                 // msgs_sent
+            Rc::new(BigInt::from(1732042729)),        // unix_time
+            Rc::new(BigInt::from(55364288000000u64)), // block_logical_time
             Rc::new(BigInt::from(55396331000001u64)), // transaction_logical_time
-            Rc::new(BigInt::from(0)),                 //rand_seed
+            Rc::new(BigInt::from(0)),                 // rand_seed
             Rc::new(balance_tuple),
             Rc::new(addr),
             Stack::make_null(),
@@ -767,12 +771,12 @@ mod tests {
 
         let c7: Vec<RcStackValue> = vec![
             Rc::new(BigInt::from(0x076ef1ea)),
-            Rc::new(BigInt::from(0)),                 //actions
-            Rc::new(BigInt::from(0)),                 //msgs_sent
-            Rc::new(BigInt::from(1732048342)),        //unix_time
-            Rc::new(BigInt::from(55398352000001u64)), //block_logical_time
+            Rc::new(BigInt::from(0)),                 // actions
+            Rc::new(BigInt::from(0)),                 // msgs_sent
+            Rc::new(BigInt::from(1732048342)),        // unix_time
+            Rc::new(BigInt::from(55398352000001u64)), // block_logical_time
             Rc::new(BigInt::from(55398317000004u64)), // transaction_logical_time
-            Rc::new(BigInt::from(0)),                 //rand_seed
+            Rc::new(BigInt::from(0)),                 // rand_seed
             Rc::new(balance_tuple),
             Rc::new(addr),
             Stack::make_null(),
@@ -831,16 +835,16 @@ mod tests {
 
         let c7: Vec<RcStackValue> = vec![
             Rc::new(BigInt::from(0x076ef1ea)),
-            Rc::new(BigInt::from(0)),                 //actions
-            Rc::new(BigInt::from(0)),                 //msgs_sent
-            Rc::new(BigInt::from(1733142533)),        //unix_time
-            Rc::new(BigInt::from(50899537000013u64)), //block_logical_time
+            Rc::new(BigInt::from(0)),                 // actions
+            Rc::new(BigInt::from(0)),                 // msgs_sent
+            Rc::new(BigInt::from(1733142533)),        // unix_time
+            Rc::new(BigInt::from(50899537000013u64)), // block_logical_time
             Rc::new(BigInt::from(50899537000013u64)), // transaction_logical_time
-            Rc::new(BigInt::from(0)),                 //rand_seed
+            Rc::new(BigInt::from(0)),                 // rand_seed
             Rc::new(balance_tuple),
             Rc::new(addr.clone()),
             Stack::make_null(),
-            //Rc::new(code.clone()),
+            // Rc::new(code.clone()),
         ];
 
         let c4_data = Boc::decode_base64(
@@ -851,7 +855,7 @@ mod tests {
         let stack: Vec<RcStackValue> = vec![
             Rc::new(addr),
             Rc::new(BigInt::from(103289)),
-            //Rc::new(BigInt::from(106029)),
+            // Rc::new(BigInt::from(106029)),
         ];
 
         let mut builder = VmState::builder();
@@ -908,16 +912,16 @@ mod tests {
 
         let c7: Vec<RcStackValue> = vec![
             Rc::new(BigInt::from(0x076ef1ea)),
-            Rc::new(BigInt::from(0)),                 //actions
-            Rc::new(BigInt::from(0)),                 //msgs_sent
-            Rc::new(BigInt::from(1733142533)),        //unix_time
-            Rc::new(BigInt::from(50899537000013u64)), //block_logical_time
+            Rc::new(BigInt::from(0)),                 // actions
+            Rc::new(BigInt::from(0)),                 // msgs_sent
+            Rc::new(BigInt::from(1733142533)),        // unix_time
+            Rc::new(BigInt::from(50899537000013u64)), // block_logical_time
             Rc::new(BigInt::from(50899537000013u64)), // transaction_logical_time
-            Rc::new(BigInt::from(0)),                 //rand_seed
+            Rc::new(BigInt::from(0)),                 // rand_seed
             Rc::new(balance_tuple),
             Rc::new(addr.clone()),
             Stack::make_null(),
-            //Rc::new(code.clone()),
+            // Rc::new(code.clone()),
         ];
 
         let stack: Vec<RcStackValue> = vec![

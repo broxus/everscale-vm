@@ -2,7 +2,6 @@ use std::rc::Rc;
 
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
-
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 

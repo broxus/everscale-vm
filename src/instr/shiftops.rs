@@ -1,16 +1,18 @@
-use crate::error::VmResult;
-use crate::VmState;
-use everscale_vm_proc::vm_module;
-use num_bigint::BigInt;
 use std::ops::{Not, Shl};
 use std::rc::Rc;
+
+use everscale_vm_proc::vm_module;
+use num_bigint::BigInt;
+
+use crate::error::VmResult;
+use crate::VmState;
 
 pub struct Shiftops;
 
 #[vm_module]
 impl Shiftops {
     #[instr(code = "b1", fmt = "OR", args(quiet = false))]
-    #[instr(code = "b7b1", fmt = "QOR", args(quiet = true))] //TODO: differs from the specification. Original C++ implementation has the same problem
+    #[instr(code = "b7b1", fmt = "QOR", args(quiet = true))] // TODO: differs from the specification. Original C++ implementation has the same problem
     fn exec_or(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
@@ -28,7 +30,7 @@ impl Shiftops {
     }
 
     #[instr(code = "b0", fmt = "AND", args(quiet = false))]
-    #[instr(code = "b7b0", fmt = "QAND", args(quiet = true))] //TODO: differs from the specification. Original C++ implementation has the same problem
+    #[instr(code = "b7b0", fmt = "QAND", args(quiet = true))] // TODO: differs from the specification. Original C++ implementation has the same problem
     fn exec_and(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
@@ -67,7 +69,7 @@ impl Shiftops {
     #[instr(code = "b7b3", fmt = "QNOT", args(quiet = true))]
     fn exec_not(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        //let y = ok!(stack.pop_smallint_range(0, 1023));
+        // let y = ok!(stack.pop_smallint_range(0, 1023));
         let x: Option<Rc<BigInt>> = ok!(stack.pop_int_or_nan());
         match x {
             Some(x) => {

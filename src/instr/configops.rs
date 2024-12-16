@@ -1,7 +1,7 @@
-use crate::error::VmResult;
-use crate::stack::{RcStackValue, Stack, Tuple};
-use crate::state::GasConsumer;
-use crate::util::OwnedCellSlice;
+use std::fmt::Formatter;
+use std::ops::{Mul, Shr, ShrAssign, Sub};
+use std::rc::Rc;
+
 use everscale_types::models::BlockchainConfig;
 use everscale_types::prelude::{Cell, CellBuilder, Load};
 use everscale_vm::cont::ControlRegs;
@@ -15,9 +15,11 @@ use everscale_vm_proc::vm_module;
 use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{Signed, Zero};
-use std::fmt::Formatter;
-use std::ops::{Mul, Shr, ShrAssign, Sub};
-use std::rc::Rc;
+
+use crate::error::VmResult;
+use crate::stack::{RcStackValue, Stack, Tuple};
+use crate::state::GasConsumer;
+use crate::util::OwnedCellSlice;
 
 pub struct ConfigOps;
 
@@ -104,7 +106,7 @@ impl ConfigOps {
 
     #[instr(code = "f835", fmt = "GLOBALID")]
     fn exec_get_global_id(st: &mut VmState) -> VmResult<i32> {
-        //TODO: add global id as separate parameter
+        // TODO: add global id as separate parameter
 
         let param: &RcStackValue = ok!(get_param_from_c7(&st.cr, 13));
         let dict = param.as_cell();
@@ -136,7 +138,7 @@ impl ConfigOps {
                 expected: StackValueType::Slice,
                 actual: ref_cell.ty()
             })
-        }; //TODO: fix this error
+        }; // TODO: fix this error
 
         if slice.range().size_bits() < kbl {
             vm_bail!(Unknown("invalid global_id config".to_string()))
@@ -179,7 +181,7 @@ impl ConfigOps {
             BigInt::from(prices.flat_gas_price)
         } else {
             let value: BigInt = BigInt::from(prices.flat_gas_price) * (gas - prices.flat_gas_limit);
-            value.shr(16) + prices.flat_gas_price //todo: shift with ceil rounding
+            value.shr(16) + prices.flat_gas_price // todo: shift with ceil rounding
         };
 
         ok!(stack.push_int(gas));
@@ -223,7 +225,7 @@ impl ConfigOps {
                 total += BigInt::from(bits) * prices.bit_price_ps;
             }
             total *= delta;
-            total.shr_assign(16) //todo: shift with ceil rounding
+            total.shr_assign(16) // todo: shift with ceil rounding
         }
 
         ok!(stack.push_int(total));
@@ -260,7 +262,7 @@ impl ConfigOps {
         let fees = BigInt::from(prices.lump_price)
             + (BigInt::from(prices.bit_price).mul(bits)
                 + BigInt::from(prices.cell_price).mul(cells))
-            .shr(16); //todo: must be with ceil rounding
+            .shr(16); // todo: must be with ceil rounding
 
         ok!(stack.push_int(fees));
         Ok(0)
@@ -357,7 +359,7 @@ impl ConfigOps {
         let config = BlockchainConfig::load_from(&mut slice)?;
         let prices = config.get_gas_prices(is_masterchain)?;
 
-        let fee = BigInt::from(prices.gas_price).mul(gas).shr(16); //todo: must be with ceil rounding
+        let fee = BigInt::from(prices.gas_price).mul(gas).shr(16); // todo: must be with ceil rounding
         ok!(stack.push_int(fee));
 
         Ok(0)
@@ -391,7 +393,7 @@ impl ConfigOps {
         let prices = config.get_msg_forward_prices(is_masterchain)?;
         let fees = (BigInt::from(prices.bit_price).mul(bits)
             + BigInt::from(prices.cell_price).mul(cells))
-        .shr(16); //todo: must be with ceil rounding
+        .shr(16); // todo: must be with ceil rounding
 
         ok!(stack.push_int(fees));
         Ok(0)

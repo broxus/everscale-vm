@@ -305,13 +305,10 @@ impl Contops {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop());
         let x = ok!(stack.pop());
-        vm_ensure!(
-            x.ty() == y.ty(),
-            InvalidType {
-                expected: x.ty(),
-                actual: y.ty(),
-            }
-        );
+        vm_ensure!(x.ty() == y.ty(), InvalidType {
+            expected: x.ty(),
+            actual: y.ty(),
+        });
         let cond = ok!(stack.pop_bool());
         ok!(stack.push_raw(match cond {
             true => x,
@@ -645,13 +642,10 @@ impl Contops {
         let value = ok!(stack.pop());
         let mut c0 = st.cr.c[0].clone().expect("c0 should always be set");
 
-        vm_ensure!(
-            i > 0 || value.ty() == StackValueType::Cont,
-            InvalidType {
-                expected: StackValueType::Cont,
-                actual: value.ty(),
-            }
-        );
+        vm_ensure!(i > 0 || value.ty() == StackValueType::Cont, InvalidType {
+            expected: StackValueType::Cont,
+            actual: value.ty(),
+        });
 
         // NOTE: Is it ok to ignore redefinition errors?
         let prev = st
@@ -774,7 +768,7 @@ impl Contops {
         for i in 1..=8 {
             if x & (1 << i) != 0 {
                 let Some(st_value) = st.cr.get_as_stack_value(i) else {
-                    //TODO: other error
+                    // TODO: other error
                     vm_bail!(InvalidType {
                         expected: StackValueType::Cont,
                         actual: StackValueType::Null
@@ -802,7 +796,7 @@ impl Contops {
         for i in 1..=8 {
             if mask & (1 << i) != 0 {
                 let Some(st_value) = st.cr.get_as_stack_value(i) else {
-                    //TODO: other error
+                    // TODO: other error
                     vm_bail!(InvalidType {
                         expected: StackValueType::Cont,
                         actual: StackValueType::Null
@@ -1292,13 +1286,14 @@ impl std::fmt::Display for ThrowAnyArgs {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::cont::RcCont;
-    use crate::stack::RcStackValue;
     use everscale_types::boc::Boc;
     use everscale_vm::cont::{ControlData, ControlRegs};
     use num_bigint::BigInt;
     use tracing_test::traced_test;
+
+    use super::*;
+    use crate::cont::RcCont;
+    use crate::stack::RcStackValue;
 
     #[test]
     #[traced_test]
@@ -1787,13 +1782,13 @@ mod tests {
             [int 3] => [int 2, int 2, int 2]
         );
 
-        //UNTIL
+        // UNTIL
         assert_run_vm!(
             "UNTIL",
             [raw cont1.clone()] => [int 2]
         );
 
-        //UNTILEND
+        // UNTILEND
         // TODO: case for other branch
         assert_run_vm!(
             "UNTILEND PUSHINT 0 PUSHINT 1",
@@ -1851,7 +1846,7 @@ mod tests {
             crate::instr::codepage0().id(),
         ));
 
-        //TODO: probably this behaviour with exit code 1 is okay. Add more cases with more loops
+        // TODO: probably this behaviour with exit code 1 is okay. Add more cases with more loops
 
         assert_run_vm!(
             "AGAIN",
@@ -1866,7 +1861,7 @@ mod tests {
             exit_code: 1
         );
 
-        //REPEATBRK
+        // REPEATBRK
 
         let code_c0 = Boc::decode(&everscale_asm_macros::tvmasm! {
             r#"
@@ -1894,7 +1889,7 @@ mod tests {
             [int 5, int 10, raw cont_c0.clone()] => [int 0, int 0, int 0, int 0, int 0]
         );
 
-        //REPEATENDBRK
+        // REPEATENDBRK
 
         assert_run_vm!(
             r#"
