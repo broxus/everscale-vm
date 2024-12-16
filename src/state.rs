@@ -34,6 +34,7 @@ pub struct VmStateBuilder {
     pub same_c3: bool,
     pub version: Option<VmVersion>,
     pub without_push0: bool,
+    pub stop_on_accept: bool,
     pub debug: Option<Box<dyn std::fmt::Write>>,
 }
 
@@ -98,6 +99,7 @@ impl VmStateBuilder {
             },
             cp,
             debug: self.debug,
+            stop_on_accept: self.stop_on_accept,
             version: self.version.unwrap_or(VmState::DEFAULT_VERSION),
         })
     }
@@ -193,6 +195,7 @@ pub struct VmState {
     pub gas: GasConsumer,
     pub cp: &'static DispatchTable,
     pub debug: Option<Box<dyn std::fmt::Write>>,
+    pub stop_on_accept: bool,
     pub version: VmVersion,
 }
 
