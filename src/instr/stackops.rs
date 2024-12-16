@@ -276,6 +276,7 @@ impl Stackops {
     #[instr(code = "60", fmt = "PICK")]
     fn exec_pick(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
+        // TODO: Allow using more than 255 items.
         let i = ok!(stack.pop_smallint_range(0, 255));
         ok!(stack.push_nth(i as _));
         Ok(0)
@@ -284,9 +285,14 @@ impl Stackops {
     #[instr(code = "61", fmt = "ROLL")]
     fn exec_roll(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
+
+        // TODO: Allow using more than 255 items.
         let mut i = ok!(stack.pop_smallint_range(0, 255));
-        st.gas.try_consume(std::cmp::max(i as u64 - 255, 0))?;
-        while i > 1 {
+        if let Some(diff) = i.checked_sub(255) {
+            st.gas.try_consume(diff as u64)?;
+        }
+
+        while i >= 1 {
             ok!(stack.swap(i as _, (i - 1) as _));
             i -= 1;
         }
@@ -296,8 +302,13 @@ impl Stackops {
     #[instr(code = "62", fmt = "ROLLREV")]
     fn exec_rollrev(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
+
+        // TODO: Allow using more than 255 items.
         let x = ok!(stack.pop_smallint_range(0, 255));
-        st.gas.try_consume(std::cmp::max(x as u64 - 255, 0))?;
+        if let Some(diff) = x.checked_sub(255) {
+            st.gas.try_consume(diff as u64)?;
+        }
+
         for i in 0..x {
             ok!(stack.swap(i as _, (i + 1) as _));
         }
@@ -307,8 +318,12 @@ impl Stackops {
     #[instr(code = "63", fmt = "BLKSWX")]
     fn exec_blkswap_x(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
+
+        // TODO: Allow using more than 255 items.
         let y = ok!(stack.pop_smallint_range(0, 255));
+        // TODO: Allow using more than 255 items.
         let x = ok!(stack.pop_smallint_range(0, 255));
+
         if x > 0 && y > 0 {
             //st.gas.try_consume(std::cmp::max((x + y) as u64 - 255, 0))?; //TODO: is it needed here
             ok!(stack.reverse_range(y as _, x as _));
@@ -321,8 +336,12 @@ impl Stackops {
     #[instr(code = "64", fmt = "REVX")]
     fn exec_reverse_x(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
+
+        // TODO: Allow using more than 255 items.
         let y = ok!(stack.pop_smallint_range(0, 255));
+        // TODO: Allow using more than 255 items.
         let x = ok!(stack.pop_smallint_range(0, 255));
+
         st.gas.try_consume(std::cmp::max(x as u64 - 255, 0))?;
         ok!(stack.reverse_range(y as _, x as _));
         Ok(0)
@@ -331,7 +350,10 @@ impl Stackops {
     #[instr(code = "65", fmt = "DROPX")]
     fn exec_drop_x(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
+
+        // TODO: Allow using more than 255 items.
         let x = ok!(stack.pop_smallint_range(0, 255));
+
         ok!(stack.pop_many(x as _));
         Ok(0)
     }
@@ -347,6 +369,7 @@ impl Stackops {
     #[instr(code = "67", fmt = "XCHGX")]
     fn exec_xchg_x(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
+        // TODO: Allow using more than 255 items.
         let x = ok!(stack.pop_smallint_range(0, 255));
         ok!(stack.swap(0, x as _));
         Ok(0)
@@ -362,6 +385,7 @@ impl Stackops {
     #[instr(code = "69", fmt = "CHKDEPTH")]
     fn exec_chkdepth(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
+        // TODO: Allow using more than 255 items.
         let x = ok!(stack.pop_smallint_range(0, 255)) as usize;
         vm_ensure!(x <= stack.depth(), StackUnderflow(x));
         Ok(0)
@@ -370,21 +394,30 @@ impl Stackops {
     #[instr(code = "6a", fmt = "ONLYTOPX")]
     fn exec_onlytop_x(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
+
+        // TODO: Allow using more than 255 items.
         let x = ok!(stack.pop_smallint_range(0, 255)) as usize;
         let Some(d) = stack.depth().checked_sub(x) else {
             vm_bail!(StackUnderflow(x));
         };
+
         if d > 0 {
-            st.gas.try_consume(std::cmp::max(x as u64 - 255, 0))?;
+            if let Some(diff) = d.checked_sub(255) {
+                st.gas.try_consume(diff as u64)?;
+            }
             stack.items.drain(..d);
         }
+
         stack.items.truncate(x);
         Ok(0)
     }
 
+    /// Pops integer `i` from the stack, then leaves only the bottom `i` element.
     #[instr(code = "6b", fmt = "ONLYX")]
     fn exec_only_x(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
+
+        // TODO: Allow using more than 255 items.
         let x = ok!(stack.pop_smallint_range(0, 255)) as usize;
         let Some(d) = stack.depth().checked_sub(x) else {
             vm_bail!(StackUnderflow(x));
@@ -393,6 +426,7 @@ impl Stackops {
         Ok(0)
     }
 
+    /// Drops `i` stack elements under the top `j` elements.
     #[instr(code = "6cij", range_from = "6c10", fmt = "BLKDROP2 {i},{j}")]
     fn exec_blkdrop2(st: &mut VmState, i: u32, j: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
@@ -403,5 +437,42 @@ impl Stackops {
 
         stack.items.drain(depth - (count + offset)..depth - offset);
         Ok(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tracing_test::traced_test;
+
+    #[test]
+    #[traced_test]
+    fn blkdrop2() {
+        assert_run_vm!("BLKDROP2 3, 0", [int 1, int 2, int 3, int 4, int 5, int 6] => [int 1, int 2, int 3]);
+        assert_run_vm!(
+            r#"
+                REVERSE 3, 0
+                BLKDROP 3
+            "#,
+            [int 1, int 2, int 3, int 4, int 5, int 6] => [int 1, int 2, int 3]
+        );
+
+        assert_run_vm!("BLKDROP2 3, 1", [int 1, int 2, int 3, int 4, int 5, int 6] => [int 1, int 2, int 6]);
+        assert_run_vm!(
+            r#"
+                REVERSE 4, 0
+                BLKDROP 3
+            "#,
+            [int 1, int 2, int 3, int 4, int 5, int 6] => [int 1, int 2, int 6]
+        );
+
+        assert_run_vm!("BLKDROP2 3, 2", [int 1, int 2, int 3, int 4, int 5, int 6] => [int 1, int 5, int 6]);
+        assert_run_vm!(
+            r#"
+                REVERSE 5, 0
+                BLKDROP 3
+                REVERSE 2, 0
+            "#,
+            [int 1, int 2, int 3, int 4, int 5, int 6] => [int 1, int 5, int 6]
+        );
     }
 }
