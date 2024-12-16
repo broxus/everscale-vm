@@ -199,7 +199,7 @@ impl Tupleops {
     fn exec_null_swap_if(st: &mut VmState, c: bool, d: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let x = ok!(stack.pop_int());
-        if x.is_zero() == c {
+        if x.is_zero() != c {
             ok!(stack.push_null());
             if d {
                 ok!(stack.swap(0, 1));
@@ -216,7 +216,7 @@ impl Tupleops {
     fn exec_null_swap_if2(st: &mut VmState, c: bool, d: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let x = ok!(stack.pop_int());
-        if x.is_zero() == c {
+        if x.is_zero() != c {
             ok!(stack.push_null());
             ok!(stack.push_null());
             if d {
@@ -290,16 +290,8 @@ fn tuple_index_impl(stack: &mut Stack, i: usize) -> VmResult<i32> {
 }
 
 fn tuple_index_quiet_impl(stack: &mut Stack, i: usize) -> VmResult<i32> {
-    let value = 'value: {
-        let Some(tuple) = ok!(stack.pop_opt_tuple_range(0, 255)) else {
-            break 'value None;
-        };
-        tuple.get(i).cloned()
-    };
-    ok!(match value {
-        None => stack.push_null(),
-        Some(value) => stack.push_raw(value),
-    });
+    let value = ok!(stack.pop_opt_tuple_range(0, 255)).and_then(|t| t.get(i).cloned());
+    ok!(stack.push_opt_raw(value));
     Ok(0)
 }
 
@@ -329,6 +321,7 @@ fn do_explode_tuple(
     n: usize,
     gas_consumer: &mut GasConsumer,
 ) -> VmResult<()> {
+    stack.reserve(n);
     match Rc::try_unwrap(tuple) {
         Ok(tuple) => {
             for item in tuple.into_iter().take(n) {
@@ -410,20 +403,138 @@ fn tuple_set_index_quiet_impl(
 }
 
 fn index_stack_value_as_tuple(value: &dyn StackValue, i: usize) -> VmResult<&RcStackValue> {
-    if let Some(tuple) = value.as_tuple_range(0, 255) {
-        let Some(value) = tuple.get(i) else {
-            vm_bail!(IntegerOutOfRange {
-                actual: i.to_string(),
-                min: 0,
-                max: tuple.len() as _,
-            });
-        };
+    let Some(tuple) = value.as_tuple_range(0, 255) else {
+        vm_bail!(InvalidType {
+            expected: StackValueType::Tuple,
+            actual: value.ty(),
+        });
+    };
 
-        return Ok(value);
+    let Some(value) = tuple.get(i) else {
+        vm_bail!(IntegerOutOfRange {
+            actual: i.to_string(),
+            min: 0,
+            max: tuple.len() as _,
+        });
+    };
+
+    Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+
+    use num_bigint::BigInt;
+    use tracing_test::traced_test;
+
+    use crate::stack::RcStackValue;
+
+    #[test]
+    #[traced_test]
+    fn swap_if_null() {
+        assert_run_vm!("NULLSWAPIF", [int 0] => [int 0]);
+        assert_run_vm!("NULLSWAPIF", [int -1] => [null, int -1]);
+
+        assert_run_vm!("NULLSWAPIFNOT", [int 0] => [null, int 0]);
+        assert_run_vm!("NULLSWAPIFNOT", [int -1] => [int -1]);
+
+        assert_run_vm!("NULLROTRIF", [int 1, int 0] => [int 1, int 0]);
+        assert_run_vm!("NULLROTRIF", [int 1, int -1] => [null, int 1, int -1]);
+
+        assert_run_vm!("NULLROTRIFNOT", [int 1, int 0] => [null, int 1, int 0]);
+        assert_run_vm!("NULLROTRIFNOT", [int 1, int -1] => [int 1, int -1]);
     }
 
-    vm_bail!(InvalidType {
-        expected: StackValueType::Tuple,
-        actual: value.ty(),
-    });
+    #[test]
+    #[traced_test]
+    fn swap_if_null_2() {
+        assert_run_vm!("NULLSWAPIF2", [int 0] => [int 0]);
+        assert_run_vm!("NULLSWAPIF NULLSWAPIF", [int 0] => [int 0]);
+        assert_run_vm!("NULLSWAPIF2", [int -1] => [null, null, int -1]);
+        assert_run_vm!("NULLSWAPIF NULLSWAPIF", [int -1] => [null, null, int -1]);
+
+        assert_run_vm!("NULLSWAPIFNOT2", [int 0] => [null, null, int 0]);
+        assert_run_vm!("NULLSWAPIFNOT NULLSWAPIFNOT", [int 0] => [null, null, int 0]);
+        assert_run_vm!("NULLSWAPIFNOT2", [int -1] => [int -1]);
+        assert_run_vm!("NULLSWAPIFNOT NULLSWAPIFNOT", [int -1] => [int -1]);
+
+        assert_run_vm!("NULLROTRIF2", [int 1, int 0] => [int 1, int 0]);
+        assert_run_vm!("NULLROTRIF NULLROTRIF", [int 1, int 0] => [int 1, int 0]);
+        assert_run_vm!("NULLROTRIF2", [int 1, int -1] => [null, null, int 1, int -1]);
+        assert_run_vm!("NULLROTRIF NULLROTRIF", [int 1, int -1] => [null, null, int 1, int -1]);
+
+        assert_run_vm!("NULLROTRIFNOT2", [int 1, int 0] => [null, null, int 1, int 0]);
+        assert_run_vm!("NULLROTRIFNOT NULLROTRIFNOT", [int 1, int 0] => [null, null, int 1, int 0]);
+        assert_run_vm!("NULLROTRIFNOT2", [int 1, int -1] => [int 1, int -1]);
+        assert_run_vm!("NULLROTRIFNOT NULLROTRIFNOT", [int 1, int -1] => [int 1, int -1]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn index2() {
+        let inner_tuple1: RcStackValue = Rc::new(stack![int 1, int 2, int 3, int 4]);
+        let inner_tuple2: RcStackValue = Rc::new(stack![int 5, int 6, int 7, int 8]);
+        let outer_tuple: RcStackValue = Rc::new(stack![raw inner_tuple1, raw inner_tuple2]);
+
+        assert_run_vm!("INDEX2 0, 0", [raw outer_tuple.clone()] => [int 1]);
+        assert_run_vm!("INDEX 0 INDEX 0", [raw outer_tuple.clone()] => [int 1]);
+        assert_run_vm!("INDEX2 0, 1", [raw outer_tuple.clone()] => [int 2]);
+        assert_run_vm!("INDEX 0 INDEX 1", [raw outer_tuple.clone()] => [int 2]);
+        assert_run_vm!("INDEX2 0, 2", [raw outer_tuple.clone()] => [int 3]);
+        assert_run_vm!("INDEX 0 INDEX 2", [raw outer_tuple.clone()] => [int 3]);
+        assert_run_vm!("INDEX2 0, 3", [raw outer_tuple.clone()] => [int 4]);
+        assert_run_vm!("INDEX 0 INDEX 3", [raw outer_tuple.clone()] => [int 4]);
+
+        assert_run_vm!("INDEX2 1, 0", [raw outer_tuple.clone()] => [int 5]);
+        assert_run_vm!("INDEX 1 INDEX 0", [raw outer_tuple.clone()] => [int 5]);
+        assert_run_vm!("INDEX2 1, 1", [raw outer_tuple.clone()] => [int 6]);
+        assert_run_vm!("INDEX 1 INDEX 1", [raw outer_tuple.clone()] => [int 6]);
+        assert_run_vm!("INDEX2 1, 2", [raw outer_tuple.clone()] => [int 7]);
+        assert_run_vm!("INDEX 1 INDEX 2", [raw outer_tuple.clone()] => [int 7]);
+        assert_run_vm!("INDEX2 1, 3", [raw outer_tuple.clone()] => [int 8]);
+        assert_run_vm!("INDEX 1 INDEX 3", [raw outer_tuple.clone()] => [int 8]);
+
+        let inner_tuple1: RcStackValue = Rc::new(stack![int 1]);
+        let inner_tuple2: RcStackValue = Rc::new(stack![int 5]);
+        let outer_tuple: RcStackValue = Rc::new(stack![raw inner_tuple1, raw inner_tuple2]);
+        assert_run_vm!("INDEX2 0, 2", [raw outer_tuple.clone()] => [int 0], exit_code: 5);
+        assert_run_vm!("INDEX2 2, 2", [raw outer_tuple] => [int 0], exit_code: 5);
+    }
+
+    #[test]
+    #[traced_test]
+    fn index3() {
+        let tuple = {
+            let mut tuple = Vec::new();
+            let mut n = 0;
+            for _ in 0..4 {
+                let mut row = Vec::new();
+                for _ in 0..4 {
+                    let mut col = Vec::new();
+                    for _ in 0..4 {
+                        n += 1;
+                        col.push(Rc::new(BigInt::from(n)) as RcStackValue);
+                    }
+                    row.push(Rc::new(col) as RcStackValue);
+                }
+                tuple.push(Rc::new(row) as RcStackValue);
+            }
+            Rc::new(tuple) as RcStackValue
+        };
+
+        assert_run_vm!("INDEX3 0, 0, 0", [raw tuple.clone()] => [int 1]);
+        assert_run_vm!("INDEX3 0, 0, 1", [raw tuple.clone()] => [int 2]);
+        assert_run_vm!("INDEX3 0, 0, 2", [raw tuple.clone()] => [int 3]);
+        assert_run_vm!("INDEX 0 INDEX 0 INDEX 2", [raw tuple.clone()] => [int 3]);
+        assert_run_vm!("INDEX2 0, 0 INDEX 2", [raw tuple.clone()] => [int 3]);
+
+        let t = 1 + 3 + 2 * 4 + 1 * 4 * 4;
+        assert_run_vm!("INDEX3 1, 2, 3", [raw tuple.clone()] => [int t]);
+        assert_run_vm!("INDEX 1 INDEX 2 INDEX 3", [raw tuple.clone()] => [int t]);
+        assert_run_vm!("INDEX2 1, 2 INDEX 3", [raw tuple.clone()] => [int t]);
+
+        assert_run_vm!("INDEX3 3, 3, 3", [raw tuple.clone()] => [int 64]);
+        assert_run_vm!("INDEX2 3, 3 INDEX 3", [raw tuple.clone()] => [int 64]);
+    }
 }

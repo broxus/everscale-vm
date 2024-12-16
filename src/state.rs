@@ -847,6 +847,7 @@ impl GasConsumer {
         self.try_consume(tuple_len * Self::TUPLE_ENTRY_GAS_PRICE)?;
         Ok(())
     }
+
     pub fn try_consume_stack_depth_gas(&mut self, depth: u64) -> Result<(), Error> {
         self.try_consume(
             (std::cmp::max(depth, Self::FREE_STACK_DEPTH) - Self::FREE_STACK_DEPTH)

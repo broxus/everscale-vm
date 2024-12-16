@@ -54,7 +54,7 @@ macro_rules! stack {
     };
     (@v raw $value:expr) => {
         $value
-    }
+    };
 }
 
 #[cfg(test)]
