@@ -203,6 +203,23 @@ impl VmState {
 
     pub const MAX_DATA_DEPTH: u16 = 512;
 
+    pub const ACTIONS_GLOBAL_IDX: usize = 1;
+    pub const MSGS_SENT_GLOBAL_IDX: usize = 2;
+    pub const UNIX_TIME_GLOBAL_IDX: usize = 3;
+    pub const BLOCK_LT_GLOBAL_IDX: usize = 4;
+    pub const TX_LT_GLOBAL_IDX: usize = 5;
+    pub const RANDSEED_GLOBAL_IDX: usize = 6;
+    pub const BALANCE_GLOBAL_IDX: usize = 7;
+    pub const MYADDR_GLOBAL_IDX: usize = 8;
+    pub const CONFIG_GLOBAL_IDX: usize = 9;
+    pub const MYCODE_GLOBAL_IDX: usize = 10;
+    pub const IN_MSG_VALUE_GLOBAL_IDX: usize = 11;
+    pub const STORAGE_FEE_GLOBAL_IDX: usize = 12;
+    pub const PREV_BLOCKS_GLOBAL_IDX: usize = 13;
+    pub const PARSED_CONFIG_GLOBAL_IDX: usize = 14;
+    pub const STORAGE_DEBT_GLOBAL_IDX: usize = 15;
+    pub const PRECOMPILED_GAS_GLOBAL_IDX: usize = 16;
+
     thread_local! {
         static EMPTY_STACK: Rc<Stack> = Rc::new(Default::default());
     }
@@ -775,12 +792,12 @@ pub enum VmVersion {
 }
 
 impl VmVersion {
-    pub fn is_ton(&self, at_least: u32) -> bool {
-        matches!(self, Self::Ton(version) if *version >= at_least)
+    pub fn is_ton<R: std::ops::RangeBounds<u32>>(&self, range: R) -> bool {
+        matches!(self, Self::Ton(version) if range.contains(version))
     }
 
-    pub fn require_ton(&self, at_least: u32) -> VmResult<()> {
-        vm_ensure!(self.is_ton(at_least), InvalidOpcode);
+    pub fn require_ton<R: std::ops::RangeBounds<u32>>(&self, range: R) -> VmResult<()> {
+        vm_ensure!(self.is_ton(range), InvalidOpcode);
         Ok(())
     }
 }

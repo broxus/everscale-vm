@@ -3,21 +3,23 @@ use std::ops::{Add, AddAssign, Mul, Shr, Sub};
 use std::rc::Rc;
 
 use everscale_types::cell::{CellBuilder, CellSlice, CellSliceParts, HashBytes, StorageStat};
+use everscale_types::dict::Dict;
 use everscale_types::error::Error;
 use everscale_types::models::{
-    BaseMessage, BlockchainConfig, MsgForwardPrices, OwnedRelaxedMessage, RelaxedMsgInfo,
+    BaseMessage, BlockchainConfig, BlockchainConfigParams, MsgForwardPrices, OwnedRelaxedMessage,
+    RelaxedMsgInfo,
 };
 use everscale_types::num::{SplitDepth, Tokens};
 use everscale_types::prelude::{Cell, CellFamily, Load, Store};
 use everscale_vm::stack::StackValueType;
-use everscale_vm::util::{get_param_from_c7, load_uint_leq};
+use everscale_vm::util::load_uint_leq;
 use everscale_vm_proc::vm_module;
 use num_bigint::BigInt;
 use num_traits::{ToPrimitive, Zero};
 
 use crate::cont::ControlRegs;
 use crate::error::VmResult;
-use crate::stack::RcStackValue;
+use crate::stack::{RcStackValue, Tuple, TupleExt};
 use crate::util::OwnedCellSlice;
 use crate::VmState;
 
@@ -62,14 +64,8 @@ impl MessageOps {
         let mut cs = owned_slice.apply()?;
         let relaxed_message: BaseMessage<RelaxedMsgInfo, CellSliceParts> =
             OwnedRelaxedMessage::load_from(&mut cs)?;
-        let my_addr_value: &RcStackValue = ok!(get_param_from_c7(&st.cr, 8));
-        let my_addr = my_addr_value.as_slice();
-        let Some(my_addr) = my_addr else {
-            vm_bail!(InvalidType {
-                expected: StackValueType::Slice,
-                actual: StackValueType::Null
-            });
-        };
+        let t1 = ok!(st.cr.get_c7_params());
+        let my_addr = ok!(t1.try_get_ref::<OwnedCellSlice>(VmState::MYADDR_GLOBAL_IDX));
 
         let mut value: BigInt = BigInt::zero();
         let mut have_extra_currencies = false;
@@ -115,7 +111,7 @@ impl MessageOps {
 
         match is_external {
             true if mode & 128 != 0 => {
-                let balances: &[RcStackValue] = ok!(get_balances(&st.cr, 7));
+                let balances = ok!(get_balances(&st.cr, VmState::BALANCE_GLOBAL_IDX));
 
                 let Some(balances_value) = balances.first() else {
                     vm_bail!(InvalidType {
@@ -144,7 +140,7 @@ impl MessageOps {
                 have_extra_currencies |= extra_balances_opt.is_some();
             }
             true if mode & 64 != 0 => {
-                let balances: &[RcStackValue] = ok!(get_balances(&st.cr, 11));
+                let balances = ok!(get_balances(&st.cr, VmState::IN_MSG_VALUE_GLOBAL_IDX));
                 let Some(balances_value) = balances.first() else {
                     vm_bail!(InvalidType {
                         expected: StackValueType::Int,
@@ -514,33 +510,22 @@ fn stored_tokens_len(x: &BigInt) -> u16 {
     let bits = x.bits();
     4 + ((bits + 7) & !7) as u16
 }
+
 fn get_balances(regs: &ControlRegs, index: usize) -> VmResult<&'_ [RcStackValue]> {
-    let balance: &RcStackValue = ok!(get_param_from_c7(regs, index));
-    let Some(balances) = balance.as_tuple() else {
-        vm_bail!(InvalidType {
-            expected: StackValueType::Tuple,
-            actual: StackValueType::Null
-        })
-    };
-    Ok(balances)
+    ok!(regs.get_c7_params()).try_get_ref::<Tuple>(index)
 }
 
+// TODO: Replace with newer version
 fn get_message_prices(is_masterchain: bool, regs: &ControlRegs) -> VmResult<MsgForwardPrices> {
-    let config = ok!(get_param_from_c7(regs, 9));
+    let t1 = ok!(regs.get_c7_params());
+    let config = ok!(t1.try_get_ref::<Cell>(VmState::CONFIG_GLOBAL_IDX));
 
-    let Some(config_slice) = config.as_slice() else {
-        vm_bail!(InvalidType {
-            expected: StackValueType::Slice,
-            actual: config.ty()
-        })
-    };
-    let mut config = config_slice.apply()?;
-    let config = BlockchainConfig::load_from(&mut config)?;
-    let Ok(msg_prices) = config.get_msg_forward_prices(is_masterchain) else {
-        vm_bail!(CellError(Error::CellUnderflow))
+    let dict = Dict::<u32, Cell>::from_raw(Some(config.clone()));
+    let Some(prices) = dict.get(if is_masterchain { 24 } else { 25 })? else {
+        vm_bail!(CellError(Error::CellUnderflow));
     };
 
-    Ok(msg_prices)
+    prices.parse::<MsgForwardPrices>().map_err(Into::into)
 }
 
 pub fn parse_address_workchain(cs: &mut CellSlice) -> VmResult<i8> {

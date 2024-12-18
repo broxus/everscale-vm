@@ -3,14 +3,11 @@ use std::rc::Rc;
 
 use everscale_types::dict::DictKey;
 use everscale_types::error::Error;
+use everscale_types::models::{GasLimitsPrices, MsgForwardPrices, StoragePrices};
+use everscale_types::num::Tokens;
 use everscale_types::prelude::*;
-use everscale_vm::stack::StackValueType;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{One, ToPrimitive, Zero};
-
-use crate::cont::ControlRegs;
-use crate::error::VmResult;
-use crate::stack::{RcStackValue, Tuple};
 
 #[derive(Default, Debug, Clone)]
 #[repr(transparent)]
@@ -122,6 +119,70 @@ impl Load<'_> for Uint4 {
     fn load_from(slice: &mut CellSlice<'_>) -> Result<Self, Error> {
         Ok(Self(ok!(slice.load_small_uint(4)) as usize))
     }
+}
+
+pub trait GasLimitsPricesExt {
+    fn compute_gas_fee(&self, gas_used: u64) -> Tokens;
+}
+
+impl GasLimitsPricesExt for GasLimitsPrices {
+    fn compute_gas_fee(&self, gas_used: u64) -> Tokens {
+        let mut res = self.flat_gas_price as u128;
+        if let Some(extra_gas) = gas_used.checked_sub(self.flat_gas_limit) {
+            res = res.saturating_add(shift_ceil_price(self.gas_price as u128 * extra_gas as u128));
+        }
+        Tokens::new(res)
+    }
+}
+
+pub trait StoragePricesExt {
+    fn compute_storage_fee(
+        &self,
+        is_masterchain: bool,
+        delta: u64,
+        bits: u64,
+        cells: u64,
+    ) -> Tokens;
+}
+
+impl StoragePricesExt for StoragePrices {
+    fn compute_storage_fee(
+        &self,
+        is_masterchain: bool,
+        delta: u64,
+        bits: u64,
+        cells: u64,
+    ) -> Tokens {
+        let mut res = if is_masterchain {
+            (cells as u128 * self.mc_cell_price_ps as u128)
+                .saturating_add(bits as u128 * self.mc_bit_price_ps as u128)
+        } else {
+            (cells as u128 * self.cell_price_ps as u128)
+                .saturating_add(bits as u128 * self.bit_price_ps as u128)
+        };
+        res = res.saturating_mul(delta as u128);
+        Tokens::new(shift_ceil_price(res))
+    }
+}
+
+pub trait MsgForwardPricesExt {
+    fn compute_fwd_fee(&self, bits: u64, cells: u64) -> Tokens;
+}
+
+impl MsgForwardPricesExt for MsgForwardPrices {
+    fn compute_fwd_fee(&self, bits: u64, cells: u64) -> Tokens {
+        let lump = self.lump_price as u128;
+        let extra = shift_ceil_price(
+            (cells as u128 * self.cell_price as u128)
+                .saturating_add(bits as u128 * self.bit_price as u128),
+        );
+        Tokens::new(lump.saturating_add(extra))
+    }
+}
+
+pub const fn shift_ceil_price(value: u128) -> u128 {
+    let r = value & 0xffff != 0;
+    (value >> 16) + r as u128
 }
 
 pub fn ensure_empty_slice(slice: &CellSlice) -> Result<(), Error> {
@@ -239,38 +300,6 @@ pub fn store_int_to_builder(
             builder.store_raw(&bytes, bits)
         }
     }
-}
-
-pub fn get_unpacked_config_tuple(regs: &ControlRegs) -> VmResult<Rc<Tuple>> {
-    let param = ok!(get_param_from_c7(regs, 14));
-    param.clone().into_tuple()
-}
-
-pub fn get_param_from_c7(regs: &ControlRegs, index: usize) -> VmResult<&RcStackValue> {
-    let Some(c7) = &regs.c7 else {
-        vm_bail!(ControlRegisterOutOfRange(7))
-    };
-
-    let Some(control_params) = c7.first() else {
-        vm_bail!(InvalidType {
-            expected: StackValueType::Tuple,
-            actual: StackValueType::Null
-        })
-    };
-
-    let Some(intermediate_value) = control_params.as_tuple_range(0, 255) else {
-        vm_bail!(InvalidType {
-            expected: StackValueType::Tuple,
-            actual: control_params.ty()
-        })
-    };
-
-    let param: &RcStackValue = match intermediate_value.get(index) {
-        Some(param) => param,
-        None => vm_bail!(ControlRegisterOutOfRange(index)),
-    };
-
-    Ok(param)
 }
 
 pub fn load_uint_leq(cs: &mut CellSlice, upper_bound: u32) -> Result<u64, Error> {

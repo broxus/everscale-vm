@@ -540,12 +540,63 @@ impl dyn StackValue + '_ {
     }
 }
 
+pub trait StaticStackValue {
+    type DynRef<'a>;
+
+    fn known_ty() -> StackValueType;
+    fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>>;
+    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>>;
+}
+
 fn invalid_type(actual: StackValueType, expected: StackValueType) -> Box<VmError> {
     Box::new(VmError::InvalidType { expected, actual })
 }
 
 pub type RcStackValue = Rc<dyn StackValue>;
 pub type Tuple = Vec<RcStackValue>;
+
+pub trait TupleExt {
+    fn try_get(&self, index: usize) -> VmResult<&RcStackValue>;
+
+    fn try_get_owned<V: StaticStackValue>(&self, index: usize) -> VmResult<Rc<V>> {
+        let value = ok!(self.try_get(index));
+        V::from_dyn(value.clone())
+    }
+
+    fn try_get_ref<V: StaticStackValue>(&self, index: usize) -> VmResult<V::DynRef<'_>> {
+        let value = ok!(self.try_get(index));
+        V::from_dyn_ref(value.as_ref())
+    }
+
+    fn try_get_tuple_range<R>(&self, index: usize, range: R) -> VmResult<&[RcStackValue]>
+    where
+        R: std::ops::RangeBounds<usize>,
+    {
+        let value = ok!(self.try_get_ref::<Tuple>(index));
+        if range.contains(&value.len()) {
+            Ok(value)
+        } else {
+            // NOTE: This error is logically incorrect, but it is the desired behaviour.
+            vm_bail!(InvalidType {
+                expected: StackValueType::Tuple,
+                actual: StackValueType::Null
+            })
+        }
+    }
+}
+
+impl TupleExt for [RcStackValue] {
+    fn try_get(&self, index: usize) -> VmResult<&RcStackValue> {
+        let Some(value) = self.get(index) else {
+            vm_bail!(IntegerOutOfRange {
+                min: 0,
+                max: self.len() as _,
+                actual: index.to_string(),
+            });
+        };
+        Ok(value)
+    }
+}
 
 pub fn load_stack_value(
     slice: &mut CellSlice,
@@ -691,6 +742,28 @@ impl StackValue for BigInt {
     }
 }
 
+impl StaticStackValue for BigInt {
+    type DynRef<'a> = &'a BigInt;
+
+    fn known_ty() -> StackValueType {
+        StackValueType::Int
+    }
+
+    fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>> {
+        value.into_int()
+    }
+
+    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
+        match value.as_int() {
+            Some(value) => Ok(value),
+            None => vm_bail!(InvalidType {
+                expected: StackValueType::Int,
+                actual: value.ty(),
+            }),
+        }
+    }
+}
+
 impl StackValue for Cell {
     fn ty(&self) -> StackValueType {
         StackValueType::Cell
@@ -715,6 +788,28 @@ impl StackValue for Cell {
 
     fn into_cell(self: Rc<Self>) -> VmResult<Rc<Cell>> {
         Ok(self)
+    }
+}
+
+impl StaticStackValue for Cell {
+    type DynRef<'a> = &'a Cell;
+
+    fn known_ty() -> StackValueType {
+        StackValueType::Cell
+    }
+
+    fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>> {
+        value.into_cell()
+    }
+
+    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
+        match value.as_cell() {
+            Some(value) => Ok(value),
+            None => vm_bail!(InvalidType {
+                expected: StackValueType::Cell,
+                actual: value.ty(),
+            }),
+        }
     }
 }
 
@@ -745,6 +840,28 @@ impl StackValue for OwnedCellSlice {
     }
 }
 
+impl StaticStackValue for OwnedCellSlice {
+    type DynRef<'a> = &'a OwnedCellSlice;
+
+    fn known_ty() -> StackValueType {
+        StackValueType::Slice
+    }
+
+    fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>> {
+        value.into_slice()
+    }
+
+    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
+        match value.as_slice() {
+            Some(value) => Ok(value),
+            None => vm_bail!(InvalidType {
+                expected: StackValueType::Slice,
+                actual: value.ty(),
+            }),
+        }
+    }
+}
+
 impl StackValue for CellBuilder {
     fn ty(&self) -> StackValueType {
         StackValueType::Builder
@@ -772,6 +889,28 @@ impl StackValue for CellBuilder {
     }
 }
 
+impl StaticStackValue for CellBuilder {
+    type DynRef<'a> = &'a CellBuilder;
+
+    fn known_ty() -> StackValueType {
+        StackValueType::Builder
+    }
+
+    fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>> {
+        value.into_builder()
+    }
+
+    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
+        match value.as_builder() {
+            Some(value) => Ok(value),
+            None => vm_bail!(InvalidType {
+                expected: StackValueType::Builder,
+                actual: value.ty(),
+            }),
+        }
+    }
+}
+
 impl StackValue for DynCont {
     fn ty(&self) -> StackValueType {
         StackValueType::Cont
@@ -796,6 +935,28 @@ impl StackValue for DynCont {
 
     fn into_cont(self: Rc<Self>) -> VmResult<RcCont> {
         Ok(self)
+    }
+}
+
+impl StaticStackValue for DynCont {
+    type DynRef<'a> = &'a DynCont;
+
+    fn known_ty() -> StackValueType {
+        StackValueType::Cont
+    }
+
+    fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>> {
+        value.into_cont()
+    }
+
+    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
+        match value.as_cont() {
+            Some(value) => Ok(value),
+            None => vm_bail!(InvalidType {
+                expected: StackValueType::Cont,
+                actual: value.ty(),
+            }),
+        }
     }
 }
 
@@ -862,6 +1023,28 @@ impl StackValue for Tuple {
 
     fn into_tuple(self: Rc<Self>) -> VmResult<Rc<Tuple>> {
         Ok(self)
+    }
+}
+
+impl StaticStackValue for Tuple {
+    type DynRef<'a> = &'a [RcStackValue];
+
+    fn known_ty() -> StackValueType {
+        StackValueType::Tuple
+    }
+
+    fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>> {
+        value.into_tuple()
+    }
+
+    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
+        match value.as_tuple() {
+            Some(value) => Ok(value),
+            None => vm_bail!(InvalidType {
+                expected: StackValueType::Tuple,
+                actual: value.ty(),
+            }),
+        }
     }
 }
 
