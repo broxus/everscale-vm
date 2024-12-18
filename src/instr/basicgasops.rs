@@ -31,7 +31,7 @@ impl BasicGasOps {
 
     #[instr(code = "f807", fmt = "GASCONSUMED")]
     fn exec_gas_consumed(st: &mut VmState) -> VmResult<i32> {
-        ok!(st.version.require_ton(4));
+        ok!(st.version.require_ton(4..));
 
         let stack = Rc::make_mut(&mut st.stack);
         ok!(stack.push_int(st.gas.gas_consumed()));

@@ -463,7 +463,7 @@ mod tests {
 
         assert_run_vm!(
             "HASHEXT_SHA256",
-            [raw raw1, raw raw2, int 2] => [],
+            [raw raw1, raw raw2, int 2] => [int 0],
             exit_code: 9
         );
     }

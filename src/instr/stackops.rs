@@ -433,7 +433,7 @@ impl Stackops {
 }
 
 fn should_consume_gas(version: VmVersion) -> bool {
-    version.is_ton(4)
+    version.is_ton(4..)
 }
 
 fn max_stack_size(version: VmVersion) -> u32 {

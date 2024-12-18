@@ -74,7 +74,7 @@ impl RandOps {
         };
 
         if mix {
-            let bytes = match t1.get(RANDSEED_IDX) {
+            let bytes = match t1.get(VmState::RANDSEED_GLOBAL_IDX) {
                 Some(value) => {
                     let value = ok!(value.clone().into_int());
                     ok!(to_bytes_be(&value))
@@ -106,7 +106,7 @@ impl RandOps {
         Rc::make_mut(&mut c7)[0] = Stack::make_null();
 
         let mut t1v = t1v.into_tuple().expect("t1 was checked as tuple");
-        Rc::make_mut(&mut t1v)[RANDSEED_IDX] = int;
+        Rc::make_mut(&mut t1v)[VmState::RANDSEED_GLOBAL_IDX] = int;
         let t1_len = t1v.len();
 
         // NOTE: Restore c7 and control registers state.
@@ -139,7 +139,7 @@ fn generate_random_u256(regs: &mut ControlRegs, gas: &mut GasConsumer) -> VmResu
         })
     };
 
-    let hash: [u8; 64] = match t1.get(RANDSEED_IDX) {
+    let hash: [u8; 64] = match t1.get(VmState::RANDSEED_GLOBAL_IDX) {
         Some(value) => {
             let value = ok!(value.clone().into_int());
             let bytes = ok!(to_bytes_be(&value));
@@ -166,7 +166,7 @@ fn generate_random_u256(regs: &mut ControlRegs, gas: &mut GasConsumer) -> VmResu
     Rc::make_mut(&mut c7)[0] = Stack::make_null();
 
     let mut t1v = t1v.into_tuple().expect("t1 was checked as tuple");
-    Rc::make_mut(&mut t1v)[RANDSEED_IDX] = new_seedv;
+    Rc::make_mut(&mut t1v)[VmState::RANDSEED_GLOBAL_IDX] = new_seedv;
     let t1_len = t1v.len();
 
     // NOTE: Restore c7 and control registers state.
@@ -192,8 +192,6 @@ fn to_bytes_be(int: &BigInt) -> VmResult<Vec<u8>> {
     bytes.reverse();
     Ok(bytes)
 }
-
-const RANDSEED_IDX: usize = 6;
 
 #[cfg(test)]
 pub mod test {
