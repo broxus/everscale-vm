@@ -3,6 +3,8 @@ use std::rc::Rc;
 
 use everscale_types::dict::DictKey;
 use everscale_types::error::Error;
+use everscale_types::models::{GasLimitsPrices, MsgForwardPrices, StoragePrices};
+use everscale_types::num::Tokens;
 use everscale_types::prelude::*;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_traits::{One, ToPrimitive, Zero};
@@ -119,12 +121,142 @@ impl Load<'_> for Uint4 {
     }
 }
 
+pub trait GasLimitsPricesExt {
+    fn compute_gas_fee(&self, gas_used: u64) -> Tokens;
+}
+
+impl GasLimitsPricesExt for GasLimitsPrices {
+    fn compute_gas_fee(&self, gas_used: u64) -> Tokens {
+        let mut res = self.flat_gas_price as u128;
+        if let Some(extra_gas) = gas_used.checked_sub(self.flat_gas_limit) {
+            res = res.saturating_add(shift_ceil_price(self.gas_price as u128 * extra_gas as u128));
+        }
+        Tokens::new(res)
+    }
+}
+
+pub trait StoragePricesExt {
+    fn compute_storage_fee(
+        &self,
+        is_masterchain: bool,
+        delta: u64,
+        bits: u64,
+        cells: u64,
+    ) -> Tokens;
+}
+
+impl StoragePricesExt for StoragePrices {
+    fn compute_storage_fee(
+        &self,
+        is_masterchain: bool,
+        delta: u64,
+        bits: u64,
+        cells: u64,
+    ) -> Tokens {
+        let mut res = if is_masterchain {
+            (cells as u128 * self.mc_cell_price_ps as u128)
+                .saturating_add(bits as u128 * self.mc_bit_price_ps as u128)
+        } else {
+            (cells as u128 * self.cell_price_ps as u128)
+                .saturating_add(bits as u128 * self.bit_price_ps as u128)
+        };
+        res = res.saturating_mul(delta as u128);
+        Tokens::new(shift_ceil_price(res))
+    }
+}
+
+pub trait MsgForwardPricesExt {
+    fn compute_fwd_fee(&self, bits: u64, cells: u64) -> Tokens;
+}
+
+impl MsgForwardPricesExt for MsgForwardPrices {
+    fn compute_fwd_fee(&self, bits: u64, cells: u64) -> Tokens {
+        let lump = self.lump_price as u128;
+        let extra = shift_ceil_price(
+            (cells as u128 * self.cell_price as u128)
+                .saturating_add(bits as u128 * self.bit_price as u128),
+        );
+        Tokens::new(lump.saturating_add(extra))
+    }
+}
+
+pub const fn shift_ceil_price(value: u128) -> u128 {
+    let r = value & 0xffff != 0;
+    (value >> 16) + r as u128
+}
+
 pub fn ensure_empty_slice(slice: &CellSlice) -> Result<(), Error> {
     if slice.is_data_empty() && slice.is_refs_empty() {
         Ok(())
     } else {
         Err(Error::InvalidData)
     }
+}
+
+pub fn load_var_int_from_slice(
+    slice: &mut CellSlice<'_>,
+    len_bits: u16,
+    signed: bool,
+) -> Result<BigInt, Error> {
+    let len = slice.load_uint(len_bits)? as u16;
+    load_int_from_slice(slice, len * 8, signed)
+}
+
+pub fn load_int_from_slice(
+    slice: &mut CellSlice<'_>,
+    bits: u16,
+    signed: bool,
+) -> Result<BigInt, Error> {
+    match bits {
+        0 => Ok(BigInt::zero()),
+        0..=64 if !signed => slice.load_uint(bits).map(BigInt::from),
+        0..=64 if signed => slice.load_uint(bits).map(|mut int| {
+            if bits < 64 {
+                // Clone sign bit into all high bits
+                int |= ((int >> (bits - 1)) * u64::MAX) << (bits - 1);
+            }
+            BigInt::from(int as i64)
+        }),
+        _ => {
+            let rem = bits % 8;
+            let mut buffer = [0u8; 33];
+            slice.load_raw(&mut buffer, bits).map(|buffer| {
+                let mut int = if signed {
+                    BigInt::from_signed_bytes_be(buffer)
+                } else {
+                    BigInt::from_bytes_be(Sign::Plus, buffer)
+                };
+                if bits % 8 != 0 {
+                    int >>= 8 - rem;
+                }
+                int
+            })
+        }
+    }
+}
+
+pub fn store_varint_to_builder(
+    int: &BigInt,
+    bits: u16,
+    builder: &mut CellBuilder,
+    signed: bool,
+    quite: bool,
+) -> Result<bool, Error> {
+    let bitsize = bitsize(int, signed);
+    let len = (bitsize + 7) >> 3;
+    if len >= (1 << bits) {
+        return Err(Error::InvalidData); // TODO: range check
+    }
+
+    if !builder.has_capacity(bits + len * 8, 0) {
+        if quite {
+            return Ok(false);
+        }
+        return Err(Error::CellUnderflow);
+    }
+    builder.store_uint(len as u64, bits)?;
+    store_int_to_builder(int, len * 8, signed, builder)?;
+    Ok(true)
 }
 
 pub fn store_int_to_builder(
@@ -167,6 +299,26 @@ pub fn store_int_to_builder(
 
             builder.store_raw(&bytes, bits)
         }
+    }
+}
+
+pub fn load_uint_leq(cs: &mut CellSlice, upper_bound: u32) -> Result<u64, Error> {
+    let leading_zeros = if upper_bound == 0 {
+        32
+    } else {
+        upper_bound.leading_zeros()
+    };
+    let bits = 32 - leading_zeros;
+    if bits > 32 || bits > cs.size_bits() as u32 {
+        Err(Error::IntOverflow)
+    } else {
+        let result = cs.get_uint(cs.offset_bits(), bits as u16)?;
+        if result > upper_bound as u64 {
+            return Err(Error::IntOverflow);
+        };
+
+        cs.skip_first(bits as u16, 0)?;
+        Ok(result)
     }
 }
 

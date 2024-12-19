@@ -2,14 +2,13 @@ use std::rc::Rc;
 
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
-
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
 use crate::error::VmResult;
 use crate::stack::{
-    load_slice_as_stack_value, load_stack, load_stack_value, store_slice_as_stack_value, Stack,
-    StackValue, StackValueType, Tuple,
+    load_slice_as_stack_value, load_stack, load_stack_value, store_slice_as_stack_value,
+    RcStackValue, Stack, StackValue, StackValueType, Tuple, TupleExt,
 };
 use crate::state::VmState;
 use crate::util::{ensure_empty_slice, rc_ptr_eq, OwnedCellSlice, Uint4};
@@ -149,6 +148,15 @@ impl ControlRegs {
         }
     }
 
+    pub fn get_d(&mut self, mut i: usize) -> Option<Cell> {
+        i = i.wrapping_sub(Self::DATA_REG_OFFSET);
+        if i < Self::DATA_REG_COUNT {
+            self.d[i].clone()
+        } else {
+            None
+        }
+    }
+
     pub fn set_c7(&mut self, tuple: Rc<Tuple>) {
         self.c7 = Some(tuple);
     }
@@ -206,6 +214,14 @@ impl ControlRegs {
             vm_bail!(ControlRegisterOutOfRange(i))
         }
         Ok(())
+    }
+
+    pub fn get_c7_params(&self) -> VmResult<&[RcStackValue]> {
+        let Some(c7) = self.c7.as_ref() else {
+            vm_bail!(ControlRegisterOutOfRange(7))
+        };
+
+        c7.try_get_tuple_range(0, 0..=255)
     }
 
     fn merge_cell_value(lhs: &mut Option<Cell>, rhs: &Option<Cell>) {

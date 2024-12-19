@@ -54,7 +54,7 @@ macro_rules! stack {
     };
     (@v raw $value:expr) => {
         $value
-    }
+    };
 }
 
 #[cfg(test)]
@@ -68,6 +68,36 @@ macro_rules! assert_run_vm {
     ) => {{
         let (exit_code, vm) = $crate::tests::run_vm_with_stack(
             tvmasm!($($code),+),
+            $crate::stack![],
+            $crate::stack![$($origin_stack)*],
+        );
+        $crate::assert_run_vm!(@check_exit_code exit_code $($exit_code)?);
+
+        let expected_stack = format!("{}", (&$crate::stack![$($expected_stack)*] as &dyn $crate::stack::StackValue).display_list());
+        let vm_stack = format!("{}", (&vm.stack.items as &dyn $crate::stack::StackValue).display_list());
+
+        assert_eq!(vm_stack, expected_stack);
+    }};
+    (@check_exit_code $ident:ident) => {
+        assert_eq!($ident, 0, "non-zero exit code")
+    };
+    (@check_exit_code $ident:ident $exit_code:literal) => {
+        assert_eq!($ident, $exit_code, "exit code mismatch")
+    };
+}
+
+#[macro_export]
+macro_rules! assert_run_vm_with_c7 {
+    (
+        $($code:literal),+,
+        [$($c7_params:tt)*],
+        [$($origin_stack:tt)*] => [$($expected_stack:tt)*]
+        $(, exit_code: $exit_code:literal)?
+        $(,)?
+    ) => {{
+        let (exit_code, vm) = $crate::tests::run_vm_with_stack(
+            tvmasm!($($code),+),
+            $($c7_params)*,
             $crate::stack![$($origin_stack)*],
         );
         $crate::assert_run_vm!(@check_exit_code exit_code $($exit_code)?);
@@ -133,19 +163,22 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::stack::RcStackValue;
+    use crate::stack::{RcStackValue, Tuple};
 
-    pub fn run_vm_with_stack<I>(code: &[u8], original_stack: I) -> (i32, VmState)
+    pub fn run_vm_with_stack<I>(code: &[u8], c7_params: Tuple, original_stack: I) -> (i32, VmState)
     where
         I: IntoIterator<Item = RcStackValue>,
     {
         let code = Boc::decode(code).unwrap();
         let mut vm = VmState::builder()
             .with_code(code)
+            .with_c7(c7_params)
             .with_debug(TracingOutput::default())
             .with_stack(original_stack)
             .build()
             .unwrap();
+
+        vm.gas.gas_remaining = 1000000000;
 
         let exit_code = !vm.run();
         (exit_code, vm)
@@ -190,7 +223,7 @@ mod tests {
             .with_debug(TracingOutput::default())
             .build()
             .unwrap();
-        let exit_code = vm.run();
+        let exit_code = !vm.run();
         println!("Exit code: {exit_code}");
     }
 

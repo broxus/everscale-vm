@@ -3,19 +3,19 @@ use std::rc::Rc;
 
 use anyhow::Result;
 use everscale_types::cell::{
-    Cell, CellBuilder, CellContext, CellFamily, CellSlice, DynCell, LoadMode,
+    Cell, CellBuilder, CellContext, CellFamily, CellSlice, CellType, DynCell, HashBytes, LoadMode,
 };
 use everscale_types::error::Error;
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
-use num_traits::{ToPrimitive, Zero};
+use num_traits::ToPrimitive;
 
 use crate::cont::OrdCont;
 use crate::dispatch::Opcodes;
 use crate::error::{VmError, VmResult};
 use crate::stack::{RcStackValue, Stack};
 use crate::state::VmState;
-use crate::util::{bitsize, remove_trailing, OwnedCellSlice};
+use crate::util::{bitsize, load_int_from_slice, remove_trailing, OwnedCellSlice};
 
 pub struct Cellops;
 
@@ -299,7 +299,7 @@ impl Cellops {
     }
 
     #[instr(
-        code = "cf0$1sss#n",
+        code = "cf0$1sss#nn",
         fmt = ("{} {n}", s.display()),
         args(s = StoreIntArgs(args >> 8), n = (args & 0xff) + 1),
     )]
@@ -460,7 +460,7 @@ impl Cellops {
         }
 
         ok!(stack.push_raw(builder));
-        return Ok(0);
+        Ok(0)
     }
 
     #[instr(code = "cf23", fmt = "ENDXC")]
@@ -659,8 +659,12 @@ impl Cellops {
         let stack = Rc::make_mut(&mut st.stack);
         let cell = ok!(stack.pop_cell());
 
-        // TODO: Load with gas consumer
-        let cs = OwnedCellSlice::new(Rc::unwrap_or_clone(cell));
+        let cell = st
+            .gas
+            .context()
+            .load_cell(Rc::unwrap_or_clone(cell), LoadMode::UseGas)?;
+        let cs = OwnedCellSlice::new(cell);
+
         ok!(stack.push(cs));
         Ok(0)
     }
@@ -707,7 +711,7 @@ impl Cellops {
 
         let mut slice = cs.apply_allow_special();
         let cell = slice.load_reference_cloned()?;
-        // TODO: Load with gas consumer
+        let cell = st.gas.context().load_cell(cell, LoadMode::UseGas)?;
         ok!(stack.push(OwnedCellSlice::new(cell)));
 
         let range = slice.range();
@@ -730,7 +734,7 @@ impl Cellops {
     }
 
     #[instr(
-        code = "d70$1sss#n",
+        code = "d70$1sss#nn",
         fmt = ("{} {n}", s.display()),
         args(s = LoadIntArgs(args >> 8), n = (args & 0xff) + 1)
     )]
@@ -993,8 +997,11 @@ impl Cellops {
         let cell = ok!(stack.pop_cell());
         let is_special = cell.descriptor().is_exotic();
 
-        // TODO: Load with gas consumer
-        let cs = OwnedCellSlice::new(Rc::unwrap_or_clone(cell));
+        let cell = st
+            .gas
+            .context()
+            .load_cell(Rc::unwrap_or_clone(cell), LoadMode::UseGas)?;
+        let cs = OwnedCellSlice::new(cell);
         ok!(stack.push(cs));
         ok!(stack.push_bool(is_special));
         Ok(0)
@@ -1004,10 +1011,50 @@ impl Cellops {
     #[instr(code = "d73b", fmt = "XLOADQ", args(quiet = true))]
     fn exec_load_special_cell(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let _cell = ok!(stack.pop_cell());
-        let _ = quiet;
+        let cell: Rc<Cell> = ok!(stack.pop_cell());
+        let cell = Rc::unwrap_or_clone(cell);
+        let loaded_cell_res = st.gas.context().load_cell(cell, LoadMode::UseGas);
+        let mut cell: Cell = match loaded_cell_res {
+            Err(_) if quiet => {
+                ok!(stack.push_bool(false));
+                return Ok(0);
+            }
+            Err(e) => vm_bail!(CellError(e)),
+            Ok(cell) => cell,
+        };
 
-        todo!();
+        if cell.is_exotic() {
+            match cell.cell_type() {
+                CellType::LibraryReference => (),
+                _ if quiet => {
+                    ok!(stack.push_bool(false));
+                    return Ok(0);
+                }
+                _ => vm_bail!(CellError(Error::CellUnderflow)),
+            }
+
+            if cell.data().len() != 33 {
+                vm_bail!(CellError(Error::InvalidCell))
+            }
+
+            let hash_bytes = HashBytes::from_slice(&cell.data()[1..]);
+
+            match st.gas.context().load_library(hash_bytes)? {
+                Some(library) => cell = library,
+                None if quiet => {
+                    ok!(stack.push_bool(false));
+                    return Ok(0);
+                }
+                None => vm_bail!(CellError(Error::CellUnderflow)),
+            }
+        }
+
+        ok!(stack.push_raw(Rc::new(cell)));
+        if quiet {
+            ok!(stack.push_bool(true));
+        }
+
+        Ok(0)
     }
 
     #[instr(code = "d741", fmt = "SCHKBITS", args(mode = CheckMode::Bits, quiet = false))]
@@ -1139,7 +1186,7 @@ impl Cellops {
                 false => Cell::all_zeros_ref(),
                 true => Cell::all_ones_ref(),
             };
-            let target = unsafe { target.as_slice_unchecked() };
+            let target = unsafe { target.as_slice_allow_pruned() };
 
             let mut slice = cs.apply_allow_special();
             let prefix = slice.longest_common_data_prefix(&target);
@@ -1251,8 +1298,10 @@ fn exec_push_ref_common(
     let stack = Rc::make_mut(&mut st.stack);
     ok!(match mode {
         PushRefMode::Cell => stack.push(cell),
-        // TODO: Load with gas consumer
-        PushRefMode::Slice => stack.push(OwnedCellSlice::new(cell)),
+        PushRefMode::Slice => {
+            let cell = st.gas.context().load_cell(cell, LoadMode::UseGas)?;
+            stack.push(OwnedCellSlice::new(cell))
+        }
         PushRefMode::Cont => {
             let code = st.gas.context().load_cell(cell, LoadMode::Full)?;
             let cont = Rc::new(OrdCont::simple(code.into(), st.cp.id()));
@@ -1339,7 +1388,7 @@ fn exec_store_int_common(stack: &mut Stack, bits: u16, args: StoreIntArgs) -> Vm
 
     let mut builder;
     let x;
-    if args.is_reversed() {
+    if !args.is_reversed() {
         builder = ok!(stack.pop_builder());
         x = ok!(stack.pop_int());
     } else {
@@ -1405,7 +1454,7 @@ fn exec_store_int_common(stack: &mut Stack, bits: u16, args: StoreIntArgs) -> Vm
     finish_store_ok(stack, builder, args.is_quiet())
 }
 
-fn finish_store_overflow(
+pub(crate) fn finish_store_overflow(
     stack: &mut Stack,
     arg1: RcStackValue,
     arg2: RcStackValue,
@@ -1421,7 +1470,11 @@ fn finish_store_overflow(
     }
 }
 
-fn finish_store_ok(stack: &mut Stack, builder: Rc<CellBuilder>, quiet: bool) -> VmResult<i32> {
+pub(crate) fn finish_store_ok(
+    stack: &mut Stack,
+    builder: Rc<CellBuilder>,
+    quiet: bool,
+) -> VmResult<i32> {
     ok!(stack.push_raw(builder));
     if quiet {
         ok!(stack.push_bool(false)); // `false` here is intentional
@@ -1537,34 +1590,7 @@ fn exec_load_int_common(stack: &mut Stack, bits: u16, args: LoadIntArgs) -> VmRe
 
     let range = {
         let mut slice = cs.apply_allow_special();
-
-        let signed = args.is_signed();
-        let int = match bits {
-            0 => Ok(BigInt::zero()),
-            0..=64 if !signed => slice.load_uint(bits).map(BigInt::from),
-            0..=64 if signed => slice.load_uint(bits).map(|mut int| {
-                if bits < 64 {
-                    // Clone sign bit into all high bits
-                    int |= ((int >> (bits - 1)) * u64::MAX) << (bits - 1);
-                }
-                BigInt::from(int as i64)
-            }),
-            _ => {
-                let rem = bits % 8;
-                let mut buffer = [0u8; 33];
-                slice.load_raw(&mut buffer, bits).map(|buffer| {
-                    let mut int = if signed {
-                        BigInt::from_signed_bytes_be(buffer)
-                    } else {
-                        BigInt::from_bytes_be(Sign::Plus, buffer)
-                    };
-                    if bits % 8 != 0 {
-                        int >>= 8 - rem;
-                    }
-                    int
-                })
-            }
-        }?;
+        let int = load_int_from_slice(&mut slice, bits, args.is_signed())?;
 
         ok!(stack.push_int(int));
 
@@ -1800,656 +1826,4 @@ fn exec_cell_level_op_common(stack: &mut Stack, level: u8, op: LevelOp) -> VmRes
         LevelOp::Depth => stack.push_int(cell.depth(level)),
     });
     Ok(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cont::RcCont;
-    use everscale_types::boc::Boc;
-    use everscale_vm::cont::{ControlData, ControlRegs};
-    use tracing_test::traced_test;
-
-    #[test]
-    #[traced_test]
-    fn argument_contops() {
-        assert_run_vm!(
-            r#"
-            PUSHINT 1
-            PUSHCONT {
-                PUSHINT 3
-                PUSHINT 2
-            }
-            CALLXARGS 1, 2
-            "#,
-            [] => [int 3, int 2],
-        );
-
-        assert_run_vm!(
-            r#"
-            PUSHINT 1
-            PUSHCONT {
-                NOP
-            }
-            CALLXARGS 1, 1
-            "#,
-            [] => [int 1],
-        );
-
-        assert_run_vm!(
-            r#"
-            PUSHCONT {
-                NOP
-            }
-            CALLXARGS 1, 0
-            "#,
-            [] => [int 0],
-            exit_code: 2
-        );
-
-        assert_run_vm!(
-            r#"
-            PUSHCONT {
-                PUSHINT 3
-                PUSHINT 2
-            }
-            CALLXARGS 0, 3
-            "#,
-            [] => [int 0],
-            exit_code: 2
-        );
-
-        assert_run_vm!(
-            r#"
-            PUSHCONT {
-                PUSHINT 3
-                PUSHINT 2
-            }
-            CALLXARGS 0, 3
-            "#,
-            [] => [int 0],
-            exit_code: 2
-        );
-
-        assert_run_vm!(
-            r#"
-            PUSHCONT {
-                PUSHINT 3
-                PUSHINT 2
-            }
-            CALLXARGS 0, -1
-            "#,
-            [] => [int 3, int 2]
-        );
-
-        assert_run_vm!(
-            r#"
-            PUSHINT 1
-            PUSHCONT {
-                PUSHINT 3
-                PUSHINT 2
-            }
-            CALLXARGS 1, -1
-            "#,
-            [] => [int 1, int 3, int 2]
-        );
-
-        assert_run_vm!(
-            r#"
-            PUSHINT 1
-            PUSHINT 2
-            PUSHCONT {
-                PUSHINT 3
-                PUSHINT 4
-            }
-            JMPXARGS 1
-            PUSHINT 1
-            "#,
-            [] => [int 2, int 3, int 4]
-        );
-
-        assert_run_vm!(
-            r#"
-            PUSHINT 1
-            PUSHINT 2
-            PUSHCONT {
-                PUSHINT 3
-                PUSHINT 4
-            }
-            JMPXARGS 1
-            PUSHINT 1
-            "#,
-            [] => [int 2, int 3, int 4]
-        );
-
-        assert_run_vm!(
-            r#"
-            PUSHINT 1
-            PUSHCONT {
-                PUSHINT 123
-                PUSHINT 245
-                RETARGS 2
-            }
-            EXECUTE
-            "#,
-            [] => [int 123, int 245]
-        );
-    }
-
-    #[test]
-    #[traced_test]
-    fn basic_contops() {
-        let cont: RcStackValue = Rc::new(crate::cont::PushIntCont {
-            value: 1,
-            next: Rc::new(crate::cont::PushIntCont {
-                value: 2,
-                next: Rc::new(crate::cont::QuitCont { exit_code: 0 }),
-            }),
-        });
-
-        assert_run_vm!(
-            "EXECUTE",
-            [raw cont.clone()] => [int 1, int 2],
-        );
-
-        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 1
-            PUSHINT 2
-            "#
-        })
-        .unwrap();
-
-        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        assert_run_vm!(
-            "EXECUTE",
-            [raw cont.clone()] => [int 1, int 2],
-        );
-
-        assert_run_vm!(
-            "JMPX",
-            [raw cont.clone()] => [int 1, int 2],
-        );
-    }
-
-    #[test]
-    #[traced_test]
-    fn conditional_contops() {
-        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 1
-            PUSHINT 2
-            IFRET
-            PUSHINT 0
-            "#
-        })
-        .unwrap();
-
-        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        assert_run_vm!(
-            "EXECUTE",
-            [raw cont.clone()] => [int 1]
-        );
-
-        //--------
-
-        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 1
-            PUSHINT 0
-            IFRET
-            PUSHINT 2
-            "#
-        })
-        .unwrap();
-
-        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        assert_run_vm!(
-            "EXECUTE",
-            [raw cont.clone()] => [int 1, int 2]
-        );
-
-        assert_run_vm!(
-            "IFRET",
-            [null] => [int 0],
-            exit_code: 7
-        );
-
-        //-------
-
-        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 2
-            PUSHINT 0
-            IFNOTRET
-            PUSHINT 1
-            "#
-        })
-        .unwrap();
-
-        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        assert_run_vm!(
-            "EXECUTE",
-            [raw cont.clone()] => [int 2]
-        );
-
-        //--------
-
-        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 2
-            PUSHINT 1
-            IFNOTRET
-            PUSHINT 1
-            "#
-        })
-        .unwrap();
-
-        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        assert_run_vm!(
-            "EXECUTE",
-            [raw cont.clone()] => [int 2, int 1]
-        );
-
-        //-------------
-
-        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 1
-            PUSHINT 2
-            "#
-        })
-        .unwrap();
-
-        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        assert_run_vm!(
-            "IF",
-            [int 0, raw cont.clone()] => [],
-        );
-        assert_run_vm!(
-            "IF",
-            [int 123, raw cont.clone()] => [int 1, int 2],
-        );
-
-        assert_run_vm!(
-            "IFNOT",
-            [int 1, raw cont.clone()] => [],
-        );
-
-        assert_run_vm!(
-            "IFNOT",
-            [int 13890, raw cont.clone()] => [],
-        );
-
-        assert_run_vm!(
-            "IFNOT",
-            [int 0, raw cont.clone()] => [int 1, int 2],
-        );
-
-        //-------
-
-        let code1 = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 1
-            PUSHINT 2
-            "#
-        })
-        .unwrap();
-
-        let cont1: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code1.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        let code2 = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 3
-            PUSHINT 4
-            "#
-        })
-        .unwrap();
-
-        let cont2: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code2.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        assert_run_vm!(
-            "IFELSE",
-            [int 0, raw cont1.clone(), raw cont2.clone()] => [int 3, int 4]
-        );
-
-        assert_run_vm!(
-            "IFELSE",
-            [int 1, raw cont1.clone(), raw cont2.clone()] => [int 1, int 2]
-        );
-
-        assert_run_vm!(
-            "IFELSE",
-            [null, raw cont1.clone(), raw cont2.clone()] => [int 0],
-            exit_code: 7
-        );
-    }
-
-    #[test]
-    #[traced_test]
-    fn conditional_refcontops() {
-        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 1
-            PUSHINT 2
-            "#
-        })
-        .unwrap();
-
-        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        // assert_run_vm!(
-        //     "IFREF",
-        //     code.as,
-        //     [int 0, raw cont.clone()] => [],
-        // );
-
-        assert_run_vm!(
-            "IF",
-            [int 123, raw cont.clone()] => [int 1, int 2],
-        );
-
-        assert_run_vm!(
-            r#"PUSHCONT { PUSHINT 1 PUSHINT 2 } EXECUTE"#,
-            [] => [int 1, int 2],
-        );
-
-        assert_run_vm!(
-            "IF",
-            [int 0, raw cont.clone()] => [],
-        );
-
-        assert_run_vm!(
-            "IFNOT",
-            [int 1, raw cont.clone()] => [],
-        );
-
-        assert_run_vm!(
-            "IFNOT",
-            [int 13890, raw cont.clone()] => [],
-        );
-
-        assert_run_vm!(
-            "IFNOT",
-            [int 0, raw cont.clone()] => [int 1, int 2],
-        );
-    }
-
-    #[test]
-    #[traced_test]
-    fn conditional_altcontops() {
-        //----
-
-        let code_c1 = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 1
-            "#
-        })
-        .unwrap();
-        let cont_c1 = crate::cont::OrdCont::simple(code_c1.into(), crate::instr::codepage0().id());
-
-        let mut cr = ControlRegs::default();
-        cr.set_c(1, Rc::new(cont_c1));
-
-        let code_c0 = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 2
-            "#
-        })
-        .unwrap();
-
-        let cont_c0: RcStackValue = Rc::new(crate::cont::OrdCont {
-            data: ControlData {
-                nargs: None,
-                stack: None,
-                save: cr,
-                cp: Some(crate::instr::codepage0().id()),
-            },
-            code: code_c0.into(),
-        });
-
-        assert_run_vm!(
-            "IFRETALT",
-            [int 1, raw cont_c0.clone()] => [int 1]
-        );
-    }
-
-    #[test]
-    #[traced_test]
-    fn loops() {
-        // REPEAT
-        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 2
-            "#
-        })
-        .unwrap();
-        let cont: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        let code1 = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 2
-            PUSHINT 1
-            "#
-        })
-        .unwrap();
-        let cont1: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code1.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        assert_run_vm!(
-            "REPEAT",
-            [int 5, raw cont.clone()] => [int 2, int 2,int 2, int 2, int 2 ]
-        );
-
-        assert_run_vm!(
-            "REPEAT",
-            [int -1, raw cont.clone()] => []
-        );
-
-        assert_run_vm!(
-            "REPEAT",
-            [int (BigInt::from(1) << 31), raw cont.clone()] => [int 0],
-            exit_code: 5
-        );
-
-        // REPEATEND
-
-        assert_run_vm!(
-            "REPEATEND PUSHINT 2",
-            [int 3] => [int 2, int 2, int 2]
-        );
-
-        //UNTIL
-        assert_run_vm!(
-            "UNTIL",
-            [raw cont1.clone()] => [int 2]
-        );
-
-        //UNTILEND
-        // TODO: case for other branch
-        assert_run_vm!(
-            "UNTILEND PUSHINT 0 PUSHINT 1",
-            [int 3] => [int 3, int 0]
-        );
-
-        // WHILE
-        let code0 = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 2
-            "#
-        })
-        .unwrap();
-        let c0: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code0.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        let code1 = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 0
-            "#
-        })
-        .unwrap();
-        let c1: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code1.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        assert_run_vm!(
-            "WHILE",
-            [int 2, raw c1.clone(), raw c0.clone()] => [int 2]
-        );
-
-        // WHILEEND
-        // TODO: case for other branch
-        assert_run_vm!(
-            "WHILEEND PUSHINT 1",
-            [int 2, raw c1.clone()] => [int 2]
-        );
-
-        // AGAIN
-        // TODO: TEST MORE CASES
-
-        let code_c0 = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 2
-            RETALT
-            "#
-        })
-        .unwrap();
-
-        let cont_c0: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code_c0.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        //TODO: probably this behaviour with exit code 1 is okay. Add more cases with more loops
-
-        assert_run_vm!(
-            "AGAIN",
-            [int 2, raw cont_c0.clone()] => [int 2, int 2],
-            exit_code: 1
-        );
-
-        // AGAINEND
-        assert_run_vm!(
-            "AGAINEND PUSHINT 2 RETALT",
-            [int 2] => [int 2, int 2],
-            exit_code: 1
-        );
-
-        //REPEATBRK
-
-        let code_c0 = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            PUSHINT 0
-            DUMPSTK
-            SWAP
-            DEC
-            DUP
-            PUSHCONT {
-                DROP
-                RETALT
-            }
-            IFNOT
-            "#
-        })
-        .unwrap();
-
-        let cont_c0: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code_c0.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        assert_run_vm!(
-            "REPEATBRK",
-            [int 5, int 10, raw cont_c0.clone()] => [int 0, int 0, int 0, int 0, int 0]
-        );
-
-        //REPEATENDBRK
-
-        assert_run_vm!(
-            r#"
-            PUSHCONT {
-                REPEATENDBRK
-                PUSHINT 0
-                SWAP
-                DEC
-                DUP
-                PUSHCONT {
-                    DROP
-                    RETALT
-                }
-                IFNOT
-                POP s1
-            }
-            EXECUTE
-            "#,
-            [int 5, int 10] => [int 0]
-        );
-
-        let code_c0 = Boc::decode(&everscale_asm_macros::tvmasm! {
-            r#"
-            INC
-            SWAP
-            DUP
-            PUSHCONT {
-                DROP
-                RETALT
-            }
-            IFNOT
-            SWAP
-            DUMPSTK
-            "#
-        })
-        .unwrap();
-
-        let cont_c0: RcStackValue = Rc::new(crate::cont::OrdCont::simple(
-            code_c0.into(),
-            crate::instr::codepage0().id(),
-        ));
-
-        assert_run_vm!(
-            "UNTILBRK",
-            [int 0, int -5, raw cont_c0.clone()] => [int -4]
-        );
-    }
 }
