@@ -1,580 +1,447 @@
-use std::fmt::Formatter;
-use std::ops::{Add, AddAssign, Mul, Shr, Sub};
 use std::rc::Rc;
 
-use everscale_types::cell::{CellBuilder, CellSlice, CellSliceParts, HashBytes, StorageStat};
-use everscale_types::dict::Dict;
+use everscale_types::cell::{
+    self, Cell, CellBuilder, CellContext, CellTreeStats, HashBytes, Load, LoadMode, StorageStat,
+};
+use everscale_types::dict;
 use everscale_types::error::Error;
 use everscale_types::models::{
-    BaseMessage, BlockchainConfig, BlockchainConfigParams, MsgForwardPrices, OwnedRelaxedMessage,
-    RelaxedMsgInfo,
+    ChangeLibraryMode, CurrencyCollection, ExtAddr, ExtraCurrencyCollection, Lazy, LibRef,
+    MessageLayout, MsgForwardPrices, OutAction, RelaxedMessage, RelaxedMsgInfo,
+    ReserveCurrencyFlags, SendMsgFlags, SizeLimitsConfig,
 };
 use everscale_types::num::{SplitDepth, Tokens};
-use everscale_types::prelude::{Cell, CellFamily, Load, Store};
-use everscale_vm::stack::StackValueType;
 use everscale_vm::util::load_uint_leq;
 use everscale_vm_proc::vm_module;
-use num_bigint::BigInt;
-use num_traits::{ToPrimitive, Zero};
+use num_bigint::{BigInt, Sign};
+use num_traits::ToPrimitive;
 
 use crate::cont::ControlRegs;
 use crate::error::VmResult;
-use crate::stack::{RcStackValue, Tuple, TupleExt};
-use crate::util::OwnedCellSlice;
-use crate::VmState;
+use crate::stack::{Stack, Tuple, TupleExt};
+use crate::state::{GasConsumer, VmState, VmVersion};
+use crate::util::{MsgForwardPricesExt, OwnedCellSlice};
 
 pub struct MessageOps;
 
-const OUTPUT_ACTIONS_IDX: usize = 5;
 #[vm_module]
 impl MessageOps {
     #[instr(code = "fb00", fmt = "SENDRAWMSG")]
     fn exec_send_message_raw(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let f = ok!(stack.pop_smallint_range(0, 255));
-        let cell: Rc<Cell> = ok!(stack.pop_cell());
+        let mode = ok!(stack.pop_smallint_range(0, 255)) as u8;
+        let cell = ok!(stack.pop_cell());
 
-        let mut cb = CellBuilder::new();
-        let Some(actions) = st.cr.get_d(OUTPUT_ACTIONS_IDX) else {
-            vm_bail!(ControlRegisterOutOfRange(5))
-        };
-        cb.store_reference(actions)?;
-        cb.store_uint(0x0ec3c86d, 32)?;
-        cb.store_uint(f as u64, 8)?;
-        cb.store_reference(cell.as_ref().clone())?;
-
-        install_output_actions(&mut st.cr, cb.build()?)
+        add_action(&mut st.cr, &mut st.gas, OutAction::SendMsg {
+            mode: SendMsgFlags::from_bits_retain(mode),
+            out_msg: Lazy::from_raw(Rc::unwrap_or_clone(cell)),
+        })
     }
 
-    #[instr(code = "fb08", fmt = "SENDMSG")]
-    fn exec_send_message(st: &mut VmState) -> VmResult<i32> {
+    #[instr(code = "fb02", fmt = "RAWRESERVE", args(x = false))]
+    #[instr(code = "fb03", fmt = "RAWRESERVEX", args(x = true))]
+    fn exec_reserve_raw(st: &mut VmState, x: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let mode = ok!(stack.pop_smallint_range(0, 2047));
-        let send = (mode & 1024) == 0;
-        let mode = mode & !1024;
-        if mode >= 256 {
-            vm_bail!(IntegerOverflow) // TODO: Range error
-        }
-
-        let msg_cell: Rc<Cell> = ok!(stack.pop_cell());
-
-        let msg_cell_cloned = Rc::unwrap_or_clone(msg_cell);
-        let owned_slice = OwnedCellSlice::from(msg_cell_cloned.clone());
-
-        let mut cs = owned_slice.apply()?;
-        let relaxed_message: BaseMessage<RelaxedMsgInfo, CellSliceParts> =
-            OwnedRelaxedMessage::load_from(&mut cs)?;
-        let t1 = ok!(st.cr.get_c7_params());
-        let my_addr = ok!(t1.try_get_ref::<OwnedCellSlice>(VmState::MYADDR_GLOBAL_IDX));
-
-        let mut value: BigInt = BigInt::zero();
-        let mut have_extra_currencies = false;
-        let ihr_disabled;
-
-        let user_fwd_fee: BigInt;
-        let user_ihr_fee: BigInt;
-
-        let mut my_addr_sc = my_addr.apply()?;
-        let my_wc: i8 = ok!(parse_address_workchain(&mut my_addr_sc));
-
-        let (is_masterchain, is_external, dst_bit_len) = match &relaxed_message.info {
-            RelaxedMsgInfo::Int(info) => {
-                have_extra_currencies = !info.value.other.is_empty();
-                ihr_disabled = info.ihr_disabled;
-                user_fwd_fee = BigInt::from(info.fwd_fee.into_inner());
-                user_ihr_fee = BigInt::from(info.ihr_fee.into_inner());
-                (
-                    my_wc == -1 || info.dst.is_masterchain(),
-                    false,
-                    info.dst.bit_len(),
-                )
+        let mode = ok!(stack.pop_smallint_range(
+            0,
+            if st.version.is_ton(4..) {
+                0b11111
+            } else {
+                0b1111
             }
-            RelaxedMsgInfo::ExtOut(info) => {
-                ihr_disabled = true;
-                user_fwd_fee = BigInt::zero();
-                user_ihr_fee = BigInt::zero();
-                (
-                    false,
-                    true,
-                    info.dst.as_ref().map(|x| x.bit_len()).unwrap_or(0),
-                )
-            }
-        };
+        ));
+        let other = if x { ok!(stack.pop_cell_opt()) } else { None };
+        let tokens = ok!(stack.pop_int().and_then(|int| bigint_to_tokens(&int)));
 
-        let message_prices: MsgForwardPrices = ok!(get_message_prices(is_masterchain, &st.cr));
-        let max_cells: usize = 1 << 13;
-
-        let mut storage_stat = StorageStat::with_limit(max_cells);
-        let mut cs = owned_slice.apply()?;
-        cs.skip_first(cs.size_bits(), 0)?;
-        storage_stat.add_slice(&cs);
-
-        match is_external {
-            true if mode & 128 != 0 => {
-                let balances = ok!(get_balances(&st.cr, VmState::BALANCE_GLOBAL_IDX));
-
-                let Some(balances_value) = balances.first() else {
-                    vm_bail!(InvalidType {
-                        expected: StackValueType::Int,
-                        actual: StackValueType::Null
-                    })
-                };
-
-                let Some(balance) = balances_value.as_int() else {
-                    vm_bail!(InvalidType {
-                        expected: StackValueType::Int,
-                        actual: balances_value.ty()
-                    })
-                };
-
-                value = balance.clone();
-
-                let Some(extra_balance_value) = balances.get(1) else {
-                    vm_bail!(InvalidType {
-                        expected: StackValueType::Int,
-                        actual: StackValueType::Null
-                    })
-                };
-
-                let extra_balances_opt = extra_balance_value.as_cell();
-                have_extra_currencies |= extra_balances_opt.is_some();
-            }
-            true if mode & 64 != 0 => {
-                let balances = ok!(get_balances(&st.cr, VmState::IN_MSG_VALUE_GLOBAL_IDX));
-                let Some(balances_value) = balances.first() else {
-                    vm_bail!(InvalidType {
-                        expected: StackValueType::Int,
-                        actual: StackValueType::Null
-                    })
-                };
-                let Some(balance) = balances_value.as_int() else {
-                    vm_bail!(InvalidType {
-                        expected: StackValueType::Int,
-                        actual: balances_value.ty()
-                    })
-                };
-                let Some(extra_balance_value) = balances.get(1) else {
-                    vm_bail!(InvalidType {
-                        expected: StackValueType::Int,
-                        actual: StackValueType::Null
-                    })
-                };
-
-                let extra_balances_opt = extra_balance_value.as_cell();
-                have_extra_currencies |= extra_balances_opt.is_some();
-                value.add_assign(balance);
-            }
-            _ => (),
-        };
-
-        let (have_init, mut init_is_ref, init_bit_len, init_refs) = match relaxed_message.init {
-            Some(init) => (
-                true,
-                relaxed_message.layout.unwrap().init_to_cell,
-                init.exact_size_const().bits,
-                init.exact_size_const().refs,
-            ), // TODO: we 100% have layout due to relaxed message parsing
-            None => (false, false, 0, 0),
-        };
-
-        let body_owned_slice = OwnedCellSlice::from(relaxed_message.body);
-        let body_cs = body_owned_slice.apply()?;
-        let body_bit_len = body_cs.size_bits();
-        let body_refs = body_cs.size_refs();
-        let body_is_ref = body_cs.get_bit(0)?;
-
-        let mut fwd_fee = BigInt::zero();
-        let mut ihr_fee = BigInt::zero();
-
-        let mut total_cells = storage_stat.stats().cell_count;
-        let mut total_bits = storage_stat.stats().bit_count;
-
-        compute_fees(
-            ihr_disabled,
-            total_bits,
-            total_cells,
-            &message_prices,
-            &mut fwd_fee,
-            &mut ihr_fee,
-            &user_fwd_fee,
-            &user_ihr_fee,
-        );
-
-        let my_addr = my_addr.apply()?;
-
-        let bits = msg_root_bits(
-            is_external,
-            have_init,
-            init_is_ref,
-            body_is_ref,
-            init_bit_len,
-            body_bit_len,
-            dst_bit_len,
-            &message_prices,
-            &fwd_fee,
-            &ihr_fee,
-            &my_addr,
-            &value,
-        );
-
-        let refs = msg_root_refs(
-            is_external,
-            have_extra_currencies,
-            have_init,
-            init_is_ref,
-            init_refs,
-            body_is_ref,
-            body_refs,
-        );
-
-        if have_init && !init_is_ref && (bits > 1023 || refs > 4) {
-            init_is_ref = true;
-            total_cells += 1;
-            total_bits += init_bit_len as u64 - 1;
-
-            compute_fees(
-                ihr_disabled,
-                total_bits,
-                total_cells,
-                &message_prices,
-                &mut fwd_fee,
-                &mut ihr_fee,
-                &user_fwd_fee,
-                &user_ihr_fee,
-            );
-        };
-
-        let bits = msg_root_bits(
-            is_external,
-            have_init,
-            init_is_ref,
-            body_is_ref,
-            init_bit_len,
-            body_bit_len,
-            dst_bit_len,
-            &message_prices,
-            &fwd_fee,
-            &ihr_fee,
-            &my_addr,
-            &value,
-        );
-
-        let refs = msg_root_refs(
-            is_external,
-            have_extra_currencies,
-            have_init,
-            init_is_ref,
-            init_refs,
-            body_is_ref,
-            body_refs,
-        );
-
-        if !body_is_ref && (bits > 1023 || refs > 4) {
-            // body_is_ref = true;
-            total_cells += 1;
-            total_bits += body_bit_len as u64 - 1;
-            compute_fees(
-                ihr_disabled,
-                total_bits,
-                total_cells,
-                &message_prices,
-                &mut fwd_fee,
-                &mut ihr_fee,
-                &user_fwd_fee,
-                &user_ihr_fee,
-            );
-        }
-
-        ok!(stack.push_int(fwd_fee + ihr_fee));
-
-        if send {
-            let mut cb = CellBuilder::new();
-            let Some(actions) = st.cr.get_d(OUTPUT_ACTIONS_IDX) else {
-                vm_bail!(ControlRegisterOutOfRange(5))
-            };
-            cb.store_reference(actions)?;
-            cb.store_uint(0x0ec3c86d, 32)?;
-            cb.store_uint(mode as u64, 8)?;
-            cb.store_reference(msg_cell_cloned)?;
-            let cell = cb.build()?;
-            return install_output_actions(&mut st.cr, cell);
-        }
-
-        Ok(0)
-    }
-
-    #[instr(code = "fbss", range_from = "fb02", range_to = "fb04", fmt = ("{}", s.display()), args(s = ReserveArgs(args)))]
-    fn exec_reserve_raw(st: &mut VmState, s: ReserveArgs) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
-        let f = ok!(stack.pop_smallint_range(0, 15));
-
-        let mut cell: Option<Rc<Cell>> = None;
-        if s.is_x() {
-            cell = ok!(stack.pop_cell_opt());
-        }
-
-        let amount: Rc<BigInt> = ok!(stack.pop_int());
-        let Some(uamount) = amount.to_u128() else {
-            vm_bail!(IntegerOutOfRange {
-                min: 0,
-                max: u128::MAX as isize,
-                actual: amount.to_string()
-            })
-        };
-
-        let tokens = Tokens::new(uamount);
-        if !tokens.is_valid() {
-            vm_bail!(IntegerOutOfRange {
-                min: 0,
-                max: Tokens::MAX.into_inner() as isize,
-                actual: amount.to_string()
-            })
-        }
-
-        let mut cb = CellBuilder::new();
-        let Some(actions) = st.cr.get_d(OUTPUT_ACTIONS_IDX) else {
-            vm_bail!(ControlRegisterOutOfRange(5))
-        };
-        cb.store_reference(actions)?;
-        cb.store_uint(0x36e6b809, 32)?;
-        cb.store_uint(f as u64, 8)?;
-        tokens.store_into(&mut cb, &mut Cell::empty_context())?;
-        if let Some(cell) = cell {
-            cb.store_bit_one()?;
-            cb.store_reference(cell.as_ref().clone())?;
-        } else {
-            cb.store_bit_zero()?;
-        }
-
-        install_output_actions(&mut st.cr, cb.build()?)
+        add_action(&mut st.cr, &mut st.gas, OutAction::ReserveCurrency {
+            mode: ReserveCurrencyFlags::from_bits_retain(mode as u8),
+            value: CurrencyCollection {
+                tokens,
+                other: ExtraCurrencyCollection::from_raw(other.map(Rc::unwrap_or_clone)),
+            },
+        })
     }
 
     #[instr(code = "fb04", fmt = "SETCODE")]
     fn exec_set_code(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let code = ok!(stack.pop_cell());
-        let mut cb = CellBuilder::new();
 
-        let Some(actions) = st.cr.get_d(OUTPUT_ACTIONS_IDX) else {
-            vm_bail!(ControlRegisterOutOfRange(5))
-        };
-
-        cb.store_reference(actions)?;
-        cb.store_uint(0x36e6b809, 32)?;
-        cb.store_reference(code.as_ref().clone())?;
-
-        install_output_actions(&mut st.cr, cb.build()?)
+        add_action(&mut st.cr, &mut st.gas, OutAction::SetCode {
+            new_code: Rc::unwrap_or_clone(code),
+        })
     }
 
     #[instr(code = "fb06", fmt = "SETLIBCODE")]
     fn exec_set_lib_code(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let mode = ok!(stack.pop_smallint_range(0, 2));
+        let mode = ok!(pop_change_library_mode(st.version, stack));
         let code = ok!(stack.pop_cell());
 
-        let mut cb = CellBuilder::new();
-        let Some(actions) = st.cr.get_d(OUTPUT_ACTIONS_IDX) else {
-            vm_bail!(ControlRegisterOutOfRange(5))
-        };
-
-        cb.store_reference(actions)?;
-        cb.store_uint(0x26fa1dd4, 32)?;
-        cb.store_uint((mode * 2 + 1) as u64, 8)?;
-        cb.store_reference(code.as_ref().clone())?;
-
-        install_output_actions(&mut st.cr, cb.build()?)
+        add_action(&mut st.cr, &mut st.gas, OutAction::ChangeLibrary {
+            mode,
+            lib: LibRef::Cell(Rc::unwrap_or_clone(code)),
+        })
     }
 
     #[instr(code = "fb07", fmt = "CHANGELIB")]
     fn exec_change_lib(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let mode = ok!(stack.pop_smallint_range(0, 2));
-        let hash: Rc<BigInt> = ok!(stack.pop_int());
-        let mut hash_bytes = [0u8; 32];
-        if hash_bytes.len() < hash.to_bytes_be().1.len() {
-            vm_bail!(IntegerOverflow)
-        }
-        hash_bytes.copy_from_slice(hash.to_bytes_be().1.as_ref());
-        let hash_bytes = HashBytes::from(hash_bytes);
+        let mode = ok!(pop_change_library_mode(st.version, stack));
+        let hash = {
+            let int = ok!(stack.pop_int());
+            vm_ensure!(int.sign() != Sign::Minus, IntegerOutOfRange {
+                min: 0,
+                max: isize::MAX,
+                actual: int.to_string(),
+            });
 
-        let mut cb = CellBuilder::new();
+            let mut bytes = int.magnitude().to_bytes_le();
+            bytes.truncate(32);
+            bytes.reverse();
 
-        let Some(actions) = st.cr.get_d(OUTPUT_ACTIONS_IDX) else {
-            vm_bail!(ControlRegisterOutOfRange(5))
+            let mut res = HashBytes::ZERO;
+            res.0[32 - bytes.len()..32].copy_from_slice(&bytes);
+            res
         };
-        cb.store_reference(actions)?;
-        cb.store_uint(0x26fa1dd4, 32)?;
-        cb.store_uint((mode * 2) as u64, 8)?;
-        cb.store_u256(&hash_bytes)?;
-        install_output_actions(&mut st.cr, cb.build()?)
-    }
-}
 
-fn msg_root_bits(
-    is_external: bool,
-    have_init: bool,
-    init_is_ref: bool,
-    body_is_ref: bool,
-    init_bit_len: u16,
-    body_bit_len: u16,
-    dst_bit_len: u16,
-    message_prices: &MsgForwardPrices,
-    fwd_fee: &BigInt,
-    ihr_fee: &BigInt,
-    my_addr: &CellSlice,
-    value: &BigInt,
-) -> u16 {
-    let mut bits = 0;
-    if is_external {
-        bits = 2 + my_addr.size_bits() + dst_bit_len + 32 + 64;
-    } else {
-        bits = my_addr.size_bits() + dst_bit_len + stored_tokens_len(value) + 1 + 32 + 64;
-        let fwd_fee_first = (fwd_fee * (message_prices.first_frac)) >> 16;
-        bits += stored_tokens_len(&fwd_fee.sub(fwd_fee_first));
-        bits += stored_tokens_len(&ihr_fee);
-    };
-
-    bits += 1;
-
-    if have_init {
-        bits += 1;
-        bits += if init_is_ref { 0 } else { init_bit_len * 2 - 1 };
-    }
-    bits += 1;
-    bits += if body_is_ref { 0 } else { body_bit_len - 1 };
-    bits
-}
-
-fn msg_root_refs(
-    is_external: bool,
-    have_extra_currencies: bool,
-    have_init: bool,
-    init_is_ref: bool,
-    init_refs: u8,
-    body_is_ref: bool,
-    body_refs: u8,
-) -> u8 {
-    let mut refs = match (is_external, have_extra_currencies) {
-        (true, _) => 0,
-        (false, true) => 1,
-        (false, false) => 0,
-    };
-
-    if have_init {
-        refs += if init_is_ref { 1 } else { init_refs };
-    }
-    refs += if body_is_ref { 1 } else { body_refs };
-    refs
-}
-
-fn compute_fees(
-    ihr_disabled: bool,
-    total_bits: u64,
-    total_cells: u64,
-    message_prices: &MsgForwardPrices,
-    fwd_fee: &mut BigInt,
-    ihr_fee: &mut BigInt,
-    user_fwd_fee: &BigInt,
-    user_ihr_fee: &BigInt,
-) {
-    let fwd_fee_short = message_prices.lump_price
-        + (message_prices
-            .bit_price
-            .mul(total_bits)
-            .add(message_prices.cell_price.mul(total_cells))
-            .add(0xffff)
-            .shr(16)) as u64;
-
-    // Calculate new forward fee
-    *fwd_fee = BigInt::from(fwd_fee_short);
-    if user_fwd_fee > fwd_fee {
-        *fwd_fee = user_fwd_fee.clone();
+        add_action(&mut st.cr, &mut st.gas, OutAction::ChangeLibrary {
+            mode,
+            lib: LibRef::Hash(hash),
+        })
     }
 
-    // Calculate new IHR fee only if not disabled
-    if ihr_disabled {
-        *ihr_fee = BigInt::zero();
-    } else {
-        let ihr_fee_short = fwd_fee_short
-            .mul(message_prices.ihr_price_factor as u64)
-            .shr(16);
-        *ihr_fee = BigInt::from(ihr_fee_short);
+    #[instr(code = "fb08", fmt = "SENDMSG")]
+    fn exec_send_message(st: &mut VmState) -> VmResult<i32> {
+        ok!(st.version.require_ton(4..));
 
-        if user_ihr_fee > ihr_fee {
-            *ihr_fee = user_ihr_fee.clone();
+        // Get args from the stack.
+        let stack = Rc::make_mut(&mut st.stack);
+        let (mode, send) = ok!(pop_send_msg_mode_ext(stack));
+        let raw_msg_cell = ok!(stack.pop_cell());
+        let msg_cell = st
+            .gas
+            .context()
+            .load_cell(Cell::clone(&raw_msg_cell), LoadMode::Full)?;
+        let msg = msg_cell.parse::<RelaxedMessage<'_>>()?;
+
+        // Parse c7 tuple.
+        let t1 = ok!(st.cr.get_c7_params());
+        let t2 = if st.version.is_ton(6..) {
+            Some(ok!(t1.try_get_tuple_range(
+                VmState::PARSED_CONFIG_GLOBAL_IDX,
+                0..=255
+            )))
+        } else {
+            None
+        };
+        let my_addr = ok!(t1.try_get_ref::<OwnedCellSlice>(VmState::MYADDR_GLOBAL_IDX));
+        let my_workchain = ok!(parse_addr_workchain(my_addr));
+
+        // Prefetch msg info.
+        let mut is_masterchain = my_workchain == -1;
+        let mut ihr_disabled = true;
+        let mut value = Tokens::ZERO;
+        let mut has_extra_currencies = false;
+        let mut user_fwd_fee = Tokens::ZERO;
+        let mut user_ihr_fee = Tokens::ZERO;
+        if let RelaxedMsgInfo::Int(info) = &msg.info {
+            is_masterchain |= info.dst.is_masterchain();
+            ihr_disabled = info.ihr_disabled;
+            value = info.value.tokens;
+            has_extra_currencies = !info.value.other.is_empty();
+            user_fwd_fee = info.fwd_fee;
+            user_ihr_fee = info.ihr_fee;
+        }
+
+        // Get message forwarding prices.
+        let prices = match t2 {
+            Some(t2) => {
+                let cs = ok!(t2.try_get_ref::<OwnedCellSlice>(if is_masterchain { 4 } else { 5 }));
+                MsgForwardPrices::load_from(&mut cs.apply()?)?
+            }
+            None => {
+                let config_root = ok!(t1.try_get_ref::<Cell>(VmState::CONFIG_GLOBAL_IDX));
+
+                let mut b = CellBuilder::new();
+                b.store_u32(if is_masterchain { 24 } else { 25 }).unwrap();
+                let key = b.as_data_slice();
+
+                let Some(mut value) = dict::dict_get(Some(config_root), 32, key, st.gas.context())?
+                else {
+                    vm_bail!(Unknown("invalid prices config".to_owned()));
+                };
+
+                let param = value.load_reference()?;
+                st.gas
+                    .context()
+                    .load_dyn_cell(param, LoadMode::Full)?
+                    .parse::<MsgForwardPrices>()?
+            }
+        };
+
+        // Compute storage stat for message child cells.
+        let max_cells = match t2 {
+            Some(t2) => {
+                let cs = ok!(t2.try_get_ref::<OwnedCellSlice>(6));
+                let limits = SizeLimitsConfig::load_from(&mut cs.apply()?)?;
+                limits.max_msg_cells
+            }
+            None => 1 << 13,
+        };
+        let mut stats = {
+            let mut st = StorageStat::with_limit(max_cells as _);
+            let mut cs = msg_cell.as_slice()?;
+            cs.skip_first(cs.size_bits(), 0).ok();
+            st.add_slice(&cs);
+            st.stats()
+        };
+
+        // Adjust outgoing message value and extra currencies.
+        if matches!(&msg.info, RelaxedMsgInfo::Int(_)) {
+            if mode.contains(SendMsgFlags::ALL_BALANCE) {
+                let balance = ok!(t1.try_get_ref::<Tuple>(VmState::BALANCE_GLOBAL_IDX));
+                value = ok!(balance.try_get_ref::<BigInt>(0).and_then(bigint_to_tokens));
+                has_extra_currencies = balance.get(1).and_then(|v| v.as_cell()).is_some();
+            } else if mode.contains(SendMsgFlags::WITH_REMAINING_BALANCE) {
+                let balance = ok!(t1.try_get_ref::<Tuple>(VmState::IN_MSG_VALUE_GLOBAL_IDX));
+                let msg_value = ok!(balance.try_get_ref::<BigInt>(0).and_then(bigint_to_tokens));
+                value.try_add_assign(msg_value)?;
+                has_extra_currencies |= balance.get(1).and_then(|v| v.as_cell()).is_some();
+            }
+        }
+
+        // Compute fees and final message layout.
+        let update_fees = |stats: CellTreeStats, fwd_fee: &mut Tokens, ihr_fee: &mut Tokens| {
+            let fwd_fee_short = prices.compute_fwd_fee(stats);
+            *fwd_fee = std::cmp::max(fwd_fee_short, user_fwd_fee);
+            *ihr_fee = if ihr_disabled {
+                Tokens::ZERO
+            } else {
+                std::cmp::max(
+                    tokens_mul_frac(fwd_fee_short, prices.ihr_price_factor),
+                    user_ihr_fee,
+                )
+            };
+        };
+
+        let compute_msg_root_bits =
+            |msg_layout: &MessageLayout, fwd_fee: Tokens, ihr_fee: Tokens| {
+                // Message info
+                let mut bits = match &msg.info {
+                    RelaxedMsgInfo::ExtOut(info) => {
+                        2 + my_addr.range().size_bits() + ext_addr_bit_len(&info.dst) + 64 + 32
+                    }
+                    RelaxedMsgInfo::Int(info) => {
+                        let fwd_fee_first = tokens_mul_frac(fwd_fee, prices.first_frac as _);
+                        4 + my_addr.range().size_bits()
+                            + info.dst.bit_len()
+                            + ok!(tokens_bit_len(value))
+                            + 1
+                            + ok!(tokens_bit_len(fwd_fee - fwd_fee_first))
+                            + ok!(tokens_bit_len(ihr_fee))
+                            + 64
+                            + 32
+                    }
+                };
+
+                // State init
+                bits += 1;
+                if let Some(init) = &msg.init {
+                    bits += 1 + if msg_layout.init_to_cell {
+                        0
+                    } else {
+                        init.bit_len()
+                    };
+                }
+
+                // Message body
+                bits += 1;
+                bits += if msg_layout.body_to_cell {
+                    0
+                } else {
+                    msg.body.size_bits()
+                };
+
+                // Done
+                Ok(bits)
+            };
+        let compute_msg_root_refs = |msg_layout: &MessageLayout| {
+            let mut refs = match &msg.info {
+                RelaxedMsgInfo::ExtOut(_) => 0,
+                RelaxedMsgInfo::Int(_) => has_extra_currencies as usize,
+            };
+
+            // State init
+            if let Some(init) = &msg.init {
+                refs += if msg_layout.init_to_cell {
+                    1
+                } else {
+                    init.reference_count() as usize
+                }
+            }
+
+            // Body
+            refs += if msg_layout.body_to_cell {
+                1
+            } else {
+                msg.body.size_refs() as usize
+            };
+
+            // Done
+            refs
+        };
+
+        let mut msg_layout = msg.layout.unwrap();
+
+        // Compute fees for the initial layout.
+        let mut fwd_fee = Tokens::ZERO;
+        let mut ihr_fee = Tokens::ZERO;
+        update_fees(stats, &mut fwd_fee, &mut ihr_fee);
+
+        // Adjust layout for state init.
+        if let Some(init) = &msg.init {
+            if !msg_layout.init_to_cell
+                && (ok!(compute_msg_root_bits(&msg_layout, fwd_fee, ihr_fee)) > cell::MAX_BIT_LEN
+                    || compute_msg_root_refs(&msg_layout) > cell::MAX_REF_COUNT)
+            {
+                msg_layout.init_to_cell = true;
+                stats.bit_count += init.bit_len() as u64;
+                stats.cell_count += 1;
+                update_fees(stats, &mut fwd_fee, &mut ihr_fee);
+            }
+        }
+
+        // Adjust layout for body.
+        if !msg_layout.body_to_cell
+            && (ok!(compute_msg_root_bits(&msg_layout, fwd_fee, ihr_fee)) > cell::MAX_BIT_LEN
+                || compute_msg_root_refs(&msg_layout) > cell::MAX_REF_COUNT)
+        {
+            // msg_layout.body_to_cell = true;
+            stats.bit_count += msg.body.size_bits() as u64;
+            stats.cell_count += 1;
+            update_fees(stats, &mut fwd_fee, &mut ihr_fee);
+        }
+
+        // Push the total fee to the stack.
+        ok!(stack.push_int(fwd_fee.into_inner().saturating_add(ihr_fee.into_inner())));
+
+        // Done
+        if send {
+            drop(msg_cell);
+            add_action(&mut st.cr, &mut st.gas, OutAction::SendMsg {
+                mode,
+                out_msg: Lazy::from_raw(Rc::unwrap_or_clone(raw_msg_cell)),
+            })
+        } else {
+            Ok(0)
         }
     }
 }
 
-fn stored_tokens_len(x: &BigInt) -> u16 {
-    let bits = x.bits();
-    4 + ((bits + 7) & !7) as u16
+/// Returns a tuple of mode and `send` flag.
+fn pop_send_msg_mode_ext(stack: &mut Stack) -> VmResult<(SendMsgFlags, bool)> {
+    const DRY_RUN_BIT: u32 = 1 << 10;
+
+    let mut raw_mode = ok!(stack.pop_smallint_range(0, 2047));
+    let send = raw_mode & DRY_RUN_BIT == 0;
+    raw_mode &= !DRY_RUN_BIT;
+    vm_ensure!(raw_mode < 256, IntegerOutOfRange {
+        min: 0,
+        max: 255,
+        actual: raw_mode.to_string(),
+    });
+    let mode = SendMsgFlags::from_bits_retain(raw_mode as u8);
+
+    Ok((mode, send))
 }
 
-fn get_balances(regs: &ControlRegs, index: usize) -> VmResult<&'_ [RcStackValue]> {
-    ok!(regs.get_c7_params()).try_get_ref::<Tuple>(index)
-}
-
-// TODO: Replace with newer version
-fn get_message_prices(is_masterchain: bool, regs: &ControlRegs) -> VmResult<MsgForwardPrices> {
-    let t1 = ok!(regs.get_c7_params());
-    let config = ok!(t1.try_get_ref::<Cell>(VmState::CONFIG_GLOBAL_IDX));
-
-    let dict = Dict::<u32, Cell>::from_raw(Some(config.clone()));
-    let Some(prices) = dict.get(if is_masterchain { 24 } else { 25 })? else {
-        vm_bail!(CellError(Error::CellUnderflow));
+fn pop_change_library_mode(version: VmVersion, stack: &mut Stack) -> VmResult<ChangeLibraryMode> {
+    let mode = if version.is_ton(4..) {
+        let mode = ok!(stack.pop_smallint_range(0, 0b11111));
+        // Check if flags match the allowed pattern
+        vm_ensure!(mode & 0b1111 <= 2, IntegerOutOfRange {
+            min: 0,
+            max: 0b11111,
+            actual: mode.to_string()
+        });
+        mode
+    } else {
+        ok!(stack.pop_smallint_range(0, 2))
     };
 
-    prices.parse::<MsgForwardPrices>().map_err(Into::into)
+    Ok(ChangeLibraryMode::from_bits_retain(mode as u8))
 }
 
-pub fn parse_address_workchain(cs: &mut CellSlice) -> VmResult<i8> {
-    let t = cs.load_bit()?;
-    if !t {
+fn parse_addr_workchain(addr: &OwnedCellSlice) -> VmResult<i32> {
+    let mut cs = addr.apply()?;
+    if !cs.load_bit()? {
         vm_bail!(IntegerOutOfRange {
             min: 1,
             max: 1,
-            actual: t.to_string()
+            actual: "0".to_owned()
         })
     }
 
     let is_var = cs.load_bit()?;
-    let anycast = cs.load_bit()?;
-    if anycast {
-        let depth = SplitDepth::new(load_uint_leq(cs, 30)? as u8)?;
+    if cs.load_bit()? {
+        // Read anycast if any.
+        let depth = SplitDepth::new(load_uint_leq(&mut cs, 30)? as u8)?;
         cs.skip_first(depth.into_bit_len(), 0)?;
     }
 
-    if is_var {
-        cs.skip_first(9, 0)?;
-        Ok(cs.load_u32()? as i8)
+    Ok(if is_var {
+        cs.skip_first(9, 0)?; // Skip addr len
+        cs.load_u32()? as i32
     } else {
-        Ok(cs.load_u8()? as i8)
+        // NOTE: Cast to `i8` first to preserve the sign.
+        cs.load_u8()? as i8 as i32
+    })
+}
+
+fn ext_addr_bit_len(addr: &Option<ExtAddr>) -> u16 {
+    match addr {
+        Some(addr) => 2 + addr.bit_len(),
+        None => 2,
     }
 }
 
-pub struct ReserveArgs(u32);
-impl ReserveArgs {
-    fn is_x(&self) -> bool {
-        self.0 & 0b1 != 0
-    }
-
-    fn display(&self) -> DisplayReserveArgs {
-        DisplayReserveArgs(self.0)
-    }
+fn tokens_bit_len(value: Tokens) -> VmResult<u16> {
+    let Some(bits) = value.bit_len() else {
+        vm_bail!(CellError(Error::IntOverflow));
+    };
+    Ok(bits)
 }
 
-pub struct DisplayReserveArgs(u32);
-impl std::fmt::Display for DisplayReserveArgs {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let args = ReserveArgs(self.0);
-        let is_x = if args.is_x() { "X" } else { "" };
-        write!(f, "RAWRESERVE{is_x}")
+fn bigint_to_tokens(int: &BigInt) -> VmResult<Tokens> {
+    if let Some(int) = int.to_u128() {
+        let int = Tokens::new(int);
+        if int.is_valid() {
+            return Ok(int);
+        }
     }
+
+    vm_bail!(IntegerOutOfRange {
+        min: 0,
+        max: Tokens::MAX.into_inner() as isize,
+        actual: int.to_string(),
+    })
 }
-fn install_output_actions(regs: &mut ControlRegs, action_head: Cell) -> VmResult<i32> {
+
+fn tokens_mul_frac(value: Tokens, frac: u32) -> Tokens {
+    Tokens::new(value.into_inner().saturating_mul(frac as u128) >> 16)
+}
+
+fn add_action(regs: &mut ControlRegs, gas: &mut GasConsumer, action: OutAction) -> VmResult<i32> {
+    const ACTIONS_REG_IDX: usize = 5;
+    let Some(c5) = regs.get_d(ACTIONS_REG_IDX) else {
+        vm_bail!(ControlRegisterOutOfRange(ACTIONS_REG_IDX))
+    };
+
+    let actions_head = CellBuilder::build_from_ext((c5, action), gas.context())?;
+
     vm_log!("installing an output action");
-    regs.set_d(OUTPUT_ACTIONS_IDX, action_head);
+    regs.set_d(ACTIONS_REG_IDX, actions_head);
     Ok(0)
 }
 
@@ -583,21 +450,14 @@ mod tests {
     use std::rc::Rc;
     use std::str::FromStr;
 
-    use anyhow::Context;
-    use everscale_types::cell::{Cell, CellBuilder, CellSlice};
-    use everscale_types::dict::{Dict, RawDict};
-    use everscale_types::models::{
-        Account, AccountState, ExtInMsgInfo, GlobalCapabilities, GlobalCapability, Message,
-        OwnedMessage, StdAddr,
-    };
-    use everscale_types::prelude::{Boc, CellFamily, HashBytes, Load, Store};
+    use everscale_types::cell::{Cell, CellBuilder};
+    use everscale_types::models::{Account, AccountState, OwnedMessage, StdAddr};
+    use everscale_types::prelude::{Boc, CellFamily, Load};
     use everscale_vm::stack::Tuple;
-    use everscale_vm::util::store_int_to_builder;
     use num_bigint::BigInt;
     use tracing_test::traced_test;
 
     use crate::cont::OrdCont;
-    use crate::stack::StackValueType::Cont;
     use crate::stack::{RcStackValue, Stack};
     use crate::util::OwnedCellSlice;
     use crate::VmState;
@@ -730,8 +590,8 @@ mod tests {
         builder.stack = stack;
         builder.code = code;
         let mut vm_state = builder
-            .with_gas_base(1000)
-            .with_gas_remaining(1000)
+            .with_gas_base(1000000)
+            .with_gas_remaining(1000000)
             .with_gas_max(u64::MAX)
             .with_debug(TracingOutput::default())
             .build()
@@ -843,7 +703,7 @@ mod tests {
             // Rc::new(BigInt::from(106029)),
         ];
 
-        let mut builder = VmState::builder();
+        let builder = VmState::builder();
 
         let mut vm_state = builder
             .with_c7(vec![Rc::new(c7)])
@@ -917,7 +777,7 @@ mod tests {
             Rc::new(BigInt::from(0)),
         ];
 
-        let mut builder = VmState::builder();
+        let builder = VmState::builder();
         let mut vm_state = builder
             .with_c7(vec![Rc::new(c7)])
             .with_stack(stack)

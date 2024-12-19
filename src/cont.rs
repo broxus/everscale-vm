@@ -148,7 +148,7 @@ impl ControlRegs {
         }
     }
 
-    pub fn get_d(&mut self, mut i: usize) -> Option<Cell> {
+    pub fn get_d(&self, mut i: usize) -> Option<Cell> {
         i = i.wrapping_sub(Self::DATA_REG_OFFSET);
         if i < Self::DATA_REG_COUNT {
             self.d[i].clone()
