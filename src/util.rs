@@ -188,15 +188,6 @@ pub fn ensure_empty_slice(slice: &CellSlice) -> Result<(), Error> {
     }
 }
 
-pub fn load_var_int_from_slice(
-    slice: &mut CellSlice<'_>,
-    len_bits: u16,
-    signed: bool,
-) -> Result<BigInt, Error> {
-    let len = slice.load_uint(len_bits)? as u16;
-    load_int_from_slice(slice, len * 8, signed)
-}
-
 pub fn load_int_from_slice(
     slice: &mut CellSlice<'_>,
     bits: u16,
@@ -230,30 +221,6 @@ pub fn load_int_from_slice(
     }
 }
 
-pub fn store_varint_to_builder(
-    int: &BigInt,
-    bits: u16,
-    builder: &mut CellBuilder,
-    signed: bool,
-    quite: bool,
-) -> Result<bool, Error> {
-    let bitsize = bitsize(int, signed);
-    let len = (bitsize + 7) >> 3;
-    if len >= (1 << bits) {
-        return Err(Error::InvalidData); // TODO: range check
-    }
-
-    if !builder.has_capacity(bits + len * 8, 0) {
-        if quite {
-            return Ok(false);
-        }
-        return Err(Error::CellUnderflow);
-    }
-    builder.store_uint(len as u64, bits)?;
-    store_int_to_builder(int, len * 8, signed, builder)?;
-    Ok(true)
-}
-
 pub fn store_int_to_builder(
     x: &BigInt,
     bits: u16,
@@ -264,7 +231,15 @@ pub fn store_int_to_builder(
     if bits < int_bits {
         return Err(Error::IntOverflow);
     }
+    store_int_to_builder_unchecked(x, bits, signed, builder)
+}
 
+pub fn store_int_to_builder_unchecked(
+    x: &BigInt,
+    bits: u16,
+    signed: bool,
+    builder: &mut CellBuilder,
+) -> Result<(), Error> {
     match x.to_u64() {
         Some(value) => builder.store_uint(value, bits),
         None => {
