@@ -141,37 +141,17 @@ impl CurrencyOps {
         Ok(0)
     }
 
-    #[instr(
-        code = "fa44",
-        fmt = "REWRITESTDADDR",
-        args(allow_var_addr = false, quiet = false)
-    )]
-    #[instr(
-        code = "fa45",
-        fmt = "REWRITESTDADDRQ",
-        args(allow_var_addr = false, quiet = true)
-    )]
-    #[instr(
-        code = "fa46",
-        fmt = "REWRITEVARADDR",
-        args(allow_var_addr = true, quiet = false)
-    )]
-    #[instr(
-        code = "fa47",
-        fmt = "REWRITEVARADDR",
-        args(allow_var_addr = true, quiet = true)
-    )]
-    fn exec_rewrite_message_addr(
-        st: &mut VmState,
-        allow_var_addr: bool,
-        quiet: bool,
-    ) -> VmResult<i32> {
+    #[instr(code = "fa44", fmt = "REWRITESTDADDR", args(a = false, q = false))]
+    #[instr(code = "fa45", fmt = "REWRITESTDADDRQ", args(a = false, q = true))]
+    #[instr(code = "fa46", fmt = "REWRITEVARADDR", args(a = true, q = false))]
+    #[instr(code = "fa47", fmt = "REWRITEVARADDR", args(a = true, q = true))]
+    fn exec_rewrite_message_addr(st: &mut VmState, a: bool, q: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut cs: Rc<OwnedCellSlice> = ok!(stack.pop_cs());
         let owned_cell_slice = Rc::make_mut(&mut cs);
         let (result, tuple) = parse_message_address(owned_cell_slice)?;
         if !result && owned_cell_slice.range().is_empty() {
-            if quiet {
+            if q {
                 ok!(stack.push_bool(false));
                 return Ok(0);
             }
@@ -196,7 +176,7 @@ impl CurrencyOps {
         };
 
         if t != 2 && t != 3 {
-            if quiet {
+            if q {
                 ok!(stack.push_bool(false));
                 return Ok(0);
             }
@@ -227,8 +207,8 @@ impl CurrencyOps {
 
         let prefix_slice = prefix_slice.as_slice();
 
-        if !allow_var_addr {
-            match (address_slice.range().size_bits(), quiet) {
+        if !a {
+            match (address_slice.range().size_bits(), q) {
                 (256, _) => (),
                 (_, true) => {
                     ok!(stack.push_bool(false));
@@ -266,7 +246,7 @@ impl CurrencyOps {
                 do_rewrite_addr(&mut st.gas, address_slice.clone(), prefix_slice.cloned());
             match rewrited {
                 Err(e) => {
-                    if quiet {
+                    if q {
                         ok!(stack.push_bool(false));
                         return Ok(0);
                     }
@@ -286,7 +266,7 @@ impl CurrencyOps {
             }
         }
 
-        if quiet {
+        if q {
             ok!(stack.push_bool(true));
         }
         Ok(0)
