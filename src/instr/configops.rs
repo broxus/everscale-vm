@@ -1,7 +1,7 @@
 use std::fmt::Formatter;
 use std::rc::Rc;
 
-use everscale_types::cell::LoadMode;
+use everscale_types::cell::{CellTreeStats, LoadMode};
 use everscale_types::dict;
 use everscale_types::models::{GasLimitsPrices, MsgForwardPrices, StoragePrices};
 use everscale_types::prelude::*;
@@ -158,7 +158,10 @@ impl ConfigOps {
             None => ok!(stack.push_int(0)),
             Some(cs) => {
                 let config = StoragePrices::load_from(&mut cs.apply()?)?;
-                let fee = config.compute_storage_fee(is_masterchain, delta, bits, cells);
+                let fee = config.compute_storage_fee(is_masterchain, delta, CellTreeStats {
+                    bit_count: bits,
+                    cell_count: cells,
+                });
                 ok!(stack.push_int(fee.into_inner()));
             }
         }
@@ -178,7 +181,10 @@ impl ConfigOps {
         let cs = ok!(t2.try_get_ref::<OwnedCellSlice>(if is_masterchain { 4 } else { 5 }));
         let config = MsgForwardPrices::load_from(&mut cs.apply()?)?;
 
-        let fee = config.compute_fwd_fee(bits, cells);
+        let fee = config.compute_fwd_fee(CellTreeStats {
+            bit_count: bits,
+            cell_count: cells,
+        });
         ok!(stack.push_int(fee.into_inner()));
         Ok(0)
     }

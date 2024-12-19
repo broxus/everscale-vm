@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::rc::Rc;
 
+use everscale_types::cell::CellTreeStats;
 use everscale_types::dict::DictKey;
 use everscale_types::error::Error;
 use everscale_types::models::{GasLimitsPrices, MsgForwardPrices, StoragePrices};
@@ -136,13 +137,8 @@ impl GasLimitsPricesExt for GasLimitsPrices {
 }
 
 pub trait StoragePricesExt {
-    fn compute_storage_fee(
-        &self,
-        is_masterchain: bool,
-        delta: u64,
-        bits: u64,
-        cells: u64,
-    ) -> Tokens;
+    fn compute_storage_fee(&self, is_masterchain: bool, delta: u64, stats: CellTreeStats)
+        -> Tokens;
 }
 
 impl StoragePricesExt for StoragePrices {
@@ -150,15 +146,14 @@ impl StoragePricesExt for StoragePrices {
         &self,
         is_masterchain: bool,
         delta: u64,
-        bits: u64,
-        cells: u64,
+        stats: CellTreeStats,
     ) -> Tokens {
         let mut res = if is_masterchain {
-            (cells as u128 * self.mc_cell_price_ps as u128)
-                .saturating_add(bits as u128 * self.mc_bit_price_ps as u128)
+            (stats.cell_count as u128 * self.mc_cell_price_ps as u128)
+                .saturating_add(stats.bit_count as u128 * self.mc_bit_price_ps as u128)
         } else {
-            (cells as u128 * self.cell_price_ps as u128)
-                .saturating_add(bits as u128 * self.bit_price_ps as u128)
+            (stats.cell_count as u128 * self.cell_price_ps as u128)
+                .saturating_add(stats.bit_count as u128 * self.bit_price_ps as u128)
         };
         res = res.saturating_mul(delta as u128);
         Tokens::new(shift_ceil_price(res))
@@ -166,15 +161,15 @@ impl StoragePricesExt for StoragePrices {
 }
 
 pub trait MsgForwardPricesExt {
-    fn compute_fwd_fee(&self, bits: u64, cells: u64) -> Tokens;
+    fn compute_fwd_fee(&self, stats: CellTreeStats) -> Tokens;
 }
 
 impl MsgForwardPricesExt for MsgForwardPrices {
-    fn compute_fwd_fee(&self, bits: u64, cells: u64) -> Tokens {
+    fn compute_fwd_fee(&self, stats: CellTreeStats) -> Tokens {
         let lump = self.lump_price as u128;
         let extra = shift_ceil_price(
-            (cells as u128 * self.cell_price as u128)
-                .saturating_add(bits as u128 * self.bit_price as u128),
+            (stats.cell_count as u128 * self.cell_price as u128)
+                .saturating_add(stats.bit_count as u128 * self.bit_price as u128),
         );
         Tokens::new(lump.saturating_add(extra))
     }
@@ -303,23 +298,12 @@ pub fn store_int_to_builder(
 }
 
 pub fn load_uint_leq(cs: &mut CellSlice, upper_bound: u32) -> Result<u64, Error> {
-    let leading_zeros = if upper_bound == 0 {
-        32
-    } else {
-        upper_bound.leading_zeros()
+    let bits = 32 - upper_bound.leading_zeros();
+    let result = cs.load_uint(bits as u16)?;
+    if result > upper_bound as u64 {
+        return Err(Error::IntOverflow);
     };
-    let bits = 32 - leading_zeros;
-    if bits > 32 || bits > cs.size_bits() as u32 {
-        Err(Error::IntOverflow)
-    } else {
-        let result = cs.get_uint(cs.offset_bits(), bits as u16)?;
-        if result > upper_bound as u64 {
-            return Err(Error::IntOverflow);
-        };
-
-        cs.skip_first(bits as u16, 0)?;
-        Ok(result)
-    }
+    Ok(result)
 }
 
 pub fn bitsize(int: &BigInt, signed: bool) -> u16 {
