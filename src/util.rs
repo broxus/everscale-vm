@@ -309,7 +309,7 @@ pub fn remove_trailing(slice: &mut CellSlice<'_>) -> Result<(), everscale_types:
 
     let n = ok!(slice.count_trailing(false));
     // NOTE: Skip one additional bit for non-empty slice
-    slice.skip_last((n != bits) as _, 0)
+    slice.skip_last(n + (n != bits) as u16, 0)
 }
 
 pub fn to_signed_bytes_be(is_negative: bool, value: &BigUint) -> Vec<u8> {

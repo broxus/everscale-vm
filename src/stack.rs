@@ -309,10 +309,10 @@ impl Stack {
         Ok(())
     }
 
-    pub fn fetch(&self, idx: usize) -> VmResult<Rc<dyn StackValue>> {
+    pub fn fetch(&self, idx: usize) -> VmResult<&Rc<dyn StackValue>> {
         let depth = self.depth();
         vm_ensure!(idx < depth, StackUnderflow(idx));
-        Ok(self.items[depth - idx - 1].clone())
+        Ok(&self.items[depth - idx - 1])
     }
 }
 

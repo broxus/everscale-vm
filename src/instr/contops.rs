@@ -385,9 +385,8 @@ impl Contops {
         st.call(cont)
     }
 
-    #[instr(code = "e3$10nx#x", fmt = ("IF{}BITJMP {x}", if n != 0 { "N" } else { "" }))]
-    fn exec_if_bit_jmp(st: &mut VmState, n: u32, x: u32) -> VmResult<i32> {
-        let negate = n != 0;
+    #[instr(code = "e3$10nx#x", fmt = ("IF{}BITJMP {x}", if n { "N" } else { "" }))]
+    fn exec_if_bit_jmp(st: &mut VmState, n: bool, x: u32) -> VmResult<i32> {
         let (cont, bit) = {
             let stack = Rc::make_mut(&mut st.stack);
             let cont = ok!(stack.pop_cont());
@@ -397,7 +396,7 @@ impl Contops {
             (cont, bit)
         };
 
-        if bit ^ negate {
+        if bit ^ n {
             st.jump(cont)
         } else {
             Ok(0)

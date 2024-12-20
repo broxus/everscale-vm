@@ -359,6 +359,9 @@ fn process_instr_definition(
 
                     shift -= *bits as u32;
                     arg_definitions.push(match explicit_arg {
+                        None if *bits == 1 => {
+                            quote! { let #ident = (args >> #shift) & 0b1 != 0; }
+                        }
                         None => {
                             let mask = (1u32 << *bits) - 1;
                             quote! { let #ident = (args >> #shift) & #mask; }
