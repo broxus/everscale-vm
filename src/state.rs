@@ -33,7 +33,7 @@ pub struct VmStateBuilder {
     pub same_c3: bool,
     pub version: Option<VmVersion>,
     pub without_push0: bool,
-    pub stop_on_accept: bool,
+    pub modifiers: BehaviouModifiers,
     pub debug: Option<Box<dyn std::fmt::Write>>,
 }
 
@@ -98,7 +98,7 @@ impl VmStateBuilder {
             },
             cp,
             debug: self.debug,
-            stop_on_accept: self.stop_on_accept,
+            modifiers: self.modifiers,
             version: self.version.unwrap_or(VmState::DEFAULT_VERSION),
         })
     }
@@ -177,6 +177,11 @@ impl VmStateBuilder {
         self
     }
 
+    pub fn with_modifiers(mut self, modifiers: BehaviouModifiers) -> Self {
+        self.modifiers = modifiers;
+        self
+    }
+
     pub fn with_version(mut self, version: VmVersion) -> Self {
         self.version = Some(version);
         self
@@ -194,7 +199,7 @@ pub struct VmState {
     pub gas: GasConsumer,
     pub cp: &'static DispatchTable,
     pub debug: Option<Box<dyn std::fmt::Write>>,
-    pub stop_on_accept: bool,
+    pub modifiers: BehaviouModifiers,
     pub version: VmVersion,
 }
 
@@ -785,6 +790,12 @@ impl VmState {
     }
 }
 
+#[derive(Default, Debug, Clone, Copy)]
+pub struct BehaviouModifiers {
+    pub stop_on_accept: bool,
+    pub chksig_always_succeed: bool,
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum VmVersion {
     Everscale(u32),
@@ -835,32 +846,19 @@ pub struct GasConsumer {
 }
 
 impl GasConsumer {
-    const BUILD_CELL_GAS: u64 = 500;
-    const NEW_CELL_GAS: u64 = 100;
-    const OLD_CELL_GAS: u64 = 25;
+    pub const BUILD_CELL_GAS: u64 = 500;
+    pub const NEW_CELL_GAS: u64 = 100;
+    pub const OLD_CELL_GAS: u64 = 25;
 
-    const FREE_STACK_DEPTH: u64 = 32;
-    const FREE_SIGNATURE_CHECKS: u64 = 10;
-    const STACK_VALUE_GAS_PRICE: u64 = 1;
-    const TUPLE_ENTRY_GAS_PRICE: u64 = 1;
-    const HASH_EXT_ENTRY_GAS_PRICE: u64 = 1;
-    const CHK_SGN_GAS_PRICE: u64 = 4000;
-    const IMPLICIT_JMPREF_GAS_PRICE: u64 = 10;
-    const IMPLICIT_RET_GAS_PRICE: u64 = 5;
-    const EXCEPTION_GAS_PRICE: u64 = 50;
-
-    pub fn calc_hash_ext_consumption(i: usize, total_bits: usize, hash_id: u32) -> u64 {
-        let bytes_per_gas_unit = match hash_id {
-            0 => 33, // sha256
-            1 => 16, // sha512
-            2 => 19, // blake2b
-            3 => 11, // keccak
-            4 => 6,  // keccak
-            _ => unimplemented!("hasher is not supported"),
-        };
-
-        (i as u64 + 1) * Self::HASH_EXT_ENTRY_GAS_PRICE + total_bits as u64 / 8 / bytes_per_gas_unit
-    }
+    pub const FREE_STACK_DEPTH: u64 = 32;
+    pub const FREE_SIGNATURE_CHECKS: u64 = 10;
+    pub const STACK_VALUE_GAS_PRICE: u64 = 1;
+    pub const TUPLE_ENTRY_GAS_PRICE: u64 = 1;
+    pub const HASH_EXT_ENTRY_GAS_PRICE: u64 = 1;
+    pub const CHK_SGN_GAS_PRICE: u64 = 4000;
+    pub const IMPLICIT_JMPREF_GAS_PRICE: u64 = 10;
+    pub const IMPLICIT_RET_GAS_PRICE: u64 = 5;
+    pub const EXCEPTION_GAS_PRICE: u64 = 50;
 
     pub fn try_consume_exception_gas(&mut self) -> Result<(), Error> {
         self.try_consume(Self::EXCEPTION_GAS_PRICE)

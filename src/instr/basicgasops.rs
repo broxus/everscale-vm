@@ -51,7 +51,7 @@ fn exec_set_gas(st: &mut VmState, gas_limit: u64) -> VmResult<i32> {
     }
     st.gas.set_limit(gas_limit);
 
-    if st.stop_on_accept {
+    if st.modifiers.stop_on_accept {
         st.jump(Rc::new(QuitCont { exit_code: 0 }))
     } else {
         Ok(0)
