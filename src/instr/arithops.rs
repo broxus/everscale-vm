@@ -3,8 +3,9 @@ use std::ops::Shr;
 use std::rc::Rc;
 
 use anyhow::Result;
+use everscale_types::error::Error;
 use everscale_vm_proc::vm_module;
-use num_bigint::BigInt;
+use num_bigint::{BigInt, Sign};
 use num_integer::Integer;
 use num_traits::Zero;
 
@@ -409,6 +410,61 @@ impl Arithops {
 
         Ok(0)
     }
+
+    // === Other opcodes ===
+
+    #[instr(code = "b608", fmt = "MIN", args(mn = true, mx = false, q = false))]
+    #[instr(code = "b609", fmt = "MAX", args(mn = false, mx = true, q = false))]
+    #[instr(code = "b60a", fmt = "MINMAX", args(mn = true, mx = true, q = false))]
+    #[instr(code = "b7b608", fmt = "QMIN", args(mn = true, mx = false, q = true))]
+    #[instr(code = "b7b609", fmt = "QMAX", args(mn = false, mx = true, q = true))]
+    #[instr(code = "b7b60a", fmt = "QMINMAX", args(mn = true, mx = true, q = true))]
+    fn exec_minmax(st: &mut VmState, mn: bool, mx: bool, q: bool) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let x = ok!(stack.pop_int_or_nan());
+        let y = ok!(stack.pop_int_or_nan());
+        match (x, y) {
+            (Some(mut x), Some(mut y)) => {
+                if x > y {
+                    std::mem::swap(&mut x, &mut y);
+                }
+                if mn {
+                    ok!(stack.push_raw(x));
+                }
+                if mx {
+                    ok!(stack.push_raw(y));
+                }
+            }
+            _ if q => {
+                if mn {
+                    ok!(stack.push_nan());
+                }
+                if mx {
+                    ok!(stack.push_nan());
+                }
+            }
+            _ => vm_bail!(CellError(Error::IntOverflow)),
+        }
+        Ok(0)
+    }
+
+    #[instr(code = "b60b", fmt = "ABS", args(quiet = false))]
+    #[instr(code = "b7b60b", fmt = "QABS", args(quiet = true))]
+    fn exec_abs(st: &mut VmState, quiet: bool) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        match ok!(stack.pop_int_or_nan()) {
+            Some(mut x) => {
+                if x.sign() == Sign::Minus {
+                    let x = Rc::make_mut(&mut x);
+                    *x = -std::mem::take(x);
+                }
+                ok!(stack.push_raw_int(x, quiet));
+            }
+            None if quiet => ok!(stack.push_nan()),
+            None => vm_bail!(CellError(Error::IntOverflow)),
+        }
+        Ok(0)
+    }
 }
 
 struct DumpDivmod(u32);
@@ -534,41 +590,61 @@ mod tests {
     #[test]
     #[traced_test]
     fn op_simple_math() {
+        // === ADD/ADDINT/QADD/QADDINT ===
+
         // pos
         assert_run_vm!("ADD", [int 2, int 5] => [int 7]);
         assert_run_vm!("ADD", [int -5, int 5] => [int 0]);
+        assert_run_vm!("ADDINT 2", [int 5] => [int 7]);
+        assert_run_vm!("ADDINT -5", [int 5] => [int 0]);
         // neg
         assert_run_vm!("ADD", [] => [int 0], exit_code: 2);
+        assert_run_vm!("ADDINT 123", [] => [int 0], exit_code: 2);
         assert_run_vm!("ADD", [int 123] => [int 0], exit_code: 2);
         assert_run_vm!("ADD", [null, int 5] => [int 0], exit_code: 7);
-        assert_run_vm!("ADD", [int (BigInt::from(1) << 256) - 1, int 1] => [int 0], exit_code: 4);
+        assert_run_vm!("ADDINT 5", [nan] => [int 0], exit_code: 4);
+        assert_run_vm!("ADD", [int int257_max(), int 1] => [int 0], exit_code: 4);
+        assert_run_vm!("ADDINT 1", [int int257_max()] => [int 0], exit_code: 4);
 
         // pos
         assert_run_vm!("QADD", [int 2, int 5] => [int 7]);
         assert_run_vm!("QADD", [int -5, int 5] => [int 0]);
-        assert_run_vm!("QADD", [int (BigInt::from(1) << 256) - 1, int 0] => [int (BigInt::from(1) << 256) - 1]);
-        assert_run_vm!("QADD", [int (BigInt::from(1) << 256) - 1, int 1] => [nan]);
-        assert_run_vm!("QADD", [int (BigInt::from(1) << 256), int 0] => [nan]);
+        assert_run_vm!("QADD", [int int257_max(), int 0] => [int int257_max()]);
+        assert_run_vm!("QADD", [int int257_max() + 1, int 1] => [nan]);
+        assert_run_vm!("QADD", [int int257_max() + 1, int 0] => [nan]);
+        assert_run_vm!("QADD", [nan, int 5] => [nan]);
+        assert_run_vm!("QADDINT 2", [int 5] => [int 7]);
+        assert_run_vm!("QADDINT -5", [int 5] => [int 0]);
+        assert_run_vm!("QADDINT 2", [nan] => [nan]);
+        assert_run_vm!("QADDINT -5", [int 5] => [int 0]);
         // neg
         assert_run_vm!("QADD", [] => [int 0], exit_code: 2);
         assert_run_vm!("QADD", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("QADDINT 0", [] => [int 0], exit_code: 2);
+
+        // === SUB/SUBINT/QSUB ===
 
         // pos
         assert_run_vm!("SUB", [int 2, int 5] => [int -3]);
         assert_run_vm!("SUB", [int -5, int 5] => [int -10]);
+        assert_run_vm!("SUBINT 2", [int 5] => [int 3]);
+        assert_run_vm!("SUBINT -5", [int 5] => [int 10]);
         // neg
         assert_run_vm!("SUB", [int -5, null] => [int 0], exit_code: 7);
-        assert_run_vm!("SUB", [int (BigInt::from(-1) << 256), int 1] => [int 0], exit_code: 4);
+        assert_run_vm!("SUB", [int int257_min(), int 1] => [int 0], exit_code: 4);
 
         // pos
         assert_run_vm!("QSUB", [int 2, int 5] => [int -3]);
         assert_run_vm!("QSUB", [int -5, int 5] => [int -10]);
-        assert_run_vm!("QSUB", [int (BigInt::from(1) << 256) - 1, int 0] => [int (BigInt::from(1) << 256) - 1]);
-        assert_run_vm!("QSUB", [int (BigInt::from(-1) << 256) + 1, int 1] => [int (BigInt::from(-1) << 256)]);
-        assert_run_vm!("QSUB", [int (BigInt::from(-1) << 256), int 1] => [nan]);
+        assert_run_vm!("QSUB", [int int257_max(), int 0] => [int int257_max()]);
+        assert_run_vm!("QSUB", [int int257_min() + 1, int 1] => [int int257_min()]);
+        assert_run_vm!("QSUB", [int int257_min(), int 1] => [nan]);
+        assert_run_vm!("QSUB", [nan, int 5] => [nan]);
         // neg
         assert_run_vm!("QSUB", [] => [int 0], exit_code: 2);
         assert_run_vm!("QSUB", [int 123] => [int 0], exit_code: 2);
+
+        // === SUBR/QSUBR ===
 
         // pos
         assert_run_vm!("SUBR", [int 5, int 2] => [int -3]);
@@ -577,17 +653,137 @@ mod tests {
         assert_run_vm!("SUBR", [] => [int 0], exit_code: 2);
         assert_run_vm!("SUBR", [int 123] => [int 0], exit_code: 2);
         assert_run_vm!("SUBR", [int 5, null] => [int 0], exit_code: 7);
-        assert_run_vm!("SUBR", [int (BigInt::from(1) << 256), int -1] => [int 0], exit_code: 4);
+        assert_run_vm!("SUBR", [int -1, int int257_max()] => [int 0], exit_code: 4);
 
         // pos
         assert_run_vm!("QSUBR", [int 5, int 2] => [int -3]);
         assert_run_vm!("QSUBR", [int 5, int -5] => [int -10]);
-        assert_run_vm!("QSUBR", [int 0, int (BigInt::from(1) << 256) - 1] => [int (BigInt::from(1) << 256) - 1]);
-        assert_run_vm!("QSUBR", [int 1, int (BigInt::from(-1) << 256) + 1] => [int (BigInt::from(-1) << 256)]);
-        assert_run_vm!("QSUBR", [int 1, int (BigInt::from(-1) << 256)] => [nan]);
+        assert_run_vm!("QSUBR", [int 0, int int257_max()] => [int int257_max()]);
+        assert_run_vm!("QSUBR", [int 1, int int257_min() + 1] => [int int257_min()]);
+        assert_run_vm!("QSUBR", [int 1, int int257_min()] => [nan]);
+        assert_run_vm!("QSUBR", [int 5, nan] => [nan]);
         // neg
         assert_run_vm!("QSUBR", [] => [int 0], exit_code: 2);
         assert_run_vm!("QSUBR", [int 123] => [int 0], exit_code: 2);
+
+        // === NEGATE/QNEGATE ===
+
+        // pos
+        assert_run_vm!("NEGATE", [int 123] => [int -123]);
+        assert_run_vm!("NEGATE", [int 0] => [int 0]);
+        assert_run_vm!("NEGATE", [int -10] => [int 10]);
+        assert_run_vm!("NEGATE", [int int257_min() + 1] => [int int257_max()]);
+        assert_run_vm!("NEGATE", [int int257_max()] => [int int257_min() + 1]);
+        // neg
+        assert_run_vm!("NEGATE", [] => [int 0], exit_code: 2);
+        assert_run_vm!("NEGATE", [nan] => [int 0], exit_code: 4);
+
+        // pos
+        assert_run_vm!("QNEGATE", [int 123] => [int -123]);
+        assert_run_vm!("QNEGATE", [nan] => [nan]);
+        // neg
+        assert_run_vm!("QNEGATE", [] => [int 0], exit_code: 2);
+        assert_run_vm!("QNEGATE", [null] => [int 0], exit_code: 7);
+
+        // === INC/QINC ===
+
+        // pos
+        assert_run_vm!("INC", [int 10] => [int 11]);
+        assert_run_vm!("INC", [int -1] => [int 0]);
+        assert_run_vm!("INC", [int int257_max() - 1] => [int int257_max()]);
+        assert_run_vm!("INC", [int int257_min()] => [int int257_min() + 1]);
+        // neg
+        assert_run_vm!("INC", [] => [int 0], exit_code: 2);
+        assert_run_vm!("INC", [nan] => [int 0], exit_code: 4);
+        assert_run_vm!("INC", [int int257_max()] => [int 0], exit_code: 4);
+
+        // pos
+        assert_run_vm!("QINC", [int 10] => [int 11]);
+        assert_run_vm!("QINC", [int -1] => [int 0]);
+        assert_run_vm!("QINC", [int int257_max() - 1] => [int int257_max()]);
+        assert_run_vm!("QINC", [int int257_min()] => [int int257_min() + 1]);
+        assert_run_vm!("QINC", [nan] => [nan]);
+        assert_run_vm!("QINC", [int int257_max()] => [nan]);
+        // neg
+        assert_run_vm!("QINC", [] => [int 0], exit_code: 2);
+
+        // === DEC/QDEC ===
+
+        // pos
+        assert_run_vm!("DEC", [int 10] => [int 9]);
+        assert_run_vm!("DEC", [int 0] => [int -1]);
+        assert_run_vm!("DEC", [int int257_min() + 1] => [int int257_min()]);
+        assert_run_vm!("DEC", [int int257_max()] => [int int257_max() - 1]);
+        // neg
+        assert_run_vm!("DEC", [] => [int 0], exit_code: 2);
+        assert_run_vm!("DEC", [nan] => [int 0], exit_code: 4);
+        assert_run_vm!("DEC", [int int257_min()] => [int 0], exit_code: 4);
+
+        // pos
+        assert_run_vm!("QDEC", [int 10] => [int 9]);
+        assert_run_vm!("QDEC", [int 0] => [int -1]);
+        assert_run_vm!("QDEC", [int int257_min() + 1] => [int int257_min()]);
+        assert_run_vm!("QDEC", [int int257_max()] => [int int257_max() - 1]);
+        assert_run_vm!("QDEC", [nan] => [nan]);
+        assert_run_vm!("QDEC", [int int257_min()] => [nan]);
+        // neg
+        assert_run_vm!("QDEC", [] => [int 0], exit_code: 2);
+
+        // === MUL/QMUL
+
+        // pos
+        assert_run_vm!("MUL", [int 123, int 0] => [int 0]);
+        assert_run_vm!("MUL", [int 123, int 1] => [int 123]);
+        assert_run_vm!("MUL", [int 123, int 123] => [int 123 * 123]);
+        assert_run_vm!("MUL", [int -123, int 0] => [int 0]);
+        assert_run_vm!("MUL", [int -123, int 1] => [int -123]);
+        assert_run_vm!("MULINT 0", [int -123] => [int 0]);
+        assert_run_vm!("MULINT 1", [int -123] => [int -123]);
+        assert_run_vm!("MUL", [int -123, int 123] => [int -123 * 123]);
+        assert_run_vm!("MULINT 123", [int -123] => [int -123 * 123]);
+        assert_run_vm!("MUL", [int -123, int -123] => [int 123 * 123]);
+        assert_run_vm!("MULINT -123", [int -123] => [int 123 * 123]);
+        assert_run_vm!("MUL", [int int257_min(), int 0] => [int 0]);
+        assert_run_vm!("MUL", [int int257_max(), int 0] => [int 0]);
+        assert_run_vm!("MUL", [int int257_min(), int 1] => [int int257_min()]);
+        assert_run_vm!("MUL", [int int257_max(), int 1] => [int int257_max()]);
+        assert_run_vm!("MUL", [int int257_max(), int -1] => [int int257_min() + 1]);
+        // neg
+        assert_run_vm!("MUL", [] => [int 0], exit_code: 2);
+        assert_run_vm!("MUL", [int 2] => [int 0], exit_code: 2);
+        assert_run_vm!("MUL", [int 2, nan] => [int 0], exit_code: 4);
+        assert_run_vm!("MUL", [nan, int 2] => [int 0], exit_code: 4);
+        assert_run_vm!("MUL", [int 2, null] => [int 0], exit_code: 7);
+        assert_run_vm!("MUL", [int int257_min(), int -1] => [int 0], exit_code: 4);
+        assert_run_vm!("MUL", [int int257_min() / 2, int -2] => [int 0], exit_code: 4);
+        assert_run_vm!("MUL", [int int257_max(), int 2] => [int 0], exit_code: 4);
+
+        // pos
+        assert_run_vm!("QMUL", [int 123, int 0] => [int 0]);
+        assert_run_vm!("QMUL", [int 123, int 1] => [int 123]);
+        assert_run_vm!("QMUL", [int 123, int 123] => [int 123 * 123]);
+        assert_run_vm!("QMUL", [int -123, int 0] => [int 0]);
+        assert_run_vm!("QMUL", [int -123, int 1] => [int -123]);
+        assert_run_vm!("QMULINT 0", [int -123] => [int 0]);
+        assert_run_vm!("QMULINT 1", [int -123] => [int -123]);
+        assert_run_vm!("QMUL", [int -123, int 123] => [int -123 * 123]);
+        assert_run_vm!("QMULINT 123", [int -123] => [int -123 * 123]);
+        assert_run_vm!("QMUL", [int -123, int -123] => [int 123 * 123]);
+        assert_run_vm!("QMULINT -123", [int -123] => [int 123 * 123]);
+        assert_run_vm!("QMUL", [int int257_min(), int 0] => [int 0]);
+        assert_run_vm!("QMUL", [int int257_max(), int 0] => [int 0]);
+        assert_run_vm!("QMUL", [int int257_min(), int 1] => [int int257_min()]);
+        assert_run_vm!("QMUL", [int int257_max(), int 1] => [int int257_max()]);
+        assert_run_vm!("QMUL", [int int257_max(), int -1] => [int int257_min() + 1]);
+        assert_run_vm!("QMUL", [nan, int 2] => [nan]);
+        assert_run_vm!("QMUL", [int 2, nan] => [nan]);
+        assert_run_vm!("QMUL", [int int257_min(), int -1] => [nan]);
+        assert_run_vm!("QMUL", [int int257_min() / 2, int -2] => [nan]);
+        assert_run_vm!("QMUL", [int int257_max(), int 2] => [nan]);
+        // neg
+        assert_run_vm!("QMUL", [] => [int 0], exit_code: 2);
+        assert_run_vm!("QMUL", [int 2] => [int 0], exit_code: 2);
+        assert_run_vm!("QMUL", [int 2, null] => [int 0], exit_code: 7);
     }
 
     #[test]
@@ -627,5 +823,63 @@ mod tests {
     #[traced_test]
     fn op_shrmod() {
         assert_run_vm!("@inline x{a924}", [int 5, int 2] => [int 1]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn other_ops() {
+        // === MIN/MAX/MINMAX/QMIN/QMAX/QMINMAX ===
+
+        // pos
+        assert_run_vm!("MIN", [int 123, int 456] => [int 123]);
+        assert_run_vm!("MAX", [int 123, int 456] => [int 456]);
+        assert_run_vm!("MINMAX", [int 456, int 123] => [int 123, int 456]);
+        // neg
+        assert_run_vm!("MIN", [] => [int 0], exit_code: 2);
+        assert_run_vm!("MIN", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("MIN", [int 123, nan] => [int 0], exit_code: 4);
+        assert_run_vm!("MINMAX", [int 123, nan] => [int 0], exit_code: 4);
+
+        // pos
+        assert_run_vm!("@inline x{b7b608}", [int 123, int 456] => [int 123]);
+        assert_run_vm!("@inline x{b7b609}", [int 123, int 456] => [int 456]);
+        assert_run_vm!("@inline x{b7b60a}", [int 456, int 123] => [int 123, int 456]);
+        assert_run_vm!("@inline x{b7b608}", [int 123, nan] => [nan]);
+        assert_run_vm!("@inline x{b7b60a}", [int 123, nan] => [nan, nan]);
+        // neg
+        assert_run_vm!("@inline x{b7b608}", [] => [int 0], exit_code: 2);
+        assert_run_vm!("@inline x{b7b608}", [int 123] => [int 0], exit_code: 2);
+
+        // === ABS/QABS ===
+
+        // pos
+        assert_run_vm!("ABS", [int 0] => [int 0]);
+        assert_run_vm!("ABS", [int 123] => [int 123]);
+        assert_run_vm!("ABS", [int -123123] => [int 123123]);
+        assert_run_vm!("ABS", [int int257_min() + 1] => [int int257_max()]);
+        // neg
+        assert_run_vm!("ABS", [] => [int 0], exit_code: 2);
+        assert_run_vm!("ABS", [nan] => [int 0], exit_code: 4);
+        assert_run_vm!("ABS", [int int257_min()] => [int 0], exit_code: 4);
+        assert_run_vm!("ABS", [null] => [int 0], exit_code: 7);
+
+        // pos
+        assert_run_vm!("@inline x{b7b60b}", [int 0] => [int 0]);
+        assert_run_vm!("@inline x{b7b60b}", [int 123] => [int 123]);
+        assert_run_vm!("@inline x{b7b60b}", [int -123123] => [int 123123]);
+        assert_run_vm!("@inline x{b7b60b}", [int int257_min() + 1] => [int int257_max()]);
+        assert_run_vm!("@inline x{b7b60b}", [nan] => [nan]);
+        assert_run_vm!("@inline x{b7b60b}", [int int257_min()] => [nan]);
+        // neg
+        assert_run_vm!("@inline x{b7b60b}", [] => [int 0], exit_code: 2);
+        assert_run_vm!("@inline x{b7b60b}", [null] => [int 0], exit_code: 7);
+    }
+
+    fn int257_min() -> BigInt {
+        BigInt::from(-1) << 256
+    }
+
+    fn int257_max() -> BigInt {
+        (BigInt::from(1) << 256) - 1
     }
 }
