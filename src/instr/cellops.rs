@@ -1186,7 +1186,7 @@ impl Cellops {
                 false => Cell::all_zeros_ref(),
                 true => Cell::all_ones_ref(),
             };
-            let target = unsafe { target.as_slice_allow_pruned() };
+            let target = target.as_slice_allow_pruned();
 
             let mut slice = cs.apply_allow_special();
             let prefix = slice.longest_common_data_prefix(&target);

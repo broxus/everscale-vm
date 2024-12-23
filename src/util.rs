@@ -291,10 +291,12 @@ pub fn bitsize(int: &BigInt, signed: bool) -> u16 {
             return bits + 1;
         }
 
-        let mut modpow2 = int.magnitude().clone();
-        modpow2 &= &modpow2 - 1u32;
-        if !modpow2.is_zero() {
-            bits += 1;
+        // Check if `int` magnitude is not a power of 2
+        let mut digits = int.iter_u64_digits().rev();
+        if let Some(hi) = digits.next() {
+            if !hi.is_power_of_two() || !digits.all(|digit| digit == 0) {
+                bits += 1;
+            }
         }
     }
 
