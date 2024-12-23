@@ -38,7 +38,7 @@ everscale-types = { git = "https://github.com/broxus/everscale-types.git", defau
     "models",
     "base64",
 ] }
-everscale-asm-macros = { git = "https://github.com/broxus/everscale-asm.git", rev = "afdb54a90040f7c2b3ee540c9c5e00b4cce4b25e" }
+everscale-asm-macros = { git = "https://github.com/broxus/everscale-asm.git", rev = "3e7099f3c8352ef4c0c82f6b760fd7dff22bbd64" }
 
 [patch."https://github.com/broxus/everscale-types.git"]
 everscale-types = { git = "https://www.github.com/broxus/everscale-types.git", rev = "d9a691d2ed98fac5212c7837f40edb5a5ed67e7c" }
