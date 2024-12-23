@@ -10,6 +10,7 @@ use num_traits::Zero;
 
 use crate::dispatch::Opcodes;
 use crate::error::VmResult;
+use crate::util::load_int_from_slice;
 use crate::VmState;
 
 pub struct Arithops;
@@ -41,21 +42,13 @@ impl Arithops {
         );
         st.code.range_mut().skip_first(bits, 0).ok();
 
-        let mut bytes = [0u8; 33];
-        let rem = value_len % 8;
-        let mut int = {
-            let mut cs = st.code.apply()?;
-            let bytes = cs.load_raw(&mut bytes, value_len)?;
-            st.code.set_range(cs.range());
-            num_bigint::BigUint::from_bytes_be(bytes)
-        };
-        if rem != 0 {
-            int >>= 8 - rem;
-        }
+        let mut cs = st.code.apply()?;
+        let int = load_int_from_slice(&mut cs, value_len, true)?;
+        st.code.set_range(cs.range());
+
         vm_log!("execute PUSHINT {int}");
 
         ok!(Rc::make_mut(&mut st.stack).push_int(int));
-
         Ok(0)
     }
 
