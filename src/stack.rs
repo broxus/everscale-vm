@@ -713,6 +713,10 @@ impl StackValue for NaN {
     fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("NaN")
     }
+
+    fn into_int(self: Rc<Self>) -> VmResult<Rc<BigInt>> {
+        vm_bail!(CellError(Error::IntOverflow));
+    }
 }
 
 impl StackValue for BigInt {
