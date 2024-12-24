@@ -969,7 +969,7 @@ impl Contops {
         st.throw_exception_with_arg(n as i32, arg)
     }
 
-    #[instr(code = "f2fx", range_to = "f2f6", fmt = ("{}", ThrowAnyArgs(x)))]
+    #[instr(code = "f2fx", range_to = "f2f6", fmt = ThrowAnyArgs(x))]
     fn exec_throw_any(st: &mut VmState, x: u32) -> VmResult<i32> {
         let args = ThrowAnyArgs(x);
 

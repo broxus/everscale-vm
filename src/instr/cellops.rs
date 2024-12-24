@@ -291,7 +291,7 @@ impl Cellops {
         finish_store_ok(stack, builder, quiet)
     }
 
-    #[instr(code = "cf0$0sss", fmt = ("{}", s.display_x()), args(s = StoreIntArgs(args)))]
+    #[instr(code = "cf0$0sss", fmt = s.display_x(), args(s = StoreIntArgs(args)))]
     fn exec_store_int_var(st: &mut VmState, s: StoreIntArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let bits = ok!(stack.pop_smallint_range(0, 256 + s.is_signed() as u32));
@@ -726,7 +726,7 @@ impl Cellops {
         exec_load_slice_common(stack, x as _, LoadSliceArgs(0))
     }
 
-    #[instr(code = "d70$0sss", fmt = ("{}", s.display_x()), args(s = LoadIntArgs(args)))]
+    #[instr(code = "d70$0sss", fmt = s.display_x(), args(s = LoadIntArgs(args)))]
     fn exec_load_int_var(st: &mut VmState, s: LoadIntArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let bits = ok!(stack.pop_smallint_range(0, 256 + s.is_signed() as u32));
@@ -799,7 +799,7 @@ impl Cellops {
         Ok(0)
     }
 
-    #[instr(code = "d71$10ss", fmt = ("{}", s.display_x()), args(s = LoadSliceArgs(args)))]
+    #[instr(code = "d71$10ss", fmt = s.display_x(), args(s = LoadSliceArgs(args)))]
     fn exec_load_slice(st: &mut VmState, s: LoadSliceArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let bits = ok!(stack.pop_smallint_range(0, 1023));

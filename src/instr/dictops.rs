@@ -1,7 +1,6 @@
-use std::fmt::Formatter;
 use std::rc::Rc;
 
-use everscale_types::cell::CellBuilder;
+use everscale_types::cell::{CellBuilder, Load};
 use everscale_types::dict::{DictBound, SetMode};
 use everscale_types::error::Error;
 use everscale_types::prelude::{Cell, CellFamily, Store};
@@ -52,7 +51,7 @@ impl Dictops {
         let stack = Rc::make_mut(&mut st.stack);
 
         let mut builder = ok!(stack.pop_builder());
-        let cell: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
+        let cell = ok!(stack.pop_cell_opt());
 
         cell.store_into(Rc::make_mut(&mut builder), &mut Cell::empty_context())?;
         ok!(stack.push_raw(builder));
@@ -62,24 +61,34 @@ impl Dictops {
     #[instr(code = "f401", fmt = "SKIPDICT")]
     fn exec_skip_dict(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let mut owned_cs: Rc<OwnedCellSlice> = ok!(stack.pop_cs());
-        let cs = owned_cs.apply()?;
-        if cs.is_empty() {
-            vm_bail!(CellError(Error::CellUnderflow))
-        }
-
-        let prefix = cs.get_prefix(1, cs.size_refs());
-        let subslice = cs.strip_data_prefix(&prefix);
-
-        match subslice {
-            Some(ss) => {
-                let new_range = ss.range();
-                Rc::make_mut(&mut owned_cs).set_range(new_range);
-                ok!(stack.push_raw(owned_cs))
+        let mut csr = ok!(stack.pop_cs());
+        {
+            let mut cs = csr.apply()?;
+            if cs.load_bit()? {
+                cs.skip_first(0, 1)?;
             }
-            None => ok!(stack.push_raw(owned_cs)),
+            let range = cs.range();
+            Rc::make_mut(&mut csr).set_range(range);
         }
+        ok!(stack.push_raw(csr));
+        Ok(0)
+    }
 
+    #[instr(code = "f402", fmt = "LDDICTS", args(preload = false))]
+    #[instr(code = "f403", fmt = "PLDDICTS", args(preload = true))]
+    fn exec_load_dict_slice(st: &mut VmState, preload: bool) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let mut csr = ok!(stack.pop_cs());
+
+        let mut cs = csr.apply()?;
+        let dict_cs = cs.load_prefix(1, cs.get_bit(0)? as u8)?;
+
+        ok!(stack.push(OwnedCellSlice::from((csr.cell().clone(), dict_cs.range()))));
+        if !preload {
+            let range = cs.range();
+            Rc::make_mut(&mut csr).set_range(range);
+            ok!(stack.push_raw(csr));
+        }
         Ok(0)
     }
 
@@ -89,42 +98,42 @@ impl Dictops {
     #[instr(code = "f407", fmt = "PLDDICTQ", args(preload = true, quiet = true))]
     fn exec_load_dict(st: &mut VmState, preload: bool, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
-        let mut owned_cs = stack.pop_cs()?;
-        let range = owned_cs.range();
-        let is_empty = range.is_empty();
-        let mut cs = owned_cs.apply()?;
+        let mut csr = ok!(stack.pop_cs());
 
-        if is_empty {
-            if !quiet {
-                vm_bail!(CellError(Error::CellUnderflow))
+        let mut cs = csr.apply()?;
+        let dict = match cs.get_bit(0) {
+            Ok(has_root) if cs.has_remaining(1, has_root as _) => {
+                Option::<Cell>::load_from(&mut cs)?
             }
-            if !preload {
-                ok!(stack.push_raw(owned_cs));
+            _ if quiet => {
+                if !preload {
+                    ok!(stack.push_raw(csr));
+                }
+                ok!(stack.push_bool(false));
+                return Ok(0);
             }
-        } else {
-            let cell_opt = if range.size_refs() > 0 {
-                cs.get_reference_cloned(0).ok()
-            } else {
-                None
-            };
-            ok!(stack.push_opt(cell_opt));
-
-            if !preload {
-                cs.skip_first(1, range.size_refs())?;
-                let new_range = cs.range();
-                Rc::make_mut(&mut owned_cs).set_range(new_range);
-                ok!(stack.push_raw(owned_cs))
-            }
-        }
-
-        if quiet {
-            ok!(stack.push_bool(!is_empty));
+            _ => vm_bail!(CellError(Error::CellUnderflow)),
         };
 
+        ok!(stack.push_opt(dict));
+        if !preload {
+            let range = cs.range();
+            Rc::make_mut(&mut csr).set_range(range);
+            ok!(stack.push_raw(csr));
+        }
+        if quiet {
+            ok!(stack.push_bool(true));
+        }
         Ok(0)
     }
 
-    #[instr(code = "f40s", range_from = "f40a", range_to = "f40f", fmt = ("{}", s.display()), args(s = DictOpArgs::new("GET", args)))]
+    #[instr(
+        code = "f40s",
+        range_from = "f40a",
+        range_to = "f40f",
+        fmt = s.display("GET"),
+        args(s = DictOpArgs(args))
+    )]
     fn exec_dict_get(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
@@ -170,13 +179,49 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f4ss", range_from = "f412", range_to = "f418", fmt = ("{}", s.display()), args(s = DictOpArgs::new("SET", args), mode = SetMode::Set))]
-    #[instr(code = "f4ss", range_from = "f432", range_to = "f438", fmt = ("{}", s.display()), args(s = DictOpArgs::new("ADD", args), mode = SetMode::Add))]
-    #[instr(code = "f4ss", range_from = "f422", range_to = "f428", fmt = ("{}", s.display()), args(s = DictOpArgs::new("REPLACE", args), mode = SetMode::Replace))]
-    #[instr(code = "f4ss", range_from = "f441", range_to = "f444", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("SET", args), mode = SetMode::Set))]
-    #[instr(code = "f4ss", range_from = "f451", range_to = "f454", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("ADD", args), mode = SetMode::Add))]
-    #[instr(code = "f4ss", range_from = "f449", range_to = "f44c", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("REPLACE", args), mode = SetMode::Replace))]
-    fn exec_dict_set(st: &mut VmState, s: DictOpArgs, mode: SetMode) -> VmResult<i32> {
+    #[instr(
+        code = "f4ss",
+        range_from = "f412",
+        range_to = "f418",
+        fmt = s.display("SET"),
+        args(s = DictOpArgs(args), b = false, mode = SetMode::Set)
+    )]
+    #[instr(
+        code = "f4ss",
+        range_from = "f432",
+        range_to = "f438",
+        fmt = s.display("ADD"),
+        args(s = DictOpArgs(args), b = false, mode = SetMode::Add)
+    )]
+    #[instr(
+        code = "f4ss",
+        range_from = "f422",
+        range_to = "f428",
+        fmt = s.display("REPLACE"),
+        args(s = DictOpArgs(args), b = false, mode = SetMode::Replace)
+    )]
+    #[instr(
+        code = "f4ss",
+        range_from = "f441",
+        range_to = "f444",
+        fmt = s.display_b("SET"),
+        args(s = DictOpArgs(args << 1), b = true, mode = SetMode::Set)
+    )]
+    #[instr(
+        code = "f4ss",
+        range_from = "f451",
+        range_to = "f454",
+        fmt = s.display_b("ADD"),
+        args(s = DictOpArgs(args << 1), b = true, mode = SetMode::Add)
+    )]
+    #[instr(
+        code = "f4ss",
+        range_from = "f449",
+        range_to = "f44c",
+        fmt = s.display_b("REPLACE"),
+        args(s = DictOpArgs(args << 1), b = true, mode = SetMode::Replace)
+    )]
+    fn exec_dict_set(st: &mut VmState, s: DictOpArgs, b: bool, mode: SetMode) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
@@ -202,7 +247,7 @@ impl Dictops {
         let value: RcStackValue = ok!(stack.pop());
         let value_slice;
 
-        let value_ref: &dyn Store = match (s.is_bld, s.is_ref()) {
+        let value_ref: &dyn Store = match (b, s.is_ref()) {
             (true, _) => match value.as_builder() {
                 Some(builder) => {
                     value_slice = builder.as_full_slice();
@@ -257,13 +302,49 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f4ss", range_from = "f41a", range_to = "f420", fmt = ("{}", s.display()), args(s = DictOpArgs::new("SETGET", args), mode = SetMode::Set))]
-    #[instr(code = "f4ss", range_from = "f445", range_to = "f448", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("SETGET", args), mode = SetMode::Set))]
-    #[instr(code = "f4ss", range_from = "f42a", range_to = "f430", fmt = ("{}", s.display()), args(s = DictOpArgs::new("REPLACEGET", args), mode = SetMode::Replace))]
-    #[instr(code = "f4ss", range_from = "f44d", range_to = "f450", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("REPLACEGET", args), mode = SetMode::Replace))]
-    #[instr(code = "f4ss", range_from = "f43a", range_to = "f440", fmt = ("{}", s.display()), args(s = DictOpArgs::new("ADDGET", args), mode = SetMode::Add))]
-    #[instr(code = "f4ss", range_from = "f455", range_to = "f458", fmt = ("{}", s.display()), args(s = DictOpArgs::new_bld("ADDGET", args), mode = SetMode::Add))]
-    fn exec_dict_setget(st: &mut VmState, s: DictOpArgs, mode: SetMode) -> VmResult<i32> {
+    #[instr(
+        code = "f4ss",
+        range_from = "f41a",
+        range_to = "f420",
+        fmt = s.display("SETGET"),
+        args(s = DictOpArgs(args), b = false, mode = SetMode::Set)
+    )]
+    #[instr(
+        code = "f4ss",
+        range_from = "f445",
+        range_to = "f448",
+        fmt = s.display_b("SETGET"),
+        args(s = DictOpArgs(args << 1), b = true, mode = SetMode::Set)
+    )]
+    #[instr(
+        code = "f4ss",
+        range_from = "f42a",
+        range_to = "f430",
+        fmt = s.display("REPLACEGET"),
+        args(s = DictOpArgs(args), b = false, mode = SetMode::Replace)
+    )]
+    #[instr(
+        code = "f4ss",
+        range_from = "f44d",
+        range_to = "f450",
+        fmt = s.display_b("REPLACEGET"),
+        args(s = DictOpArgs(args << 1), b = true, mode = SetMode::Replace)
+    )]
+    #[instr(
+        code = "f4ss",
+        range_from = "f43a",
+        range_to = "f440",
+        fmt = s.display("ADDGET"),
+        args(s = DictOpArgs(args), b = false, mode = SetMode::Add)
+    )]
+    #[instr(
+        code = "f4ss",
+        range_from = "f455",
+        range_to = "f458",
+        fmt = s.display_b("ADDGET"),
+        args(s = DictOpArgs(args << 1), b = true, mode = SetMode::Add)
+    )]
+    fn exec_dict_setget(st: &mut VmState, s: DictOpArgs, b: bool, mode: SetMode) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let dict: Option<Rc<Cell>> = ok!(stack.pop_cell_opt());
@@ -294,7 +375,7 @@ impl Dictops {
         let value: RcStackValue = ok!(stack.pop());
         let value_slice;
 
-        let value_ref: &dyn Store = match (s.is_bld, s.is_ref()) {
+        let value_ref: &dyn Store = match (b, s.is_ref()) {
             (true, _) => match value.as_builder() {
                 Some(builder) => {
                     value_slice = builder.as_full_slice();
@@ -391,7 +472,13 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f4ss", range_from = "f462", range_to = "f468", fmt = ("{}", s.display()), args(s = DictOpArgs::new("DELGET", args)))]
+    #[instr(
+        code = "f4ss",
+        range_from = "f462",
+        range_to = "f468",
+        fmt = s.display("DELGET"),
+        args(s = DictOpArgs(args))
+    )]
     fn exec_dict_deleteget(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
@@ -616,10 +703,34 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f4ss", range_from = "f482", range_to = "f488", fmt = ("{}", s.display()), args(s = DictOpArgs::new("MIN", args)))]
-    #[instr(code = "f4ss", range_from = "f48a", range_to = "f490", fmt = ("{}", s.display()), args(s = DictOpArgs::new("MAX", args)))]
-    #[instr(code = "f4ss", range_from = "f492", range_to = "f498", fmt = ("{}", s.display()), args(s = DictOpArgs::new("REMMIN", args)))]
-    #[instr(code = "f4ss", range_from = "f49a", range_to = "f4a0", fmt = ("{}", s.display()), args(s = DictOpArgs::new("REMMAX", args)))]
+    #[instr(
+        code = "f4ss",
+        range_from = "f482",
+        range_to = "f488",
+        fmt = s.display("MIN"),
+        args(s = DictOpArgs(args))
+    )]
+    #[instr(
+        code = "f4ss",
+        range_from = "f48a",
+        range_to = "f490",
+        fmt = s.display("MAX"),
+        args(s = DictOpArgs(args))
+    )]
+    #[instr(
+        code = "f4ss",
+        range_from = "f492",
+        range_to = "f498",
+        fmt = s.display("REMMIN"),
+        args(s = DictOpArgs(args))
+    )]
+    #[instr(
+        code = "f4ss",
+        range_from = "f49a",
+        range_to = "f4a0",
+        fmt = s.display("REMMAX"),
+        args(s = DictOpArgs(args))
+    )]
     fn exec_dict_get_min(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
 
@@ -901,7 +1012,7 @@ impl DictExecArgs {
 struct DisplayDictExecArgs(u32);
 
 impl std::fmt::Display for DisplayDictExecArgs {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let args = DictExecArgs(self.0);
         let is_unsigned = if args.is_unsigned() { "U" } else { "I" };
         let is_exec = if args.is_exec() { "EXEC" } else { "JMP" };
@@ -910,39 +1021,13 @@ impl std::fmt::Display for DisplayDictExecArgs {
     }
 }
 
-struct DictOpArgs {
-    name: String,
-    args: u32,
-    is_bld: bool,
-}
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+struct DictOpArgs(u32);
 
 impl DictOpArgs {
-    pub fn new(name: &str, args: u32) -> Self {
-        Self {
-            name: name.to_string(),
-            args,
-            is_bld: false,
-        }
-    }
-
-    pub fn new_bld(name: &str, args: u32) -> Self {
-        Self {
-            name: name.to_string(),
-            args: args << 1,
-            is_bld: true,
-        }
-    }
-
-    pub fn new_internal(name: &str, args: u32, is_bld: bool) -> Self {
-        Self {
-            name: name.to_string(),
-            args,
-            is_bld,
-        }
-    }
-
     pub fn is_unsigned(&self) -> bool {
-        self.args & 0b010 != 0
+        self.0 & 0b010 != 0
     }
 
     pub fn is_signed(&self) -> bool {
@@ -950,44 +1035,55 @@ impl DictOpArgs {
     }
 
     pub fn is_int(&self) -> bool {
-        self.args & 0b100 != 0
+        self.0 & 0b100 != 0
     }
 
     pub fn is_ref(&self) -> bool {
-        self.args & 0b001 != 0
+        self.0 & 0b001 != 0
     }
 
     pub fn is_max(&self) -> bool {
-        self.args & 0b1000 != 0
+        self.0 & 0b1000 != 0
     }
 
     pub fn is_rem(&self) -> bool {
-        self.args & 0b100000 != 0
+        self.0 & 0b10000 != 0
     }
 
-    fn display(&self) -> DisplayDictOpArgs {
-        DisplayDictOpArgs {
-            args: self.args,
-            name: self.name.to_string(),
-            is_bld: self.is_bld,
-        }
+    pub fn display(self, name: &'static str) -> DisplayDictOpArgs<false> {
+        DisplayDictOpArgs { name, args: self }
+    }
+
+    pub fn display_b(self, name: &'static str) -> DisplayDictOpArgs<true> {
+        DisplayDictOpArgs { name, args: self }
     }
 }
 
-struct DisplayDictOpArgs {
-    args: u32,
-    name: String,
-    is_bld: bool,
+struct DisplayDictOpArgs<const B: bool> {
+    name: &'static str,
+    args: DictOpArgs,
 }
-impl std::fmt::Display for DisplayDictOpArgs {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let args = DictOpArgs::new_internal(&self.name, self.args, self.is_bld);
-        let is_unsigned = if args.is_unsigned() { "U" } else { "I" };
-        let is_int = if args.is_int() { is_unsigned } else { "" };
-        let is_bld = if args.is_bld { "B" } else { "" };
-        let is_ref = if args.is_ref() { "REF" } else { is_bld };
 
-        write!(f, "DICT{is_int}{}{is_ref}", args.name)
+impl<const B: bool> std::fmt::Display for DisplayDictOpArgs<B> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let int = if self.args.is_int() {
+            if self.args.is_unsigned() {
+                "U"
+            } else {
+                "I"
+            }
+        } else {
+            ""
+        };
+        let suffix = if B {
+            "B"
+        } else if self.args.is_ref() {
+            "REF"
+        } else {
+            ""
+        };
+
+        write!(f, "DICT{int}{}{suffix}", self.name)
     }
 }
 
@@ -1036,7 +1132,7 @@ struct DisplayDictTraverseArgs {
     name: String,
 }
 impl std::fmt::Display for DisplayDictTraverseArgs {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let args = DictTraverseArgs::new(&self.name, self.args);
         let is_unsigned = if args.is_unsigned() { "U" } else { "I" };
         let is_int = if args.is_int() { is_unsigned } else { "" };
@@ -1089,7 +1185,7 @@ struct DisplaySubdictOpArgs {
 }
 
 impl std::fmt::Display for DisplaySubdictOpArgs {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let args = SubdictOpArgs {
             args: self.args,
             name: self.name.to_string(),
@@ -1114,6 +1210,7 @@ impl SimpleOpArgs {
             name: name.to_string(),
         }
     }
+
     pub fn is_unsigned(&self) -> bool {
         self.args & 0b001 != 0
     }
@@ -1140,7 +1237,7 @@ struct DisplaySimpleOpArgs {
 }
 
 impl std::fmt::Display for DisplaySimpleOpArgs {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let args = SimpleOpArgs {
             args: self.args,
             name: self.name.to_string(),
@@ -1156,16 +1253,14 @@ impl std::fmt::Display for DisplaySimpleOpArgs {
 pub mod tests {
     use std::rc::Rc;
 
-    use everscale_types::cell::{CellBuilder, CellSliceRange};
-    use everscale_types::dict::{DictKey, SetMode};
+    use everscale_types::cell::CellBuilder;
+    use everscale_types::dict::DictKey;
     use everscale_types::prelude::{Cell, CellFamily, Dict, Store};
-    use everscale_vm::stack::StackValue;
     use everscale_vm::util::store_int_to_builder;
-    use num_bigint::{BigInt, Sign};
+    use num_bigint::BigInt;
     use num_traits::One;
     use tracing_test::traced_test;
 
-    use crate::cont::load_cont;
     use crate::stack::RcStackValue;
     use crate::util::OwnedCellSlice;
 
