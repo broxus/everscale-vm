@@ -199,7 +199,8 @@ fn process_instr_definition(
     let function_name = function.sig.ident.clone();
     let fmt = match instr.fmt {
         syn::Expr::Tuple(items) => items.elems.into_token_stream(),
-        fmt => fmt.into_token_stream(),
+        syn::Expr::Lit(expr) if matches!(&expr.lit, syn::Lit::Str(..)) => expr.into_token_stream(),
+        fmt => quote! { "{}", #fmt },
     };
 
     let ty = match (!args.is_empty(), instr.range_from, instr.range_to) {

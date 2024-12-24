@@ -52,7 +52,7 @@ impl Hashops {
         Ok(0)
     }
 
-    #[instr(code = "f90$01pr#ii", fmt = ("{}", DisplayHashArgsExt { p, r, i }))]
+    #[instr(code = "f90$01pr#ii", fmt = DisplayHashArgsExt { p, r, i })]
     fn exec_hash_ext(st: &mut VmState, p: bool, r: bool, mut i: u32) -> VmResult<i32> {
         ok!(st.version.require_ton(4..));
 

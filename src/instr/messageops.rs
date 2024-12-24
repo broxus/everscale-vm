@@ -4,7 +4,6 @@ use everscale_types::cell::{
     self, Cell, CellBuilder, CellContext, CellTreeStats, HashBytes, Load, LoadMode, StorageStat,
 };
 use everscale_types::dict;
-use everscale_types::error::Error;
 use everscale_types::models::{
     ChangeLibraryMode, CurrencyCollection, ExtAddr, ExtraCurrencyCollection, Lazy, LibRef,
     MessageLayout, MsgForwardPrices, OutAction, RelaxedMessage, RelaxedMsgInfo,

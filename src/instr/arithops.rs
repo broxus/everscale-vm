@@ -227,8 +227,8 @@ impl Arithops {
     }
 
     // === Division instructions ===
-    #[instr(code = "a90m", fmt = ("{}", DumpDivmod(m)), args(quiet = false))]
-    #[instr(code = "b7a90m", fmt = ("Q{}", DumpDivmod(m)), args(quiet = true))]
+    #[instr(code = "a90m", fmt = DumpDivmod(m), args(quiet = false))]
+    #[instr(code = "b7a90m", fmt = DumpDivmod(m), args(quiet = true))]
     fn exec_divmod(st: &mut VmState, m: u32, quiet: bool) -> VmResult<i32> {
         enum Operation {
             Div,
@@ -298,8 +298,8 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "a92m", fmt = ("{}", DumpShr(m, false)), args(imm = false, quiet = false))]
-    #[instr(code = "a93mmm", fmt = ("{}", DumpShr(m, true)), args(imm = true, quiet = false))]
+    #[instr(code = "a92m", fmt = DumpShr(m, false), args(imm = false, quiet = false))]
+    #[instr(code = "a93mmm", fmt = DumpShr(m, true), args(imm = true, quiet = false))]
     #[instr(code = "b7a92m", fmt = ("Q{}", DumpShr(m, false)), args(imm = false, quiet = true))]
     fn exec_shrmod(st: &mut VmState, mut m: u32, imm: bool, quiet: bool) -> VmResult<i32> {
         enum Operation {
@@ -552,8 +552,8 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "a9cm", fmt = ("{}", DumpShl(m, false)), args(imm = false, quiet = false))]
-    #[instr(code = "a9dmmm", fmt = ("{}", DumpShl(m, true)), args(imm = true, quiet = false))]
+    #[instr(code = "a9cm", fmt = DumpShl(m, false), args(imm = false, quiet = false))]
+    #[instr(code = "a9dmmm", fmt = DumpShl(m, true), args(imm = true, quiet = false))]
     #[instr(code = "b7a9cm", fmt = ("Q{}", DumpShl(m, false)), args(imm = false, quiet = true))]
     fn exec_shldivmod(st: &mut VmState, mut m: u32, imm: bool, quiet: bool) -> VmResult<i32> {
         enum Operation {
