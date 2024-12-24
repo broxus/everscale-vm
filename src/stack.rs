@@ -105,6 +105,10 @@ impl Stack {
         })
     }
 
+    pub fn push_zero(&mut self) -> VmResult<()> {
+        self.push_bool(false)
+    }
+
     pub fn push_int<T: Into<BigInt>>(&mut self, value: T) -> VmResult<()> {
         // TODO: Inline some numbers as thread-local constants to avoid some allocations
         self.push(value.into())
@@ -715,7 +719,7 @@ impl StackValue for NaN {
     }
 
     fn into_int(self: Rc<Self>) -> VmResult<Rc<BigInt>> {
-        vm_bail!(CellError(Error::IntOverflow));
+        vm_bail!(IntegerOverflow);
     }
 }
 

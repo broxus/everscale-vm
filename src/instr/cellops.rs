@@ -1232,7 +1232,7 @@ impl Cellops {
                 let depth = compute_depth(cell.references());
                 stack.push_int(depth)
             }
-            None => stack.push_int(0),
+            None => stack.push_zero(),
         });
         Ok(0)
     }

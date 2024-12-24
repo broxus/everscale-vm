@@ -155,7 +155,7 @@ impl ConfigOps {
         let t2 = ok!(get_parsed_config(&st.cr));
         match t2.get(0).and_then(|t| t.as_slice()) {
             // No StoragePrices is active, so the price is 0.
-            None => ok!(stack.push_int(0)),
+            None => ok!(stack.push_zero()),
             Some(cs) => {
                 let config = StoragePrices::load_from(&mut cs.apply()?)?;
                 let fee = config.compute_storage_fee(is_masterchain, delta, CellTreeStats {

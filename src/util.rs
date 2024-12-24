@@ -284,23 +284,24 @@ pub fn load_uint_leq(cs: &mut CellSlice, upper_bound: u32) -> Result<u64, Error>
 pub fn bitsize(int: &BigInt, signed: bool) -> u16 {
     let mut bits = int.bits() as u16;
     if signed {
-        let sign = int.sign();
-        if sign == Sign::NoSign || sign == Sign::Minus && int.magnitude().is_one() {
-            return 1;
-        } else if sign == Sign::Plus {
-            return bits + 1;
-        }
-
-        // Check if `int` magnitude is not a power of 2
-        let mut digits = int.iter_u64_digits().rev();
-        if let Some(hi) = digits.next() {
-            if !hi.is_power_of_two() || !digits.all(|digit| digit == 0) {
-                bits += 1;
+        match int.sign() {
+            Sign::NoSign => bits,
+            Sign::Minus if int.magnitude().is_one() => bits + 1,
+            Sign::Plus => bits + 1,
+            Sign::Minus => {
+                // Check if `int` magnitude is not a power of 2
+                let mut digits = int.iter_u64_digits().rev();
+                if let Some(hi) = digits.next() {
+                    if !hi.is_power_of_two() || !digits.all(|digit| digit == 0) {
+                        bits += 1;
+                    }
+                }
+                bits
             }
         }
+    } else {
+        bits
     }
-
-    bits
 }
 
 pub fn remove_trailing(slice: &mut CellSlice<'_>) -> Result<(), everscale_types::error::Error> {
