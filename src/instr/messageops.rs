@@ -408,7 +408,7 @@ fn ext_addr_bit_len(addr: &Option<ExtAddr>) -> u16 {
 
 fn tokens_bit_len(value: Tokens) -> VmResult<u16> {
     let Some(bits) = value.bit_len() else {
-        vm_bail!(CellError(Error::IntOverflow));
+        vm_bail!(IntegerOverflow);
     };
     Ok(bits)
 }

@@ -369,7 +369,7 @@ impl Dictops {
             let key = builder.as_data_slice();
             if key.is_empty() {
                 ok!(stack.push_opt(dict));
-                ok!(stack.push_int(0));
+                ok!(stack.push_zero());
                 return Ok(0);
             }
             key
@@ -411,7 +411,7 @@ impl Dictops {
                     Some(dict) => ok!(stack.push_raw(dict)),
                     None => vm_bail!(StackUnderflow(1)),
                 }
-                ok!(stack.push_int(0));
+                ok!(stack.push_zero());
                 return Ok(0);
             }
             key

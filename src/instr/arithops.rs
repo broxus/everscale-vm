@@ -443,7 +443,7 @@ impl Arithops {
                     ok!(stack.push_nan());
                 }
             }
-            _ => vm_bail!(CellError(Error::IntOverflow)),
+            _ => vm_bail!(IntegerOverflow),
         }
         Ok(0)
     }
@@ -461,7 +461,7 @@ impl Arithops {
                 ok!(stack.push_raw_int(x, quiet));
             }
             None if quiet => ok!(stack.push_nan()),
-            None => vm_bail!(CellError(Error::IntOverflow)),
+            None => vm_bail!(IntegerOverflow),
         }
         Ok(0)
     }
@@ -841,14 +841,14 @@ mod tests {
         assert_run_vm!("MINMAX", [int 123, nan] => [int 0], exit_code: 4);
 
         // pos
-        assert_run_vm!("@inline x{b7b608}", [int 123, int 456] => [int 123]);
-        assert_run_vm!("@inline x{b7b609}", [int 123, int 456] => [int 456]);
-        assert_run_vm!("@inline x{b7b60a}", [int 456, int 123] => [int 123, int 456]);
-        assert_run_vm!("@inline x{b7b608}", [int 123, nan] => [nan]);
-        assert_run_vm!("@inline x{b7b60a}", [int 123, nan] => [nan, nan]);
+        assert_run_vm!("QUIET MIN", [int 123, int 456] => [int 123]);
+        assert_run_vm!("QUIET MAX", [int 123, int 456] => [int 456]);
+        assert_run_vm!("QUIET MINMAX", [int 456, int 123] => [int 123, int 456]);
+        assert_run_vm!("QUIET MIN", [int 123, nan] => [nan]);
+        assert_run_vm!("QUIET MINMAX", [int 123, nan] => [nan, nan]);
         // neg
-        assert_run_vm!("@inline x{b7b608}", [] => [int 0], exit_code: 2);
-        assert_run_vm!("@inline x{b7b608}", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("QUIET MIN", [] => [int 0], exit_code: 2);
+        assert_run_vm!("QUIET MIN", [int 123] => [int 0], exit_code: 2);
 
         // === ABS/QABS ===
 
@@ -864,15 +864,15 @@ mod tests {
         assert_run_vm!("ABS", [null] => [int 0], exit_code: 7);
 
         // pos
-        assert_run_vm!("@inline x{b7b60b}", [int 0] => [int 0]);
-        assert_run_vm!("@inline x{b7b60b}", [int 123] => [int 123]);
-        assert_run_vm!("@inline x{b7b60b}", [int -123123] => [int 123123]);
-        assert_run_vm!("@inline x{b7b60b}", [int int257_min() + 1] => [int int257_max()]);
-        assert_run_vm!("@inline x{b7b60b}", [nan] => [nan]);
-        assert_run_vm!("@inline x{b7b60b}", [int int257_min()] => [nan]);
+        assert_run_vm!("QUIET ABS", [int 0] => [int 0]);
+        assert_run_vm!("QUIET ABS", [int 123] => [int 123]);
+        assert_run_vm!("QUIET ABS", [int -123123] => [int 123123]);
+        assert_run_vm!("QUIET ABS", [int int257_min() + 1] => [int int257_max()]);
+        assert_run_vm!("QUIET ABS", [nan] => [nan]);
+        assert_run_vm!("QUIET ABS", [int int257_min()] => [nan]);
         // neg
-        assert_run_vm!("@inline x{b7b60b}", [] => [int 0], exit_code: 2);
-        assert_run_vm!("@inline x{b7b60b}", [null] => [int 0], exit_code: 7);
+        assert_run_vm!("QUIET ABS", [] => [int 0], exit_code: 2);
+        assert_run_vm!("QUIET ABS", [null] => [int 0], exit_code: 7);
     }
 
     fn int257_min() -> BigInt {

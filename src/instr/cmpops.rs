@@ -9,16 +9,16 @@ use num_traits::ToPrimitive;
 use crate::error::VmResult;
 use crate::state::VmState;
 
-pub struct CompOps;
+pub struct CmpOps;
 
 #[vm_module]
-impl CompOps {
+impl CmpOps {
     #[instr(code = "b8", fmt = "SGN", args(quiet = false))]
     #[instr(code = "b7b8", fmt = "QSGN", args(quiet = true))]
     fn exec_sgn(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let Some(x) = ok!(stack.pop_int_or_nan()) else {
-            vm_ensure!(quiet, CellError(Error::IntOverflow));
+            vm_ensure!(quiet, IntegerOverflow);
             ok!(stack.push_nan());
             return Ok(0);
         };
