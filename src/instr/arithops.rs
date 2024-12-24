@@ -1,9 +1,7 @@
 use std::cmp::Ordering;
-use std::ops::Shr;
 use std::rc::Rc;
 
 use anyhow::Result;
-use everscale_types::error::Error;
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
 use num_integer::Integer;
@@ -11,8 +9,8 @@ use num_traits::Zero;
 
 use crate::dispatch::Opcodes;
 use crate::error::VmResult;
+use crate::state::VmState;
 use crate::util::load_int_from_slice;
-use crate::VmState;
 
 pub struct Arithops;
 
@@ -239,7 +237,12 @@ impl Arithops {
         }
 
         let round_mode = ok!(RoundMode::from_args(m & 0b11));
+        let mut add = false;
         let operation = match (m >> 2) & 0b11 {
+            0 if st.version.is_ton(4..) => {
+                add = true;
+                Operation::Divmod
+            }
             1 => Operation::Div,
             2 => Operation::Mod,
             3 => Operation::Divmod,
@@ -247,94 +250,39 @@ impl Arithops {
         };
 
         let stack = Rc::make_mut(&mut st.stack);
+
         let y = ok!(stack.pop_int_or_nan());
+        let w = if add {
+            ok!(stack.pop_int_or_nan())
+        } else {
+            None
+        };
         let x = ok!(stack.pop_int_or_nan());
+
         match (x, y) {
-            (Some(x), Some(y)) if !y.is_zero() => match operation {
+            (Some(mut x), Some(y)) if !y.is_zero() => match operation {
                 Operation::Div => {
-                    let res = match round_mode {
-                        RoundMode::Floor => x.div_floor(&y),
-                        RoundMode::Nearest => {
-                            let (mut q, r) = x.div_rem(&y);
-                            if nearest_rounding_required(&r, &x, &y) {
-                                if x.sign() == y.sign() {
-                                    q += 1;
-                                } else {
-                                    q -= 1;
-                                }
-                            }
-                            q
-                        }
-                        RoundMode::Ceiling => {
-                            let (mut q, r) = x.div_rem(&y);
-                            if ceil_rounding_required(&r, &y) {
-                                if x.sign() == y.sign() {
-                                    q += 1;
-                                } else {
-                                    q -= 1;
-                                }
-                            }
-                            q
-                        }
-                    };
+                    let res = int_div(&x, &y, round_mode);
                     ok!(stack.push_raw_int(update_or_new_rc(x, res), quiet));
                 }
                 Operation::Mod => {
-                    let res = match round_mode {
-                        RoundMode::Floor => x.mod_floor(y.as_ref()),
-                        RoundMode::Nearest => {
-                            let (_, mut r) = x.div_rem(&y);
-                            if nearest_rounding_required(&r, &x, &y) {
-                                if r.sign() == y.sign() {
-                                    r -= y.as_ref();
-                                } else {
-                                    r += y.as_ref();
-                                }
-                            }
-                            r
-                        }
-                        RoundMode::Ceiling => {
-                            let (_, mut r) = x.div_rem(&y);
-                            if ceil_rounding_required(&r, &y) {
-                                r -= y.as_ref();
-                            }
-                            r
-                        }
-                    };
+                    let res = int_mod(&x, &y, round_mode);
                     ok!(stack.push_raw_int(update_or_new_rc(x, res), quiet));
                 }
                 Operation::Divmod => {
-                    let (q, r) = match round_mode {
-                        RoundMode::Floor => x.div_mod_floor(&y),
-                        RoundMode::Nearest => {
-                            let (mut q, mut r) = x.div_rem(&y);
-                            if nearest_rounding_required(&r, &x, &y) {
-                                if x.sign() == y.sign() {
-                                    q += 1;
-                                } else {
-                                    q -= 1;
-                                }
-                                if r.sign() == y.sign() {
-                                    r -= y.as_ref();
-                                } else {
-                                    r += y.as_ref();
-                                }
+                    if add {
+                        match w {
+                            Some(w) => *Rc::make_mut(&mut x) += w.as_ref(),
+                            None if quiet => {
+                                ok!(stack.push_nan());
+                                ok!(stack.push_nan());
+                                return Ok(0);
                             }
-                            (q, r)
+                            None => vm_bail!(IntegerOverflow),
                         }
-                        RoundMode::Ceiling => {
-                            let (mut q, mut r) = x.div_rem(&y);
-                            if ceil_rounding_required(&r, &y) {
-                                r -= y.as_ref();
-                                if x.sign() == y.sign() {
-                                    q += 1;
-                                } else {
-                                    q -= 1;
-                                }
-                            }
-                            (q, r)
-                        }
-                    };
+                    }
+
+                    let (q, r) = int_divmod(&x, &y, round_mode);
                     ok!(stack.push_raw_int(update_or_new_rc(x, q), quiet));
                     ok!(stack.push_raw_int(update_or_new_rc(y, r), quiet));
                 }
@@ -350,10 +298,10 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "a92m", fmt = ("{}", DumpShrmod(m, false)), args(imm = false, q = false))]
-    #[instr(code = "a93mmm", fmt = ("{}", DumpShrmod(m, true)), args(imm = true, q = false))]
-    #[instr(code = "b7a92m", fmt = ("Q{}", DumpShrmod(m, false)), args(imm = false, q = false))]
-    fn exec_shrmod(st: &mut VmState, mut m: u32, imm: bool, q: bool) -> VmResult<i32> {
+    #[instr(code = "a92m", fmt = ("{}", DumpShr(m, false)), args(imm = false, quiet = false))]
+    #[instr(code = "a93mmm", fmt = ("{}", DumpShr(m, true)), args(imm = true, quiet = false))]
+    #[instr(code = "b7a92m", fmt = ("Q{}", DumpShr(m, false)), args(imm = false, quiet = true))]
+    fn exec_shrmod(st: &mut VmState, mut m: u32, imm: bool, quiet: bool) -> VmResult<i32> {
         enum Operation {
             RShift,
             ModPow2,
@@ -369,7 +317,12 @@ impl Arithops {
         };
 
         let mut round_mode = ok!(RoundMode::from_args(m & 0b11));
+        let mut add = false;
         let operation = match (m >> 2) & 0b11 {
+            0 if st.version.is_ton(4..) => {
+                add = true;
+                Operation::RShiftMod
+            }
             1 => Operation::RShift,
             2 => Operation::ModPow2,
             3 => Operation::RShiftMod,
@@ -385,21 +338,41 @@ impl Arithops {
         if y == 0 {
             round_mode = RoundMode::Floor;
         }
+        let w = if add {
+            ok!(stack.pop_int_or_nan())
+        } else {
+            None
+        };
 
         match ok!(stack.pop_int_or_nan()) {
-            Some(x) => match operation {
+            Some(mut x) => match operation {
                 Operation::RShift => {
-                    let res = match round_mode {
-                        RoundMode::Floor => x.as_ref().shr(y),
-                        RoundMode::Nearest => todo!(),
-                        RoundMode::Ceiling => todo!(),
-                    };
-                    ok!(stack.push_raw_int(update_or_new_rc(x, res), q));
+                    let res = int_rshift(&x, y, round_mode);
+                    ok!(stack.push_raw_int(update_or_new_rc(x, res), quiet));
                 }
-                Operation::ModPow2 => todo!(),
-                Operation::RShiftMod => todo!(),
+                Operation::ModPow2 => {
+                    let res = int_mod_pow2(&x, y, round_mode);
+                    ok!(stack.push_raw_int(update_or_new_rc(x, res), quiet));
+                }
+                Operation::RShiftMod => {
+                    if add {
+                        match w {
+                            Some(w) => *Rc::make_mut(&mut x) += w.as_ref(),
+                            None if quiet => {
+                                ok!(stack.push_nan());
+                                ok!(stack.push_nan());
+                                return Ok(0);
+                            }
+                            None => vm_bail!(IntegerOverflow),
+                        }
+                    }
+
+                    let (q, r) = int_rshiftmod(&x, y, round_mode);
+                    ok!(stack.push_raw_int(update_or_new_rc(x, q), quiet));
+                    ok!(stack.push_raw_int(Rc::new(r), quiet));
+                }
             },
-            _ if q => {
+            _ if quiet => {
                 ok!(stack.push_nan());
                 if let Operation::RShiftMod = operation {
                     ok!(stack.push_nan());
@@ -408,6 +381,262 @@ impl Arithops {
             _ => vm_bail!(IntegerOverflow),
         }
 
+        Ok(0)
+    }
+
+    #[instr(code = "a98m", fmt = ("MUL{}", DumpDivmod(m)), args(quiet = false))]
+    #[instr(code = "b7a98m", fmt = ("QMUL{}", DumpDivmod(m)), args(quiet = true))]
+    fn exec_muldivmod(st: &mut VmState, m: u32, quiet: bool) -> VmResult<i32> {
+        enum Operation {
+            MulDiv,
+            MulMod,
+            MulDivMod,
+        }
+
+        let round_mode = ok!(RoundMode::from_args(m & 0b11));
+        let mut add = false;
+        let operation = match (m >> 2) & 0b11 {
+            0 if st.version.is_ton(4..) => {
+                add = true;
+                Operation::MulDivMod
+            }
+            1 => Operation::MulDiv,
+            2 => Operation::MulMod,
+            3 => Operation::MulDivMod,
+            _ => vm_bail!(InvalidOpcode),
+        };
+
+        let stack = Rc::make_mut(&mut st.stack);
+
+        let z = ok!(stack.pop_int_or_nan());
+        let w = if add {
+            ok!(stack.pop_int_or_nan())
+        } else {
+            None
+        };
+        let y = ok!(stack.pop_int_or_nan());
+        let x = ok!(stack.pop_int_or_nan());
+
+        match (x, y, z) {
+            (Some(mut x), Some(y), Some(z)) if !z.is_zero() => {
+                *Rc::make_mut(&mut x) *= y.as_ref();
+
+                match operation {
+                    Operation::MulDiv => {
+                        let res = int_div(&x, &z, round_mode);
+                        ok!(stack.push_raw_int(update_or_new_rc(x, res), quiet));
+                    }
+                    Operation::MulMod => {
+                        let res = int_mod(&x, &z, round_mode);
+                        ok!(stack.push_raw_int(update_or_new_rc(x, res), quiet));
+                    }
+                    Operation::MulDivMod => {
+                        if add {
+                            match w {
+                                Some(w) => *Rc::make_mut(&mut x) += w.as_ref(),
+                                None if quiet => {
+                                    ok!(stack.push_nan());
+                                    ok!(stack.push_nan());
+                                    return Ok(0);
+                                }
+                                None => vm_bail!(IntegerOverflow),
+                            }
+                        }
+
+                        let (q, r) = int_divmod(&x, &z, round_mode);
+                        ok!(stack.push_raw_int(update_or_new_rc(x, q), quiet));
+                        ok!(stack.push_raw_int(update_or_new_rc(y, r), quiet));
+                    }
+                }
+            }
+            _ if quiet => {
+                ok!(stack.push_nan());
+                if let Operation::MulDivMod = operation {
+                    ok!(stack.push_nan());
+                }
+            }
+            _ => vm_bail!(IntegerOverflow),
+        }
+        Ok(0)
+    }
+
+    #[instr(code = "a9am", fmt = ("MUL{}", DumpShr(m, false)), args(imm = false, quiet = false))]
+    #[instr(code = "a9bmmm", fmt = ("MUL{}", DumpShr(m, true)), args(imm = true, quiet = false))]
+    #[instr(code = "b7a9am", fmt = ("QMUL{}", DumpShr(m, false)), args(imm = false, quiet = true))]
+    fn exec_mulshrmod(st: &mut VmState, mut m: u32, imm: bool, quiet: bool) -> VmResult<i32> {
+        enum Operation {
+            MulRShift,
+            MulModPow2,
+            MulRShiftMod,
+        }
+
+        let z = if imm {
+            let z = (m & 0xff) + 1;
+            m >>= 8;
+            Some(z)
+        } else {
+            None
+        };
+
+        let mut round_mode = ok!(RoundMode::from_args(m & 0b11));
+        let mut add = false;
+        let operation = match (m >> 2) & 0b11 {
+            0 if st.version.is_ton(4..) => {
+                add = true;
+                Operation::MulRShiftMod
+            }
+            1 => Operation::MulRShift,
+            2 => Operation::MulModPow2,
+            3 => Operation::MulRShiftMod,
+            _ => vm_bail!(InvalidOpcode),
+        };
+
+        let stack = Rc::make_mut(&mut st.stack);
+        let z = match z {
+            Some(z) => z,
+            None => ok!(stack.pop_smallint_range(0, 256)),
+        };
+
+        if z == 0 {
+            round_mode = RoundMode::Floor;
+        }
+        let w = if add {
+            ok!(stack.pop_int_or_nan())
+        } else {
+            None
+        };
+
+        let y = ok!(stack.pop_int_or_nan());
+        let x = ok!(stack.pop_int_or_nan());
+        match (x, y) {
+            (Some(mut x), Some(y)) => {
+                *Rc::make_mut(&mut x) *= y.as_ref();
+
+                match operation {
+                    Operation::MulRShift => {
+                        let res = int_rshift(&x, z, round_mode);
+                        ok!(stack.push_raw_int(update_or_new_rc(x, res), quiet));
+                    }
+                    Operation::MulModPow2 => {
+                        let res = int_mod_pow2(&x, z, round_mode);
+                        ok!(stack.push_raw_int(update_or_new_rc(x, res), quiet));
+                    }
+                    Operation::MulRShiftMod => {
+                        if add {
+                            match w {
+                                Some(w) => *Rc::make_mut(&mut x) += w.as_ref(),
+                                None if quiet => {
+                                    ok!(stack.push_nan());
+                                    ok!(stack.push_nan());
+                                    return Ok(0);
+                                }
+                                None => vm_bail!(IntegerOverflow),
+                            }
+                        }
+
+                        let (q, r) = int_rshiftmod(&x, z, round_mode);
+                        ok!(stack.push_raw_int(update_or_new_rc(x, q), quiet));
+                        ok!(stack.push_raw_int(Rc::new(r), quiet));
+                    }
+                }
+            }
+            _ if quiet => {
+                ok!(stack.push_nan());
+                if let Operation::MulRShiftMod = operation {
+                    ok!(stack.push_nan());
+                }
+            }
+            _ => vm_bail!(IntegerOverflow),
+        }
+
+        Ok(0)
+    }
+
+    #[instr(code = "a9cm", fmt = ("{}", DumpShl(m, false)), args(imm = false, quiet = false))]
+    #[instr(code = "a9dmmm", fmt = ("{}", DumpShl(m, true)), args(imm = true, quiet = false))]
+    #[instr(code = "b7a9cm", fmt = ("Q{}", DumpShl(m, false)), args(imm = false, quiet = true))]
+    fn exec_shldivmod(st: &mut VmState, mut m: u32, imm: bool, quiet: bool) -> VmResult<i32> {
+        enum Operation {
+            Div,
+            Mod,
+            Divmod,
+        }
+
+        let z = if imm {
+            let z = (m & 0xff) + 1;
+            m >>= 8;
+            Some(z)
+        } else {
+            None
+        };
+
+        let round_mode = ok!(RoundMode::from_args(m & 0b11));
+        let mut add = false;
+        let operation = match (m >> 2) & 0b11 {
+            0 if st.version.is_ton(4..) => {
+                add = true;
+                Operation::Divmod
+            }
+            1 => Operation::Div,
+            2 => Operation::Mod,
+            3 => Operation::Divmod,
+            _ => vm_bail!(InvalidOpcode),
+        };
+
+        let stack = Rc::make_mut(&mut st.stack);
+        let z = match z {
+            Some(z) => z,
+            None => ok!(stack.pop_smallint_range(0, 256)),
+        };
+
+        let y = ok!(stack.pop_int_or_nan());
+        let w = if add {
+            ok!(stack.pop_int_or_nan())
+        } else {
+            None
+        };
+        let x = ok!(stack.pop_int_or_nan());
+
+        match (x, y) {
+            (Some(mut x), Some(y)) if !y.is_zero() => {
+                *Rc::make_mut(&mut x) <<= z;
+
+                match operation {
+                    Operation::Div => {
+                        let res = int_div(&x, &y, round_mode);
+                        ok!(stack.push_raw_int(update_or_new_rc(x, res), quiet));
+                    }
+                    Operation::Mod => {
+                        let res = int_mod(&x, &y, round_mode);
+                        ok!(stack.push_raw_int(update_or_new_rc(x, res), quiet));
+                    }
+                    Operation::Divmod => {
+                        if add {
+                            match w {
+                                Some(w) => *Rc::make_mut(&mut x) += w.as_ref(),
+                                None if quiet => {
+                                    ok!(stack.push_nan());
+                                    ok!(stack.push_nan());
+                                    return Ok(0);
+                                }
+                                None => vm_bail!(IntegerOverflow),
+                            }
+                        }
+
+                        let (q, r) = int_divmod(&x, &y, round_mode);
+                        ok!(stack.push_raw_int(update_or_new_rc(x, q), quiet));
+                        ok!(stack.push_raw_int(update_or_new_rc(y, r), quiet));
+                    }
+                }
+            }
+            _ if quiet => {
+                ok!(stack.push_nan());
+                if let Operation::Divmod = operation {
+                    ok!(stack.push_nan());
+                }
+            }
+            _ => vm_bail!(IntegerOverflow),
+        }
         Ok(0)
     }
 
@@ -472,6 +701,7 @@ struct DumpDivmod(u32);
 impl std::fmt::Display for DumpDivmod {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match (self.0 >> 2) & 0b11 {
+            0 => "ADDDIVMOD",
             1 => "DIV",
             2 => "MOD",
             3 => "DIVMOD",
@@ -485,9 +715,9 @@ impl std::fmt::Display for DumpDivmod {
     }
 }
 
-struct DumpShrmod(u32, bool);
+struct DumpShr(u32, bool);
 
-impl std::fmt::Display for DumpShrmod {
+impl std::fmt::Display for DumpShr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut m = self.0;
         let y = if self.1 {
@@ -498,22 +728,57 @@ impl std::fmt::Display for DumpShrmod {
             None
         };
 
-        f.write_str(match (m >> 2) & 0b11 {
-            1 => "RSHIFT",
-            2 => "MODPOW2",
-            3 => "RSHIFTMOD",
+        let (start, end) = match (m >> 2) & 0b11 {
+            0 => ("ADDRSHIFT", "MOD"),
+            1 => ("RSHIFT", ""),
+            2 => ("MODPOW2", ""),
+            3 => ("RSHIFT", "MOD"),
             _ => return f.write_str("SHR/MOD"),
-        })?;
-        f.write_str(match m & 0b11 {
+        };
+        let mode = match m & 0b11 {
             1 => "R",
             2 => "C",
             _ => "",
-        })?;
+        };
 
         if let Some(y) = y {
-            write!(f, " {y}")
+            write!(f, "{start}{mode}#{end} {y}")
         } else {
-            Ok(())
+            write!(f, "{start}{end}{mode}")
+        }
+    }
+}
+
+struct DumpShl(u32, bool);
+
+impl std::fmt::Display for DumpShl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut m = self.0;
+        let y = if self.1 {
+            let y = (m & 0xff) + 1;
+            m >>= 8;
+            Some(y)
+        } else {
+            None
+        };
+
+        let op = match (m >> 2) & 0b11 {
+            0 => "ADDDIVMOD",
+            1 => "DIV",
+            2 => "MOD",
+            3 => "DIVMOD",
+            _ => return f.write_str("SHLDIV/MOD"),
+        };
+        let mode = match m & 0b11 {
+            1 => "R",
+            2 => "C",
+            _ => "",
+        };
+
+        if let Some(y) = y {
+            write!(f, "LSHIFT#{op}{mode} {y}")
+        } else {
+            write!(f, "LSHIFT{op}{mode}")
         }
     }
 }
@@ -532,6 +797,127 @@ impl RoundMode {
             2 => Self::Ceiling,
             _ => vm_bail!(InvalidOpcode),
         })
+    }
+}
+
+fn int_div(x: &BigInt, y: &BigInt, round_mode: RoundMode) -> BigInt {
+    match round_mode {
+        RoundMode::Floor => x.div_floor(&y),
+        RoundMode::Nearest => {
+            let (mut q, r) = x.div_rem(y);
+            if nearest_rounding_required(&r, x, y) {
+                if x.sign() == y.sign() {
+                    q += 1;
+                } else {
+                    q -= 1;
+                }
+            }
+            q
+        }
+        RoundMode::Ceiling => {
+            let (mut q, r) = x.div_rem(y);
+            if ceil_rounding_required(&r, y) {
+                if x.sign() == y.sign() {
+                    q += 1;
+                } else {
+                    q -= 1;
+                }
+            }
+            q
+        }
+    }
+}
+
+fn int_mod(x: &BigInt, y: &BigInt, round_mode: RoundMode) -> BigInt {
+    match round_mode {
+        RoundMode::Floor => x.mod_floor(y),
+        RoundMode::Nearest => {
+            let (_, mut r) = x.div_rem(y);
+            if nearest_rounding_required(&r, x, y) {
+                if r.sign() == y.sign() {
+                    r -= y;
+                } else {
+                    r += y;
+                }
+            }
+            r
+        }
+        RoundMode::Ceiling => {
+            let (_, mut r) = x.div_rem(y);
+            if ceil_rounding_required(&r, y) {
+                r -= y;
+            }
+            r
+        }
+    }
+}
+
+fn int_divmod(x: &BigInt, y: &BigInt, round_mode: RoundMode) -> (BigInt, BigInt) {
+    match round_mode {
+        RoundMode::Floor => x.div_mod_floor(y),
+        RoundMode::Nearest => {
+            let (mut q, mut r) = x.div_rem(y);
+            if nearest_rounding_required(&r, x, y) {
+                if x.sign() == y.sign() {
+                    q += 1;
+                } else {
+                    q -= 1;
+                }
+                if r.sign() == y.sign() {
+                    r -= y;
+                } else {
+                    r += y;
+                }
+            }
+            (q, r)
+        }
+        RoundMode::Ceiling => {
+            let (mut q, mut r) = x.div_rem(y);
+            if ceil_rounding_required(&r, y) {
+                r -= y;
+                if x.sign() == y.sign() {
+                    q += 1;
+                } else {
+                    q -= 1;
+                }
+            }
+            (q, r)
+        }
+    }
+}
+
+fn int_rshift(x: &BigInt, y: u32, round_mode: RoundMode) -> BigInt {
+    match round_mode {
+        RoundMode::Floor => x >> y,
+        // TODO: Optimize
+        RoundMode::Nearest | RoundMode::Ceiling => {
+            let pow = BigInt::from(1) << y;
+            int_div(x, &pow, round_mode)
+        }
+    }
+}
+
+// TODO: Optimize
+fn int_mod_pow2(x: &BigInt, y: u32, round_mode: RoundMode) -> BigInt {
+    let mut pow2 = BigInt::from(1) << y;
+    match round_mode {
+        RoundMode::Floor => {
+            pow2 -= 1;
+            x & pow2
+        }
+        RoundMode::Nearest | RoundMode::Ceiling => int_mod(x, &pow2, round_mode),
+    }
+}
+
+// TODO: Optimize
+fn int_rshiftmod(x: &BigInt, y: u32, round_mode: RoundMode) -> (BigInt, BigInt) {
+    let mut pow2 = BigInt::from(1) << y;
+    match round_mode {
+        RoundMode::Floor => {
+            pow2 -= 1;
+            (x >> y, x & pow2)
+        }
+        RoundMode::Nearest | RoundMode::Ceiling => int_divmod(x, &pow2, round_mode),
     }
 }
 
@@ -809,20 +1195,198 @@ mod tests {
         assert_run_vm!("MOD", [int 123] => [int 0], exit_code: 2);
         assert_run_vm!("MOD", [int 1, int 0] => [int 0], exit_code: 4);
 
+        // pos
         assert_run_vm!("DIVMOD", [int 5, int 5] => [int 1, int 0]);
         assert_run_vm!("DIVMOD", [int 5, int 2] => [int 2, int 1]);
+        assert_run_vm!("DIVMOD", [int -11, int 5] => [int -3, int 4]);
         assert_run_vm!("DIVMODR", [int 10, int 3] => [int 3, int 1]);
         assert_run_vm!("DIVMODC", [int 10, int 3] => [int 4, int -2]);
         // neg
         assert_run_vm!("DIVMOD", [] => [int 0], exit_code: 2);
         assert_run_vm!("DIVMOD", [int 123] => [int 0], exit_code: 2);
         assert_run_vm!("DIVMOD", [int 1, int 0] => [int 0], exit_code: 4);
+
+        // pos
+        assert_run_vm!("ADDDIVMOD", [int 3, int 2, int 5] => [int 1, int 0]);
+        assert_run_vm!("ADDDIVMOD", [int 1, int 4, int 2] => [int 2, int 1]);
+        assert_run_vm!("ADDDIVMOD", [int -15, int 4, int 5] => [int -3, int 4]);
+        assert_run_vm!("ADDDIVMODR", [int 3, int 7, int 3] => [int 3, int 1]);
+        assert_run_vm!("ADDDIVMODC", [int 1, int 9, int 3] => [int 4, int -2]);
+        // neg
+        assert_run_vm!("ADDDIVMOD", [] => [int 0], exit_code: 2);
+        assert_run_vm!("ADDDIVMOD", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("ADDDIVMOD", [int 1, int 1, int 0] => [int 0], exit_code: 4);
+        assert_run_vm!("ADDDIVMOD", [int 1, nan, int 0] => [int 0], exit_code: 4);
     }
 
+    // TODO: Add more tests
     #[test]
     #[traced_test]
     fn op_shrmod() {
-        assert_run_vm!("@inline x{a924}", [int 5, int 2] => [int 1]);
+        assert_run_vm!("RSHIFT", [int 5, int 2] => [int 1]);
+        assert_run_vm!("RSHIFT", [int 5, int 0] => [int 5]);
+        assert_run_vm!("RSHIFT", [int -10, int 0] => [int -10]);
+        assert_run_vm!("RSHIFT", [int -9, int 3] => [int -2]);
+        assert_run_vm!("RSHIFT", [int -8, int 3] => [int -1]);
+        assert_run_vm!("RSHIFT", [nan, int 3] => [int 0], exit_code: 4);
+        assert_run_vm!("QUIET RSHIFT", [int 5, int 2] => [int 1]);
+        assert_run_vm!("QUIET RSHIFT", [nan, int 3] => [nan]);
+
+        assert_run_vm!("MODPOW2", [int 5, int 2] => [int 1]);
+        assert_run_vm!("MODPOW2", [int 5, int 0] => [int 0]);
+        assert_run_vm!("MODPOW2", [int -9, int 3] => [int 7]);
+        assert_run_vm!("MODPOW2", [int -9, int 0] => [int 0]);
+        assert_run_vm!("MODPOW2", [int -8, int 3] => [int 0]);
+        assert_run_vm!("MODPOW2", [nan, int 3] => [int 0], exit_code: 4);
+        assert_run_vm!("QUIET MODPOW2", [int 5, int 2] => [int 1]);
+        assert_run_vm!("QUIET MODPOW2", [nan, int 3] => [nan]);
+
+        assert_run_vm!("RSHIFTMOD", [int 5, int 2] => [int 1, int 1]);
+        assert_run_vm!("RSHIFTMOD", [int 5, int 0] => [int 5, int 0]);
+        assert_run_vm!("RSHIFTMOD", [int -9, int 3] => [int -2, int 7]);
+        assert_run_vm!("RSHIFTMOD", [int -9, int 0] => [int -9, int 0]);
+        assert_run_vm!("RSHIFTMOD", [int -8, int 3] => [int -1, int 0]);
+        assert_run_vm!("RSHIFTMOD", [nan, int 3] => [int 0], exit_code: 4);
+        assert_run_vm!("QUIET RSHIFTMOD", [int 5, int 2] => [int 1, int 1]);
+        assert_run_vm!("QUIET RSHIFTMOD", [nan, int 3] => [nan, nan]);
+
+        assert_run_vm!("ADDRSHIFTMOD", [int 3, int 2, int 2] => [int 1, int 1]);
+        assert_run_vm!("ADDRSHIFTMOD", [int 3, int 2, int 0] => [int 5, int 0]);
+        assert_run_vm!("ADDRSHIFTMOD", [int -10, int 1, int 3] => [int -2, int 7]);
+        assert_run_vm!("ADDRSHIFTMOD", [int -10, int 1, int 0] => [int -9, int 0]);
+        assert_run_vm!("ADDRSHIFTMOD", [int -4, int -4, int 3] => [int -1, int 0]);
+        assert_run_vm!("ADDRSHIFTMOD", [nan, int 1, int 3] => [int 0], exit_code: 4);
+        assert_run_vm!("ADDRSHIFTMOD", [int 1, nan, int 3] => [int 0], exit_code: 4);
+        assert_run_vm!("QUIET ADDRSHIFTMOD", [int 3, int 2, int 2] => [int 1, int 1]);
+        assert_run_vm!("QUIET ADDRSHIFTMOD", [nan, int 1, int 3] => [nan, nan]);
+        assert_run_vm!("QUIET ADDRSHIFTMOD", [int 1, nan, int 3] => [nan, nan]);
+    }
+
+    // TODO: Add more tests
+    #[test]
+    #[traced_test]
+    fn op_muldivmod() {
+        // pos
+        assert_run_vm!("MULDIV", [int 5, int 1, int 5] => [int 1]);
+        assert_run_vm!("MULDIV", [int 5, int 1, int 2] => [int 2]);
+        assert_run_vm!("MULDIVR", [int 5, int 2, int 3] => [int 3]);
+        assert_run_vm!("MULDIVC", [int 5, int 2, int 3] => [int 4]);
+        // neg
+        assert_run_vm!("MULDIV", [] => [int 0], exit_code: 2);
+        assert_run_vm!("MULDIV", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("MULDIV", [int 1, int 1, int 0] => [int 0], exit_code: 4);
+
+        // pos
+        assert_run_vm!("MULMOD", [int 6, int 2, int 6] => [int 0]);
+        assert_run_vm!("MULMOD", [int 5, int 1, int 2] => [int 1]);
+        assert_run_vm!("MULMODR", [int 5, int 2, int 3] => [int 1]);
+        assert_run_vm!("MULMODC", [int 2, int 5, int 3] => [int -2]);
+        // neg
+        assert_run_vm!("MULMOD", [] => [int 0], exit_code: 2);
+        assert_run_vm!("MULMOD", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("MULMOD", [int 1, int 1, int 0] => [int 0], exit_code: 4);
+
+        // pos
+        assert_run_vm!("MULDIVMOD", [int 3, int 2, int 6] => [int 1, int 0]);
+        assert_run_vm!("MULDIVMOD", [int 3, int 2, int 4] => [int 1, int 2]);
+        assert_run_vm!("MULDIVMOD", [int 11, int -1, int 5] => [int -3, int 4]);
+        assert_run_vm!("MULDIVMODR", [int 2, int 5, int 3] => [int 3, int 1]);
+        assert_run_vm!("MULDIVMODC", [int 2, int 5, int 3] => [int 4, int -2]);
+        // neg
+        assert_run_vm!("MULDIVMOD", [] => [int 0], exit_code: 2);
+        assert_run_vm!("MULDIVMOD", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("MULDIVMOD", [int 1, int 1, int 0] => [int 0], exit_code: 4);
+
+        // pos
+        assert_run_vm!("MULADDDIVMOD", [int 3, int 1, int 2, int 5] => [int 1, int 0]);
+        assert_run_vm!("MULADDDIVMOD", [int 1, int 1, int 4, int 2] => [int 2, int 1]);
+        assert_run_vm!("MULADDDIVMOD", [int -5, int 3, int 4, int 5] => [int -3, int 4]);
+        assert_run_vm!("MULADDDIVMODR", [int 1, int 3, int 7, int 3] => [int 3, int 1]);
+        assert_run_vm!("MULADDDIVMODC", [int 1, int 1, int 9, int 3] => [int 4, int -2]);
+        // neg
+        assert_run_vm!("MULADDDIVMOD", [] => [int 0], exit_code: 2);
+        assert_run_vm!("MULADDDIVMOD", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("MULADDDIVMOD", [int 1, int 1, int 1, int 0] => [int 0], exit_code: 4);
+        assert_run_vm!("MULADDDIVMOD", [int 1, int 1, nan, int 0] => [int 0], exit_code: 4);
+    }
+
+    // TODO: Add more tests
+    #[test]
+    #[traced_test]
+    fn op_mulshrmod() {
+        assert_run_vm!("MULRSHIFT", [int 1, int 5, int 2] => [int 1]);
+        assert_run_vm!("MULRSHIFT", [int 1, int 5, int 0] => [int 5]);
+        assert_run_vm!("MULRSHIFT", [int -3, int 3, int 3] => [int -2]);
+        assert_run_vm!("MULRSHIFT", [int -3, int 3, int 0] => [int -9]);
+        assert_run_vm!("MULRSHIFT", [int 4, int -2, int 3] => [int -1]);
+        assert_run_vm!("MULRSHIFT", [int 1, nan, int 3] => [int 0], exit_code: 4);
+        assert_run_vm!("QUIET MULRSHIFT", [int 5, int 1, int 2] => [int 1]);
+        assert_run_vm!("QUIET MULRSHIFT", [nan, int 1, int 3] => [nan]);
+
+        assert_run_vm!("MULMODPOW2", [int 5, int 1, int 2] => [int 1]);
+        assert_run_vm!("MULMODPOW2", [int 5, int 1, int 0] => [int 0]);
+        assert_run_vm!("MULMODPOW2", [int -3, int 3, int 3] => [int 7]);
+        assert_run_vm!("MULMODPOW2", [int -3, int 3, int 0] => [int 0]);
+        assert_run_vm!("MULMODPOW2", [int 4, int -2, int 3] => [int 0]);
+        assert_run_vm!("MULMODPOW2", [int 1, nan, int 3] => [int 0], exit_code: 4);
+        assert_run_vm!("QUIET MULMODPOW2", [int 5, int 1, int 2] => [int 1]);
+        assert_run_vm!("QUIET MULMODPOW2", [nan, int 1, int 3] => [nan]);
+
+        assert_run_vm!("MULRSHIFTMOD", [int 5, int 1, int 2] => [int 1, int 1]);
+        assert_run_vm!("MULRSHIFTMOD", [int 5, int 1, int 0] => [int 5, int 0]);
+        assert_run_vm!("MULRSHIFTMOD", [int -3, int 3, int 3] => [int -2, int 7]);
+        assert_run_vm!("MULRSHIFTMOD", [int -3, int 3, int 0] => [int -9, int 0]);
+        assert_run_vm!("MULRSHIFTMOD", [int -4, int 2, int 3] => [int -1, int 0]);
+        assert_run_vm!("MULRSHIFTMOD", [int 1, nan, int 3] => [int 0], exit_code: 4);
+        assert_run_vm!("QUIET MULRSHIFTMOD", [int 5, int 1, int 2] => [int 1, int 1]);
+        assert_run_vm!("QUIET MULRSHIFTMOD", [nan, int 1, int 3] => [nan, nan]);
+
+        assert_run_vm!("MULADDRSHIFTMOD", [int 3, int 1, int 2, int 2] => [int 1, int 1]);
+        assert_run_vm!("MULADDRSHIFTMOD", [int 3, int 1, int 2, int 0] => [int 5, int 0]);
+        assert_run_vm!("MULADDRSHIFTMOD", [int -5, int 2, int 1, int 3] => [int -2, int 7]);
+        assert_run_vm!("MULADDRSHIFTMOD", [int -5, int 2, int 1, int 0] => [int -9, int 0]);
+        assert_run_vm!("MULADDRSHIFTMOD", [int -2, int 2, int -4, int 3] => [int -1, int 0]);
+        assert_run_vm!("MULADDRSHIFTMOD", [int 1, nan, int 1, int 3] => [int 0], exit_code: 4);
+        assert_run_vm!("MULADDRSHIFTMOD", [int 2, int 1, nan, int 3] => [int 0], exit_code: 4);
+        assert_run_vm!("QUIET MULADDRSHIFTMOD", [int 1, int 3, int 2, int 2] => [int 1, int 1]);
+        assert_run_vm!("QUIET MULADDRSHIFTMOD", [int 1, nan, int 1, int 3] => [nan, nan]);
+        assert_run_vm!("QUIET MULADDRSHIFTMOD", [int 1, int 1, nan, int 3] => [nan, nan]);
+    }
+
+    // TODO: Add more tests
+    #[test]
+    #[traced_test]
+    fn op_shldivmod() {
+        // pos
+        assert_run_vm!("LSHIFTDIV", [int 5, int 5, int 0] => [int 1]);
+        assert_run_vm!("LSHIFTDIV", [int 5, int 2, int 0] => [int 2]);
+        assert_run_vm!("LSHIFTDIVR", [int 5, int 3, int 1] => [int 3]);
+        assert_run_vm!("LSHIFTDIVC", [int 5, int 3, int 1] => [int 4]);
+        // neg
+        assert_run_vm!("LSHIFTDIV", [] => [int 0], exit_code: 2);
+        assert_run_vm!("LSHIFTDIV", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("LSHIFTDIV", [int 1, int 0, int 1] => [int 0], exit_code: 4);
+
+        // pos
+        assert_run_vm!("LSHIFTMOD", [int 5, int 5, int 0] => [int 0]);
+        assert_run_vm!("LSHIFTMOD", [int 5, int 2, int 0] => [int 1]);
+        assert_run_vm!("LSHIFTMODR", [int 5, int 3, int 1] => [int 1]);
+        assert_run_vm!("LSHIFTMODC", [int 5, int 3, int 1] => [int -2]);
+        // neg
+        assert_run_vm!("LSHIFTMOD", [] => [int 0], exit_code: 2);
+        assert_run_vm!("LSHIFTMOD", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("LSHIFTMOD", [int 1, int 0, int 1] => [int 0], exit_code: 4);
+
+        // pos
+        assert_run_vm!("LSHIFTDIVMOD", [int 5, int 5, int 0] => [int 1, int 0]);
+        assert_run_vm!("LSHIFTDIVMOD", [int 5, int 2, int 0] => [int 2, int 1]);
+        assert_run_vm!("LSHIFTDIVMOD", [int -11, int 5, int 0] => [int -3, int 4]);
+        assert_run_vm!("LSHIFTDIVMODR", [int 5, int 3, int 1] => [int 3, int 1]);
+        assert_run_vm!("LSHIFTDIVMODC", [int 5, int 3, int 1] => [int 4, int -2]);
+        // neg
+        assert_run_vm!("LSHIFTDIVMOD", [] => [int 0], exit_code: 2);
+        assert_run_vm!("LSHIFTDIVMOD", [int 123] => [int 0], exit_code: 2);
+        assert_run_vm!("LSHIFTDIVMOD", [int 1, int 0, int 1] => [int 0], exit_code: 4);
     }
 
     #[test]
