@@ -304,6 +304,10 @@ pub fn bitsize(int: &BigInt, signed: bool) -> u16 {
     }
 }
 
+pub fn in_bitsize_range(x: &BigInt, signed: bool) -> bool {
+    signed || x.sign() != Sign::Minus
+}
+
 pub fn remove_trailing(slice: &mut CellSlice<'_>) -> Result<(), everscale_types::error::Error> {
     let bits = slice.size_bits();
     if bits == 0 {

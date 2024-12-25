@@ -33,7 +33,9 @@ pub enum VmError {
     OutOfGas,
     #[error(transparent)]
     CellError(#[from] Error),
-    #[error("Unknown error. {0}")]
+    #[error("dict error")]
+    DictError,
+    #[error("unknown error. {0}")]
     Unknown(String),
 }
 
@@ -58,6 +60,7 @@ impl VmError {
                 Error::IntOverflow => VmException::IntOverflow,
                 _ => VmException::Fatal, // ?
             },
+            Self::DictError => VmException::DictError,
         }
     }
 }

@@ -6,7 +6,7 @@ use num_traits::{One, Zero};
 
 use crate::error::VmResult;
 use crate::state::VmState;
-use crate::util::bitsize;
+use crate::util::{bitsize, in_bitsize_range};
 
 pub struct LogicOps;
 
@@ -221,10 +221,6 @@ impl LogicOps {
         }
         Ok(0)
     }
-}
-
-fn in_bitsize_range(x: &BigInt, signed: bool) -> bool {
-    signed || x.sign() != Sign::Minus
 }
 
 #[cfg(test)]

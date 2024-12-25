@@ -6,7 +6,6 @@ use everscale_types::dict;
 use everscale_types::models::{GasLimitsPrices, MsgForwardPrices, StoragePrices};
 use everscale_types::prelude::*;
 use everscale_vm::cont::ControlRegs;
-use everscale_vm::instr::dictops::check_key_sign;
 use everscale_vm::util::store_int_to_builder;
 use everscale_vm::VmState;
 use everscale_vm_proc::vm_module;
@@ -42,12 +41,11 @@ impl ConfigOps {
         Ok(0)
     }
 
-    #[instr(code = "f832", fmt = "PARAM", args(opt = false))]
-    #[instr(code = "f833", fmt = "OPTPARAM", args(opt = true))]
+    #[instr(code = "f832", fmt = "CONFIGPARAM", args(opt = false))]
+    #[instr(code = "f833", fmt = "CONFIGOPTPARAM", args(opt = true))]
     fn exec_get_config_param(st: &mut VmState, opt: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let idx = ok!(stack.pop_int());
-        ok!(check_key_sign(false, idx.clone()));
 
         ok!(get_and_push_param(
             &mut st.cr,

@@ -408,12 +408,26 @@ pub trait StackValue: std::fmt::Debug {
         None
     }
 
+    fn try_as_int(&self) -> VmResult<&BigInt> {
+        match self.as_int() {
+            Some(value) => Ok(value),
+            None => Err(invalid_type(self.ty(), StackValueType::Int)),
+        }
+    }
+
     fn into_int(self: Rc<Self>) -> VmResult<Rc<BigInt>> {
         Err(invalid_type(self.ty(), StackValueType::Int))
     }
 
     fn as_cell(&self) -> Option<&Cell> {
         None
+    }
+
+    fn try_as_cell(&self) -> VmResult<&Cell> {
+        match self.as_cell() {
+            Some(value) => Ok(value),
+            None => Err(invalid_type(self.ty(), StackValueType::Cell)),
+        }
     }
 
     fn into_cell(self: Rc<Self>) -> VmResult<Rc<Cell>> {
@@ -424,12 +438,26 @@ pub trait StackValue: std::fmt::Debug {
         None
     }
 
+    fn try_as_slice(&self) -> VmResult<&OwnedCellSlice> {
+        match self.as_slice() {
+            Some(value) => Ok(value),
+            None => Err(invalid_type(self.ty(), StackValueType::Slice)),
+        }
+    }
+
     fn into_slice(self: Rc<Self>) -> VmResult<Rc<OwnedCellSlice>> {
         Err(invalid_type(self.ty(), StackValueType::Slice))
     }
 
     fn as_builder(&self) -> Option<&CellBuilder> {
         None
+    }
+
+    fn try_as_builder(&self) -> VmResult<&CellBuilder> {
+        match self.as_builder() {
+            Some(value) => Ok(value),
+            None => Err(invalid_type(self.ty(), StackValueType::Builder)),
+        }
     }
 
     fn into_builder(self: Rc<Self>) -> VmResult<Rc<CellBuilder>> {
@@ -440,12 +468,26 @@ pub trait StackValue: std::fmt::Debug {
         None
     }
 
+    fn try_as_cont(&self) -> VmResult<&DynCont> {
+        match self.as_cont() {
+            Some(value) => Ok(value),
+            None => Err(invalid_type(self.ty(), StackValueType::Cont)),
+        }
+    }
+
     fn into_cont(self: Rc<Self>) -> VmResult<RcCont> {
         Err(invalid_type(self.ty(), StackValueType::Cont))
     }
 
     fn as_tuple(&self) -> Option<&[RcStackValue]> {
         None
+    }
+
+    fn try_as_tuple(&self) -> VmResult<&[RcStackValue]> {
+        match self.as_tuple() {
+            Some(value) => Ok(value),
+            None => Err(invalid_type(self.ty(), StackValueType::Tuple)),
+        }
     }
 
     fn into_tuple(self: Rc<Self>) -> VmResult<Rc<Tuple>> {
@@ -716,6 +758,10 @@ impl StackValue for NaN {
 
     fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("NaN")
+    }
+
+    fn try_as_int(&self) -> VmResult<&BigInt> {
+        vm_bail!(IntegerOverflow);
     }
 
     fn into_int(self: Rc<Self>) -> VmResult<Rc<BigInt>> {
