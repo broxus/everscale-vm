@@ -51,7 +51,7 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "83xx", range_to = "83ff", fmt = "PUSHPOW2 {x}", args(x = (args & 0xff) + 1))]
+    #[instr(code = "83xx @ ..83ff", fmt = "PUSHPOW2 {x}", args(x = (args & 0xff) + 1))]
     pub fn exec_push_pow2(st: &mut VmState, x: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         ok!(stack.push_int(BigInt::from(1) << x));

@@ -33,9 +33,9 @@ impl Debugops {
         Ok(0)
     }
 
-    #[instr(code = "fexx", range_from = "fe01", range_to = "fe14", fmt = "DEBUG {x}", args(x = args & 0xff))]
-    #[instr(code = "fexx", range_from = "fe15", range_to = "fe20", fmt = "DEBUG {x}", args(x = args & 0xff))]
-    #[instr(code = "fexx", range_from = "fe30", range_to = "fef0", fmt = "DEBUG {x}", args(x = args & 0xff))]
+    #[instr(code = "fexx @ fe01..fe14", fmt = "DEBUG {x}", args(x = args & 0xff))]
+    #[instr(code = "fexx @ fe15..fe20", fmt = "DEBUG {x}", args(x = args & 0xff))]
+    #[instr(code = "fexx @ fe30..fef0", fmt = "DEBUG {x}", args(x = args & 0xff))]
     fn exec_dummy_debug(_: &mut VmState, x: u32) -> VmResult<i32> {
         _ = x;
         Ok(0)
