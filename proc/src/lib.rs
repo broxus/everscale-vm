@@ -9,10 +9,6 @@ use syn::ItemImpl;
 #[derive(Debug, FromMeta)]
 struct VmInstrArgs {
     code: SpannedValue<String>,
-    #[darling(default)]
-    range_from: Option<SpannedValue<String>>,
-    #[darling(default)]
-    range_to: Option<SpannedValue<String>>,
 
     #[darling(with = "parse_expr::preserve_str_literal")]
     fmt: syn::Expr,
@@ -105,6 +101,39 @@ pub fn vm_module(_: TokenStream, input: TokenStream) -> TokenStream {
     .into()
 }
 
+struct ParsedCode<'a> {
+    code: &'a str,
+    range_from: Option<&'a str>,
+    range_to: Option<&'a str>,
+}
+
+impl<'a> ParsedCode<'a> {
+    fn from_str(s: &'a SpannedValue<String>) -> Result<Self, Error> {
+        match s.split_once('@') {
+            None => Ok(Self {
+                code: s.as_str(),
+                range_from: None,
+                range_to: None,
+            }),
+            Some((code, range)) => {
+                let Some((range_from, range_to)) = range.split_once("..") else {
+                    return Err(
+                        Error::custom("expected an opcode range after `@`").with_span(&s.span())
+                    );
+                };
+                let range_from = range_from.trim();
+                let range_to = range_to.trim();
+
+                Ok(Self {
+                    code: code.trim(),
+                    range_from: (!range_from.is_empty()).then_some(range_from),
+                    range_to: (!range_to.is_empty()).then_some(range_to),
+                })
+            }
+        }
+    }
+}
+
 fn process_instr_definition(
     function: &syn::ImplItemFn,
     opcodes_arg: &syn::Ident,
@@ -112,12 +141,13 @@ fn process_instr_definition(
     opcodes: &mut Opcodes,
 ) -> Result<syn::Expr, Error> {
     let mut instr = VmInstrArgs::from_meta(&attr.meta)?;
+    let parsed = ParsedCode::from_str(&instr.code)?;
 
     let mut opcode_bits = 0u16;
     let mut opcode_base_min = 0;
     let mut binary_mode = false;
     let mut args = Vec::<(char, u16)>::new();
-    for c in instr.code.chars() {
+    for c in parsed.code.chars() {
         if c.is_whitespace() || c == '_' {
             continue;
         }
@@ -203,19 +233,19 @@ fn process_instr_definition(
         fmt => quote! { "{}", #fmt },
     };
 
-    let ty = match (!args.is_empty(), instr.range_from, instr.range_to) {
+    let ty = match (!args.is_empty(), parsed.range_from, parsed.range_to) {
         (false, range_from, range_to) => {
             let mut errors = Vec::new();
-            if let Some(range_from) = range_from {
+            if range_from.is_some() {
                 errors.push(
                     Error::custom("Unexpected `range_from` for a simple opcode")
-                        .with_span(&range_from.span()),
+                        .with_span(&instr.code.span()),
                 );
             }
-            if let Some(range_to) = range_to {
+            if range_to.is_some() {
                 errors.push(
                     Error::custom("Unexpected `range_to` for a simple opcode")
-                        .with_span(&range_to.span()),
+                        .with_span(&instr.code.span()),
                 );
             }
 
@@ -239,7 +269,7 @@ fn process_instr_definition(
         }
         (true, range_from, range_to) => {
             let opcode_min = if let Some(range_from) = range_from {
-                let range_from_span = &range_from.span();
+                let range_from_span = &instr.code.span();
 
                 let range_from_bits = range_from.len() * 4;
                 let range_from = u32::from_str_radix(&range_from, 16).map_err(|e| {
@@ -274,7 +304,7 @@ fn process_instr_definition(
             };
 
             let opcode_max = if let Some(range_to) = range_to {
-                let range_to_span = &range_to.span();
+                let range_to_span = &instr.code.span();
 
                 let range_to_bits = range_to.len() * 4;
                 let range_to = u32::from_str_radix(&range_to, 16).map_err(|e| {

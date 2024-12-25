@@ -21,10 +21,10 @@ impl Stackops {
         Ok(0)
     }
 
-    #[instr(code = "0j", range_from = "02", fmt = "XCHG s{j}", args(i = 0))]
+    #[instr(code = "0j @ 02..", fmt = "XCHG s{j}", args(i = 0))]
     #[instr(code = "10ij", fmt = "XCHG s{i},s{j}", cond = i != 0 && i < j)]
     #[instr(code = "11jj", fmt = "XCHG s{j}", args(i = 0))]
-    #[instr(code = "1j", range_from = "12", fmt = "XCHG s1,s{j}", args(i = 1))]
+    #[instr(code = "1j @ 12..", fmt = "XCHG s1,s{j}", args(i = 1))]
     fn exec_xchg(st: &mut VmState, i: u32, j: u32) -> VmResult<i32> {
         ok!(Rc::make_mut(&mut st.stack).swap(i as _, j as _));
         Ok(0)
@@ -42,7 +42,7 @@ impl Stackops {
         Ok(0)
     }
 
-    #[instr(code = "2i", range_from = "22", fmt = "PUSH s{i}")]
+    #[instr(code = "2i @ 22..", fmt = "PUSH s{i}")]
     #[instr(code = "56ii", fmt = "PUSH s{i}")]
     fn exec_push(st: &mut VmState, i: u32) -> VmResult<i32> {
         ok!(Rc::make_mut(&mut st.stack).push_nth(i as _));
@@ -63,7 +63,7 @@ impl Stackops {
         Ok(0)
     }
 
-    #[instr(code = "3i", range_from = "32", fmt = "POP s{i}")]
+    #[instr(code = "3i @ 32..", fmt = "POP s{i}")]
     #[instr(code = "57ii", fmt = "POP s{i}")]
     fn exec_pop(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
@@ -264,7 +264,7 @@ impl Stackops {
         Ok(0)
     }
 
-    #[instr(code = "5fij", range_from = "5f10", fmt = "BLKPUSH {i},{j}")]
+    #[instr(code = "5fij @ 5f10..", fmt = "BLKPUSH {i},{j}")]
     fn exec_blkpush(st: &mut VmState, mut i: u32, j: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         while i >= 1 {
@@ -419,7 +419,7 @@ impl Stackops {
     }
 
     /// Drops `i` stack elements under the top `j` elements.
-    #[instr(code = "6cij", range_from = "6c10", fmt = "BLKDROP2 {i},{j}")]
+    #[instr(code = "6cij @ 6c10..", fmt = "BLKDROP2 {i},{j}")]
     fn exec_blkdrop2(st: &mut VmState, i: u32, j: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let depth = stack.depth();

@@ -277,7 +277,7 @@ impl ConfigOps {
         get_global_common(&mut st.cr, stack, args as usize)
     }
 
-    #[instr(code = "f8ii", range_from = "f841", range_to = "f860", fmt = "GETGLOB {i}", args(i = args & 31))]
+    #[instr(code = "f8ii @ f841..f860", fmt = "GETGLOB {i}", args(i = args & 31))]
     fn exec_get_global(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         get_global_common(&mut st.cr, stack, i as usize)
@@ -290,7 +290,7 @@ impl ConfigOps {
         set_global_common(&mut st.cr, stack, &mut st.gas, args as usize)
     }
 
-    #[instr(code = "f8ii", range_from = "f861", range_to = "f880", fmt = "SETGLOB {i}", args(i = args & 31))]
+    #[instr(code = "f8ii @ f861..f880", fmt = "SETGLOB {i}", args(i = args & 31))]
     fn exec_set_global(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         set_global_common(&mut st.cr, stack, &mut st.gas, i as usize)

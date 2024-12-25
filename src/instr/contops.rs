@@ -969,7 +969,7 @@ impl Contops {
         st.throw_exception_with_arg(n as i32, arg)
     }
 
-    #[instr(code = "f2fx", range_to = "f2f6", fmt = ThrowAnyArgs(x))]
+    #[instr(code = "f2fx @ ..f2f6", fmt = ThrowAnyArgs(x))]
     fn exec_throw_any(st: &mut VmState, x: u32) -> VmResult<i32> {
         let args = ThrowAnyArgs(x);
 
@@ -1013,14 +1013,8 @@ impl Contops {
     }
 
     #[instr(code = "ff00", fmt = "SETCP0", args(x = 0i16))]
-    #[instr(
-        code = "ffxx",
-        range_from = "ff01",
-        range_to = "fff0",
-        fmt = "SETCP",
-        args(x = (args & 0xff) as i16),
-    )]
-    #[instr(code = "fffx", range_from = "fff1", fmt = "SETCP {x}", args(x = (args & 0xf) as i16 - 16))]
+    #[instr(code = "ffxx @ ff01..fff0", fmt = "SETCP", args(x = (args & 0xff) as i16),)]
+    #[instr(code = "fffx @ fff1..", fmt = "SETCP {x}", args(x = (args & 0xf) as i16 - 16))]
     fn exec_set_cp(st: &mut VmState, x: i16) -> VmResult<i32> {
         ok!(st.force_cp(x as u16));
         Ok(0)
