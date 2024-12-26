@@ -8,8 +8,9 @@ use sha2::Digest;
 
 use crate::cont::ControlRegs;
 use crate::error::VmResult;
+use crate::gas::GasConsumer;
 use crate::stack::StackValueType;
-use crate::state::{GasConsumer, VmState};
+use crate::state::VmState;
 
 pub struct RandOps;
 

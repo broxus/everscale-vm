@@ -1,12 +1,9 @@
 use std::rc::Rc;
 
-use ahash::HashSet;
 use anyhow::Result;
 use bitflags::bitflags;
 use everscale_types::cell::*;
-use everscale_types::dict::Dict;
 use everscale_types::error::Error;
-use everscale_types::models::SimpleLib;
 use num_bigint::BigInt;
 use num_traits::Zero;
 #[cfg(feature = "tracing")]
@@ -18,8 +15,9 @@ use crate::cont::{
 };
 use crate::dispatch::DispatchTable;
 use crate::error::{VmException, VmResult};
+use crate::gas::{GasConsumer, GasParams, LibraryProvider, NoLibraries};
 use crate::instr::{codepage, codepage0};
-use crate::stack::{RcStackValue, Stack, StackValue};
+use crate::stack::{RcStackValue, Stack};
 use crate::util::OwnedCellSlice;
 
 #[derive(Default)]
@@ -27,9 +25,9 @@ pub struct VmStateBuilder {
     pub code: OwnedCellSlice,
     pub data: Option<Cell>,
     pub stack: Vec<RcStackValue>,
-    pub libraries: Vec<Dict<HashBytes, SimpleLib>>,
+    pub libraries: Option<Box<dyn LibraryProvider>>,
     pub c7: Option<Vec<RcStackValue>>,
-    pub gas: GasParameters,
+    pub gas: GasParams,
     pub same_c3: bool,
     pub version: Option<VmVersion>,
     pub without_push0: bool,
@@ -76,17 +74,10 @@ impl VmStateBuilder {
             steps: 0,
             quit0,
             quit1,
-            gas: GasConsumer {
-                gas_max: self.gas.gas_max,
-                gas_limit: self.gas.gas_limit,
-                gas_credit: self.gas.gas_credit,
-                gas_remaining: self.gas.gas_remaining,
-                gas_base: self.gas.gas_base,
-                loaded_cells: Default::default(),
-                libraries: self.libraries,
-                chksign_counter: 0,
-                empty_context: Default::default(),
-            },
+            gas: GasConsumer::with_libraries(
+                self.gas,
+                self.libraries.unwrap_or_else(|| Box::new(NoLibraries)),
+            ),
             cp,
             debug: self.debug,
             modifiers: self.modifiers,
@@ -94,32 +85,16 @@ impl VmStateBuilder {
         })
     }
 
-    pub fn with_libraries<I: IntoIterator<Item = Dict<HashBytes, SimpleLib>>>(
-        mut self,
-        values: I,
-    ) -> Self {
-        self.libraries = values.into_iter().collect();
+    pub fn with_libraries<T: LibraryProvider + 'static>(mut self, libraries: T) -> Self {
+        self.libraries = Some(match castaway::cast!(libraries, Box<dyn LibraryProvider>) {
+            Ok(libraries) => libraries,
+            Err(libraries) => Box::new(libraries),
+        });
         self
     }
 
-    pub fn with_gas_max(mut self, value: u64) -> Self {
-        self.gas.gas_max = value;
-        self
-    }
-    pub fn with_gas_limit(mut self, value: u64) -> Self {
-        self.gas.gas_limit = value;
-        self
-    }
-    pub fn with_gas_remaining(mut self, value: u64) -> Self {
-        self.gas.gas_remaining = value;
-        self
-    }
-    pub fn with_gas_credit(mut self, value: u64) -> Self {
-        self.gas.gas_credit = value;
-        self
-    }
-    pub fn with_gas_base(mut self, value: u64) -> Self {
-        self.gas.gas_base = value;
+    pub fn with_gas(mut self, gas: GasParams) -> Self {
+        self.gas = gas;
         self
     }
 
@@ -153,16 +128,6 @@ impl VmStateBuilder {
         self
     }
 
-    pub fn push<T: StackValue + 'static>(mut self, value: T) -> Self {
-        self.stack.push(Rc::new(value));
-        self
-    }
-
-    pub fn push_raw(mut self, value: RcStackValue) -> Self {
-        self.stack.push(value);
-        self
-    }
-
     pub fn with_c7(mut self, c7: Vec<RcStackValue>) -> Self {
         self.c7 = Some(c7);
         self
@@ -177,15 +142,6 @@ impl VmStateBuilder {
         self.version = Some(version);
         self
     }
-}
-
-#[derive(Default)]
-pub struct GasParameters {
-    pub gas_max: u64,
-    pub gas_limit: u64,
-    pub gas_credit: u64,
-    pub gas_remaining: u64,
-    pub gas_base: u64,
 }
 
 pub struct VmState {
@@ -828,164 +784,6 @@ bitflags! {
 
         const C0_C1 = SaveCr::C0.bits() | SaveCr::C1.bits();
         const FULL = SaveCr::C0_C1.bits() | SaveCr::C2.bits();
-    }
-}
-
-pub struct GasConsumer {
-    pub gas_max: u64,
-    pub gas_limit: u64,
-    pub gas_credit: u64,
-    pub gas_remaining: u64,
-    pub gas_base: u64,
-    pub loaded_cells: HashSet<HashBytes>,
-    pub libraries: Vec<Dict<HashBytes, SimpleLib>>,
-
-    pub chksign_counter: u64,
-
-    pub empty_context: <Cell as CellFamily>::EmptyCellContext,
-}
-
-impl GasConsumer {
-    pub const BUILD_CELL_GAS: u64 = 500;
-    pub const NEW_CELL_GAS: u64 = 100;
-    pub const OLD_CELL_GAS: u64 = 25;
-
-    pub const FREE_STACK_DEPTH: u64 = 32;
-    pub const FREE_SIGNATURE_CHECKS: u64 = 10;
-    pub const STACK_VALUE_GAS_PRICE: u64 = 1;
-    pub const TUPLE_ENTRY_GAS_PRICE: u64 = 1;
-    pub const HASH_EXT_ENTRY_GAS_PRICE: u64 = 1;
-    pub const CHK_SGN_GAS_PRICE: u64 = 4000;
-    pub const IMPLICIT_JMPREF_GAS_PRICE: u64 = 10;
-    pub const IMPLICIT_RET_GAS_PRICE: u64 = 5;
-    pub const EXCEPTION_GAS_PRICE: u64 = 50;
-
-    pub fn try_consume_exception_gas(&mut self) -> Result<(), Error> {
-        self.try_consume(Self::EXCEPTION_GAS_PRICE)
-    }
-
-    pub fn try_consume_implicit_jmpref_gas(&mut self) -> Result<(), Error> {
-        self.try_consume(Self::IMPLICIT_JMPREF_GAS_PRICE)
-    }
-
-    pub fn try_consume_implicit_ret_gas(&mut self) -> Result<(), Error> {
-        self.try_consume(Self::IMPLICIT_RET_GAS_PRICE)
-    }
-
-    pub fn try_consume_check_signature_gas(&mut self) -> Result<(), Error> {
-        self.chksign_counter += 1;
-        if self.chksign_counter > Self::FREE_SIGNATURE_CHECKS {
-            self.try_consume(Self::CHK_SGN_GAS_PRICE)?;
-        }
-        Ok(())
-    }
-
-    pub fn try_consume_stack_gas(&mut self, stack: Option<&Rc<Stack>>) -> Result<(), Error> {
-        if let Some(stack) = stack {
-            self.try_consume_stack_depth_gas(stack.depth() as u64)?;
-        }
-        Ok(())
-    }
-
-    pub fn try_consume_tuple_gas(&mut self, tuple_len: u64) -> Result<(), Error> {
-        self.try_consume(tuple_len * Self::TUPLE_ENTRY_GAS_PRICE)?;
-        Ok(())
-    }
-
-    pub fn try_consume_stack_depth_gas(&mut self, depth: u64) -> Result<(), Error> {
-        self.try_consume(
-            (std::cmp::max(depth, Self::FREE_STACK_DEPTH) - Self::FREE_STACK_DEPTH)
-                * Self::STACK_VALUE_GAS_PRICE,
-        )
-    }
-
-    pub fn try_consume(&mut self, amount: u64) -> Result<(), Error> {
-        if let Some(remaining) = self.gas_remaining.checked_sub(amount) {
-            self.gas_remaining = remaining;
-            Ok(())
-        } else {
-            Err(Error::Cancelled)
-        }
-    }
-
-    pub fn gas_consumed(&self) -> u64 {
-        self.gas_base - self.gas_remaining
-    }
-
-    pub fn set_limit(&mut self, limit: u64) {
-        vm_log!(
-            "changing gas limit to {}",
-            std::cmp::min(limit, self.gas_max)
-        );
-        let limit = std::cmp::min(limit, self.gas_max);
-        self.gas_credit = 0;
-        self.gas_limit = limit;
-        self.set_base(limit);
-    }
-
-    fn set_base(&mut self, base: u64) {
-        self.gas_remaining += base - self.gas_base;
-        self.gas_base = base;
-    }
-
-    #[inline]
-    pub fn context(&mut self) -> &mut GasConsumerContext {
-        GasConsumerContext::wrap(self)
-    }
-}
-
-#[repr(transparent)]
-pub struct GasConsumerContext(GasConsumer);
-
-impl GasConsumerContext {
-    #[inline]
-    fn wrap(consumer: &mut GasConsumer) -> &mut Self {
-        // SAFETY: `GasConsumerContext` has the same memory layout as `GasConsumer`.
-        unsafe { &mut *(consumer as *mut GasConsumer).cast() }
-    }
-
-    pub fn load_library(&mut self, key: HashBytes) -> Result<Option<Cell>, Error> {
-        for lib in &self.0.libraries {
-            match lib.get(key)? {
-                Some(lib) => return Ok(Some(lib.root)),
-                None => continue,
-            }
-        }
-
-        Ok(None)
-    }
-
-    fn consume_load_cell(&mut self, cell: &DynCell, mode: LoadMode) -> Result<(), Error> {
-        if mode.use_gas() {
-            let gas = if self.0.loaded_cells.insert(*cell.repr_hash()) {
-                GasConsumer::NEW_CELL_GAS
-            } else {
-                GasConsumer::OLD_CELL_GAS
-            };
-            ok!(self.0.try_consume(gas));
-        }
-        Ok(())
-    }
-}
-
-impl CellContext for GasConsumerContext {
-    fn finalize_cell(&mut self, cell: CellParts<'_>) -> Result<Cell, Error> {
-        ok!(self.0.try_consume(GasConsumer::BUILD_CELL_GAS));
-        self.0.empty_context.finalize_cell(cell)
-    }
-
-    fn load_cell(&mut self, cell: Cell, mode: LoadMode) -> Result<Cell, Error> {
-        ok!(self.consume_load_cell(cell.as_ref(), mode));
-        Ok(cell)
-    }
-
-    fn load_dyn_cell<'a>(
-        &mut self,
-        cell: &'a DynCell,
-        mode: LoadMode,
-    ) -> Result<&'a DynCell, Error> {
-        ok!(self.consume_load_cell(cell, mode));
-        Ok(cell)
     }
 }
 

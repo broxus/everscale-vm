@@ -46,11 +46,8 @@ impl BasicGasOps {
 }
 
 fn exec_set_gas(st: &mut VmState, gas_limit: u64) -> VmResult<i32> {
-    if gas_limit < st.gas.gas_consumed() {
-        vm_bail!(OutOfGas)
-    }
+    vm_ensure!(gas_limit >= st.gas.gas_consumed(), OutOfGas);
     st.gas.set_limit(gas_limit);
-
     if st.modifiers.stop_on_accept {
         st.jump(Rc::new(QuitCont { exit_code: 0 }))
     } else {

@@ -1039,7 +1039,7 @@ impl Cellops {
 
             let hash_bytes = HashBytes::from_slice(&cell.data()[1..]);
 
-            match st.gas.context().load_library(hash_bytes)? {
+            match st.gas.context().load_library(&hash_bytes)? {
                 Some(library) => cell = library,
                 None if quiet => {
                     ok!(stack.push_bool(false));

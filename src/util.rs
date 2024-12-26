@@ -7,7 +7,7 @@ use everscale_types::error::Error;
 use everscale_types::models::{GasLimitsPrices, MsgForwardPrices, StoragePrices};
 use everscale_types::num::Tokens;
 use everscale_types::prelude::*;
-use num_bigint::{BigInt, BigUint, Sign};
+use num_bigint::{BigInt, Sign};
 use num_traits::{One, ToPrimitive, Zero};
 
 #[derive(Default, Debug, Clone)]
@@ -317,44 +317,6 @@ pub fn remove_trailing(slice: &mut CellSlice<'_>) -> Result<(), everscale_types:
     let n = ok!(slice.count_trailing(false));
     // NOTE: Skip one additional bit for non-empty slice
     slice.skip_last(n + (n != bits) as u16, 0)
-}
-
-pub fn to_signed_bytes_be(is_negative: bool, value: &BigUint) -> Vec<u8> {
-    #[inline]
-    fn is_zero(value: &u8) -> bool {
-        *value == 0
-    }
-
-    #[inline]
-    pub fn twos_complement_le(digits: &mut [u8]) {
-        let mut carry = true;
-        for digit in digits {
-            *digit = !*digit;
-            if carry {
-                let (d, c) = digit.overflowing_add(1);
-                *digit = d;
-                carry = c;
-            }
-        }
-    }
-
-    fn negative_to_signed_bytes_be(value: &BigUint) -> Vec<u8> {
-        let mut bytes = value.to_bytes_le();
-        let last_byte = bytes.last().cloned().unwrap_or(0);
-        if last_byte > 0x7f && !(last_byte == 0x80 && bytes.iter().rev().skip(1).all(is_zero)) {
-            // msb used by magnitude, extend by 1 byte
-            bytes.push(0);
-        }
-        twos_complement_le(&mut bytes);
-        bytes.reverse();
-        bytes
-    }
-
-    if is_negative {
-        negative_to_signed_bytes_be(value)
-    } else {
-        value.to_bytes_be()
-    }
 }
 
 #[inline]

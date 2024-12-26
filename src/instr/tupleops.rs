@@ -4,8 +4,9 @@ use everscale_vm_proc::vm_module;
 use num_traits::Zero;
 
 use crate::error::VmResult;
+use crate::gas::GasConsumer;
 use crate::stack::{RcStackValue, Stack, StackValue, StackValueType};
-use crate::state::{GasConsumer, VmState};
+use crate::state::VmState;
 
 pub struct Tupleops;
 

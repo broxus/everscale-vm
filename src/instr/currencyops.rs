@@ -10,8 +10,8 @@ use everscale_vm::VmState;
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
 
+use crate::gas::GasConsumer;
 use crate::stack::{RcStackValue, Stack, StackValue, Tuple};
-use crate::state::GasConsumer;
 use crate::util::{bitsize, load_int_from_slice, store_int_to_builder_unchecked};
 
 pub struct CurrencyOps;

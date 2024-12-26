@@ -1,8 +1,6 @@
 use std::rc::Rc;
 
-use everscale_types::cell::{
-    self, Cell, CellBuilder, CellContext, CellTreeStats, HashBytes, Load, LoadMode, StorageStat,
-};
+use everscale_types::cell::{self, CellTreeStats, LoadMode, StorageStat};
 use everscale_types::dict;
 use everscale_types::models::{
     ChangeLibraryMode, CurrencyCollection, ExtAddr, ExtraCurrencyCollection, Lazy, LibRef,
@@ -10,6 +8,7 @@ use everscale_types::models::{
     ReserveCurrencyFlags, SendMsgFlags, SizeLimitsConfig,
 };
 use everscale_types::num::{SplitDepth, Tokens};
+use everscale_types::prelude::*;
 use everscale_vm::util::load_uint_leq;
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
@@ -17,8 +16,9 @@ use num_traits::ToPrimitive;
 
 use crate::cont::ControlRegs;
 use crate::error::VmResult;
+use crate::gas::GasConsumer;
 use crate::stack::{Stack, Tuple, TupleExt};
-use crate::state::{GasConsumer, VmState, VmVersion};
+use crate::state::{VmState, VmVersion};
 use crate::util::{MsgForwardPricesExt, OwnedCellSlice};
 
 pub struct MessageOps;
@@ -457,14 +457,15 @@ mod tests {
     use tracing_test::traced_test;
 
     use crate::cont::OrdCont;
+    use crate::gas::GasParams;
     use crate::stack::{RcStackValue, Stack};
+    use crate::state::VmState;
     use crate::util::OwnedCellSlice;
-    use crate::VmState;
 
     #[test]
     #[traced_test]
     fn send_msg_test() {
-        let code = Boc::decode(&everscale_asm_macros::tvmasm! {
+        let code = Boc::decode(tvmasm! {
             r#"
             SETCP0 DUP IFNOTRET // return if recv_internal
             DUP
@@ -589,9 +590,7 @@ mod tests {
         builder.stack = stack;
         builder.code = code;
         let mut vm_state = builder
-            .with_gas_base(1000000)
-            .with_gas_remaining(1000000)
-            .with_gas_max(u64::MAX)
+            .with_gas(GasParams::getter())
             .with_debug(TracingOutput::default())
             .build()
             .unwrap();
@@ -653,9 +652,7 @@ mod tests {
         builder.code = code;
 
         let mut vm_state = builder
-            .with_gas_base(10000)
-            .with_gas_remaining(10000)
-            .with_gas_max(u64::MAX)
+            .with_gas(GasParams::getter())
             .with_debug(TracingOutput::default())
             .build()
             .unwrap();
@@ -708,9 +705,7 @@ mod tests {
             .with_c7(vec![Rc::new(c7)])
             .with_stack(stack)
             .with_code(code.clone())
-            .with_gas_base(1000000)
-            .with_gas_remaining(1000000)
-            .with_gas_max(u64::MAX)
+            .with_gas(GasParams::getter())
             .with_debug(TracingOutput::default())
             .build()
             .unwrap();
@@ -781,9 +776,7 @@ mod tests {
             .with_c7(vec![Rc::new(c7)])
             .with_stack(stack)
             .with_code(code_slice.clone())
-            .with_gas_base(1000000)
-            .with_gas_remaining(1000000)
-            .with_gas_max(u64::MAX)
+            .with_gas(GasParams::getter())
             .with_debug(TracingOutput::default())
             .build()
             .unwrap();

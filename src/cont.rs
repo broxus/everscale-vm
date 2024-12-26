@@ -374,7 +374,10 @@ trait LoadWithContext<'a>: Sized {
     ) -> Result<Self, Error>;
 }
 
-pub fn load_cont(slice: &mut CellSlice, context: &mut dyn CellContext) -> Result<RcCont, Error> {
+pub(crate) fn load_cont(
+    slice: &mut CellSlice,
+    context: &mut dyn CellContext,
+) -> Result<RcCont, Error> {
     #[allow(clippy::unusual_byte_groupings)]
     const MASK: u64 = 0x1_007_01_1_1_0001_0001;
 

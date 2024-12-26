@@ -10,8 +10,9 @@ use num_bigint::{BigInt, Sign};
 use sha2::Digest;
 
 use crate::error::VmResult;
+use crate::gas::GasConsumer;
 use crate::stack::StackValueType;
-use crate::state::{GasConsumer, VmState};
+use crate::state::VmState;
 
 pub struct Hashops;
 

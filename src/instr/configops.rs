@@ -12,8 +12,8 @@ use everscale_vm_proc::vm_module;
 use num_bigint::Sign;
 
 use crate::error::VmResult;
+use crate::gas::GasConsumer;
 use crate::stack::{RcStackValue, Stack, TupleExt};
-use crate::state::GasConsumer;
 use crate::util::{
     shift_ceil_price, GasLimitsPricesExt, MsgForwardPricesExt, OwnedCellSlice, StoragePricesExt,
 };

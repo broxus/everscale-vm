@@ -644,7 +644,7 @@ impl TupleExt for [RcStackValue] {
     }
 }
 
-pub fn load_stack_value(
+pub(crate) fn load_stack_value(
     slice: &mut CellSlice,
     context: &mut dyn CellContext,
 ) -> Result<RcStackValue, Error> {
@@ -1102,7 +1102,7 @@ impl StaticStackValue for Tuple {
     }
 }
 
-pub fn store_slice_as_stack_value(
+pub(crate) fn store_slice_as_stack_value(
     slice: &OwnedCellSlice,
     builder: &mut CellBuilder,
 ) -> Result<(), Error> {
@@ -1116,7 +1116,7 @@ pub fn store_slice_as_stack_value(
     builder.store_uint(value, 26)
 }
 
-pub fn load_slice_as_stack_value(
+pub(crate) fn load_slice_as_stack_value(
     slice: &mut CellSlice,
     context: &mut dyn CellContext,
 ) -> Result<OwnedCellSlice, Error> {
