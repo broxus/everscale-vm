@@ -201,7 +201,6 @@ impl VmState {
     pub fn step(&mut self) -> VmResult<i32> {
         self.steps += 1;
         if !self.code.range().is_data_empty() {
-            // TODO: dispatch
             self.cp.dispatch(self)
         } else if !self.code.range().is_refs_empty() {
             vm_log!("implicit JMPREF");
@@ -226,9 +225,14 @@ impl VmState {
     }
 
     pub fn run(&mut self) -> i32 {
-        loop {
-            let res = match self.step() {
+        let mut res = 0;
+        while res == 0 {
+            res = match self.step() {
                 Ok(res) => res,
+                Err(e) if e.is_out_of_gas() => {
+                    self.steps += 1;
+                    self.throw_out_of_gas()
+                }
                 Err(e) => {
                     let exception = e.as_exception();
                     vm_log!(e = ?exception, "handling exception: {e:?}");
@@ -236,32 +240,29 @@ impl VmState {
                     self.steps += 1;
                     match self.throw_exception(exception as i32) {
                         Ok(res) => res,
+                        Err(e) if e.is_out_of_gas() => {
+                            self.steps += 1;
+                            self.throw_out_of_gas()
+                        }
                         Err(e) => {
                             vm_log!(e = ?exception, "double exception: {e:?}");
-                            break exception.as_exit_code();
+                            return exception.as_exit_code();
                         }
                     }
                 }
             };
-            // println!("TOTAL GAS USED: {}", self.gas.gas_consumed());
-            // for value in self.stack.items.iter() {
-            //     println!("{}", value.display_list());
-            // }
-
-            // TODO: handle out of gas
-
-            if res != 0 {
-                // Try commit on ~(0) and ~(-1) exit codes
-                if res | 1 == -1 && !self.try_commit() {
-                    vm_log!("automatic commit failed");
-                    self.stack = Rc::new(Stack {
-                        items: vec![Rc::new(BigInt::default())],
-                    });
-                    break VmException::CellOverflow.as_exit_code();
-                }
-                break res;
-            }
         }
+
+        // Try commit on ~(0) and ~(-1) exit codes
+        if res | 1 == -1 && !self.try_commit() {
+            vm_log!("automatic commit failed");
+            self.stack = Rc::new(Stack {
+                items: vec![Rc::new(BigInt::default())],
+            });
+            return VmException::CellOverflow.as_exit_code();
+        }
+
+        res
     }
 
     pub fn try_commit(&mut self) -> bool {
@@ -416,6 +417,17 @@ impl VmState {
             vm_bail!(InvalidOpcode);
         };
         self.jump(c2)
+    }
+
+    pub fn throw_out_of_gas(&mut self) -> i32 {
+        let consumed = self.gas.gas_consumed();
+        vm_log!(consumed, limit = self.gas.gas_limit, "out of gas");
+        self.stack = Rc::new(Stack {
+            items: vec![Rc::new(BigInt::from(consumed))],
+        });
+
+        // No negation for unhandled exceptions (to make their faking impossible).
+        VmException::OutOfGas as u8 as i32
     }
 
     pub fn call(&mut self, cont: RcCont) -> VmResult<i32> {

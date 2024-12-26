@@ -40,6 +40,10 @@ pub enum VmError {
 }
 
 impl VmError {
+    pub fn is_out_of_gas(&self) -> bool {
+        matches!(self, Self::OutOfGas | Self::CellError(Error::Cancelled))
+    }
+
     pub fn as_exception(&self) -> VmException {
         match self {
             Self::StackUnderflow(_) => VmException::StackUnderflow,
