@@ -418,9 +418,8 @@ mod test {
         let mut cs = slice.apply()?;
         cs.skip_first(12, 0)?;
         slice.set_range(cs.range());
-        let another_value = Rc::new(slice) as RcStackValue;
 
-        assert_run_vm!("LDVARUINT16", [raw value] => [int 5, raw another_value]);
+        assert_run_vm!("LDVARUINT16", [raw value] => [int 5, slice slice]);
         // aka LDGRAMS
 
         Ok(())
@@ -438,9 +437,8 @@ mod test {
         let mut cs = slice.apply()?;
         cs.skip_first(13, 0)?;
         slice.set_range(cs.range());
-        let another_value = Rc::new(slice) as RcStackValue;
 
-        assert_run_vm!("LDVARUINT32", [raw value] => [int 5, raw another_value]);
+        assert_run_vm!("LDVARUINT32", [raw value] => [int 5, slice slice]);
 
         Ok(())
     }
@@ -457,12 +455,12 @@ mod test {
         cs.skip_first(11, 0).unwrap();
         addr.set_range(cs.range());
 
-        let tuple = Rc::new(vec![
-            Rc::new(BigInt::from(2)) as RcStackValue,
-            Stack::make_null(),
-            Rc::new(BigInt::from(0)),
-            Rc::new(addr),
-        ]) as RcStackValue;
+        let tuple = Rc::new(tuple![
+            int 2,
+            null,
+            int 0,
+            slice addr,
+        ]);
 
         assert_run_vm!("PARSEMSGADDR", [raw value.clone()] => [raw tuple.clone()]);
         assert_run_vm!("PARSEMSGADDRQ", [raw value.clone()] => [raw tuple, int -1]);

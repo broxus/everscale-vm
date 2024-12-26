@@ -199,7 +199,6 @@ pub mod test {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::stack::RcStackValue;
 
     fn uint256(str: &str) -> BigInt {
         let value = hex::decode(str).unwrap();
@@ -210,7 +209,7 @@ pub mod test {
     #[traced_test]
     fn random() {
         let value = uint256("576f8d6b5ac3bcc80844b7d50b1cc6603444bbe7cfcf8fc0aa1ee3c636d9e339");
-        let t1 = stack![
+        let c7 = tuple![[
             null,              // 0
             null,              // 1
             null,              // 2
@@ -218,8 +217,7 @@ pub mod test {
             null,              // 4
             null,              // 5
             int value.clone(), // RANDSEED_IDX
-        ];
-        let c7 = vec![Rc::new(t1) as RcStackValue];
+        ]];
 
         let result = uint256("504C79E96A1A3D91262EDE19D9F064E9752EEA03E21A5E208D7BDCAF2D6610EE");
         assert_run_vm_with_c7!("RAND", [c7.clone()], [int value.clone()] => [int result]);

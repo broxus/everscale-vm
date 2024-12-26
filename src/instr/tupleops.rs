@@ -465,9 +465,10 @@ mod tests {
     #[test]
     #[traced_test]
     fn index2() {
-        let inner_tuple1: RcStackValue = Rc::new(stack![int 1, int 2, int 3, int 4]);
-        let inner_tuple2: RcStackValue = Rc::new(stack![int 5, int 6, int 7, int 8]);
-        let outer_tuple: RcStackValue = Rc::new(stack![raw inner_tuple1, raw inner_tuple2]);
+        let outer_tuple = Rc::new(tuple![
+            [int 1, int 2, int 3, int 4],
+            [int 5, int 6, int 7, int 8],
+        ]);
 
         assert_run_vm!("INDEX2 0, 0", [raw outer_tuple.clone()] => [int 1]);
         assert_run_vm!("INDEX 0 INDEX 0", [raw outer_tuple.clone()] => [int 1]);
@@ -487,11 +488,8 @@ mod tests {
         assert_run_vm!("INDEX2 1, 3", [raw outer_tuple.clone()] => [int 8]);
         assert_run_vm!("INDEX 1 INDEX 3", [raw outer_tuple.clone()] => [int 8]);
 
-        let inner_tuple1: RcStackValue = Rc::new(stack![int 1]);
-        let inner_tuple2: RcStackValue = Rc::new(stack![int 5]);
-        let outer_tuple: RcStackValue = Rc::new(stack![raw inner_tuple1, raw inner_tuple2]);
-        assert_run_vm!("INDEX2 0, 2", [raw outer_tuple.clone()] => [int 0], exit_code: 5);
-        assert_run_vm!("INDEX2 2, 2", [raw outer_tuple] => [int 0], exit_code: 5);
+        assert_run_vm!("INDEX2 0, 2", [[[int 1], [int 5]]] => [int 0], exit_code: 5);
+        assert_run_vm!("INDEX2 2, 2", [[[int 1], [int 5]]] => [int 0], exit_code: 5);
     }
 
     #[test]

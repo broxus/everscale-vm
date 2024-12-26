@@ -53,23 +53,57 @@ macro_rules! vm_bail {
     };
 }
 
-/// Stack builder.
+/// Tuple builder.
 #[macro_export]
-macro_rules! stack {
-    ($($item_ty:tt $($value:expr)?),*$(,)?) => {
-        vec![$($crate::stack!(@v $item_ty $($value)?)),*]
+macro_rules! tuple {
+    ($($tt:tt)*) => {
+        $crate::tuple_impl!(@v [] $($tt)*)
     };
-    (@v null) => {
-        $crate::stack::Stack::make_null()
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! tuple_impl {
+    (@v [$($values:tt)*] null $(, $($tt:tt)* )?) => {
+        $crate::tuple_impl!(@v [$($values)* $crate::Stack::make_null(), ] $($($tt)*)?)
     };
-    (@v nan) => {
-        $crate::stack::Stack::make_nan()
+
+    (@v [$($values:tt)*] nan $(, $($tt:tt)* )?) => {
+        $crate::tuple_impl!(@v [$($values)* $crate::Stack::make_nan(), ] $($($tt)*)?)
     };
-    (@v int $value:expr) => {
-        ::std::rc::Rc::new(num_bigint::BigInt::from($value)) as $crate::stack::RcStackValue
+
+    (@v [$($values:tt)*] int $value:expr $(, $($tt:tt)* )?) => {
+        $crate::tuple_impl!(@v [
+            $($values)* ::std::rc::Rc::new(
+                $crate::__export::num_bigint::BigInt::from($value)
+            ) as $crate::RcStackValue,
+        ] $($($tt)*)?)
     };
-    (@v raw $value:expr) => {
-        $value
+
+    (@v [$($values:tt)*] slice $value:expr $(, $($tt:tt)* )?) => {
+        $crate::tuple_impl!(@v [
+            $($values)* ::std::rc::Rc::new(
+                $crate::OwnedCellSlice::from($value)
+            ) as $crate::RcStackValue,
+        ] $($($tt)*)?)
+    };
+
+    (@v [$($values:tt)*] [ $($inner:tt)* ] $(, $($tt:tt)* )?) => {
+        $crate::tuple_impl!(@v [
+            $($values)* ::std::rc::Rc::new(
+                $crate::tuple!($($inner)*)
+            ) as $crate::RcStackValue,
+        ] $($($tt)*)?)
+    };
+
+    (@v [$($values:tt)*] raw $value:expr $(, $($tt:tt)* )?) => {
+        $crate::tuple_impl!(@v [
+            $($values)* $value as $crate::RcStackValue,
+        ] $($($tt)*)?)
+    };
+
+    (@v [$($values:tt)*] $(,)?) => {
+        vec![$($values)*]
     };
 }
 
@@ -84,12 +118,12 @@ macro_rules! assert_run_vm {
     ) => {{
         let (exit_code, vm) = $crate::tests::run_vm_with_stack(
             tvmasm!($($code),+),
-            $crate::stack![],
-            $crate::stack![$($origin_stack)*],
+            $crate::tuple![],
+            $crate::tuple![$($origin_stack)*],
         );
         $crate::assert_run_vm!(@check_exit_code exit_code $($exit_code)?);
 
-        let expected_stack = format!("{}", (&$crate::stack![$($expected_stack)*] as &dyn $crate::stack::StackValue).display_list());
+        let expected_stack = format!("{}", (&$crate::tuple![$($expected_stack)*] as &dyn $crate::stack::StackValue).display_list());
         let vm_stack = format!("{}", (&vm.stack.items as &dyn $crate::stack::StackValue).display_list());
 
         assert_eq!(vm_stack, expected_stack);
@@ -115,11 +149,11 @@ macro_rules! assert_run_vm_with_c7 {
         let (exit_code, vm) = $crate::tests::run_vm_with_stack(
             tvmasm!($($code),+),
             $($c7_params)*,
-            $crate::stack![$($origin_stack)*],
+            $crate::tuple![$($origin_stack)*],
         );
         $crate::assert_run_vm!(@check_exit_code exit_code $($exit_code)?);
 
-        let expected_stack = format!("{}", (&$crate::stack![$($expected_stack)*] as &dyn $crate::stack::StackValue).display_list());
+        let expected_stack = format!("{}", (&$crate::tuple![$($expected_stack)*] as &dyn $crate::stack::StackValue).display_list());
         let vm_stack = format!("{}", (&vm.stack.items as &dyn $crate::stack::StackValue).display_list());
 
         assert_eq!(vm_stack, expected_stack);
@@ -158,6 +192,11 @@ mod instr;
 mod stack;
 mod state;
 mod util;
+
+#[doc(hidden)]
+pub mod __export {
+    pub use {everscale_types, num_bigint};
+}
 
 #[doc(hidden)]
 mod __private {

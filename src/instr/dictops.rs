@@ -919,12 +919,12 @@ pub mod tests {
     #[test]
     #[traced_test]
     fn store_dict() {
-        let init_builder: RcStackValue = Rc::new(CellBuilder::new());
+        let init_builder = Rc::new(CellBuilder::new());
         let mut dict = Dict::<u32, u32>::new();
         dict.add(1, 1).unwrap();
         let dict = Rc::new(dict.clone().into_root().unwrap());
 
-        let stored: RcStackValue = Rc::new({
+        let stored = Rc::new({
             let mut builder = CellBuilder::new();
             builder.store_bit_one().unwrap();
             builder.store_reference(Cell::clone(&dict)).unwrap();
@@ -932,7 +932,7 @@ pub mod tests {
         });
         assert_run_vm!("STDICT", [raw dict.clone(), raw init_builder.clone()] => [raw stored]);
 
-        let stored: RcStackValue = Rc::new({
+        let stored = Rc::new({
             let mut builder = CellBuilder::new();
             builder.store_bit_zero().unwrap();
             builder

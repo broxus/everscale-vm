@@ -493,7 +493,7 @@ mod tests {
             build_int(&data_hash),
             build_slice(&data_hash_signature),
             build_int(keypair.public_key.as_bytes()),
-        ]) as RcStackValue;
+        ]);
 
         assert_run_vm!(
             "UNTRIPLE CHKSIGNU",

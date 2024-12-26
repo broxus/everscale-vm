@@ -1265,7 +1265,6 @@ mod tests {
     use super::*;
     use crate::cont::QuitCont;
     use crate::instr::codepage0;
-    use crate::stack::RcStackValue;
 
     #[test]
     #[traced_test]
@@ -1396,7 +1395,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn basic_contops() -> anyhow::Result<()> {
-        let cont: RcStackValue = Rc::new(PushIntCont {
+        let cont = Rc::new(PushIntCont {
             value: 1,
             next: Rc::new(PushIntCont {
                 value: 2,
@@ -1415,7 +1414,7 @@ mod tests {
             PUSHINT 2
             "#
         })?;
-        let cont: RcStackValue = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
+        let cont = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
 
         assert_run_vm!(
             "EXECUTE",
@@ -1441,7 +1440,7 @@ mod tests {
             PUSHINT 0
             "#
         })?;
-        let cont: RcStackValue = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
+        let cont = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
 
         assert_run_vm!(
             "EXECUTE",
@@ -1458,7 +1457,7 @@ mod tests {
             PUSHINT 2
             "#
         })?;
-        let cont: RcStackValue = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
+        let cont = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
 
         assert_run_vm!(
             "EXECUTE",
@@ -1481,7 +1480,7 @@ mod tests {
             PUSHINT 1
             "#
         })?;
-        let cont: RcStackValue = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
+        let cont = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
 
         assert_run_vm!(
             "EXECUTE",
@@ -1498,7 +1497,7 @@ mod tests {
             PUSHINT 1
             "#
         })?;
-        let cont: RcStackValue = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
+        let cont = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
 
         assert_run_vm!(
             "EXECUTE",
@@ -1513,7 +1512,7 @@ mod tests {
             PUSHINT 2
             "#
         })?;
-        let cont: RcStackValue = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
+        let cont = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
 
         assert_run_vm!(
             "IF",
@@ -1547,7 +1546,7 @@ mod tests {
             PUSHINT 2
             "#
         })?;
-        let cont1: RcStackValue = Rc::new(OrdCont::simple(code1.into(), codepage0().id()));
+        let cont1 = Rc::new(OrdCont::simple(code1.into(), codepage0().id()));
 
         let code2 = Boc::decode(&tvmasm! {
             r#"
@@ -1555,7 +1554,7 @@ mod tests {
             PUSHINT 4
             "#
         })?;
-        let cont2: RcStackValue = Rc::new(OrdCont::simple(code2.into(), codepage0().id()));
+        let cont2 = Rc::new(OrdCont::simple(code2.into(), codepage0().id()));
 
         assert_run_vm!(
             "IFELSE",
@@ -1585,7 +1584,7 @@ mod tests {
             PUSHINT 2
             "#
         })?;
-        let cont: RcStackValue = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
+        let cont = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
 
         // assert_run_vm!(
         //     "IFREF",
@@ -1665,7 +1664,7 @@ mod tests {
             PUSHINT 2
             "#
         })?;
-        let cont: RcStackValue = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
+        let cont = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
 
         let code1 = Boc::decode(&tvmasm! {
             r#"
@@ -1673,7 +1672,7 @@ mod tests {
             PUSHINT 1
             "#
         })?;
-        let cont1: RcStackValue = Rc::new(OrdCont::simple(code1.into(), codepage0().id()));
+        let cont1 = Rc::new(OrdCont::simple(code1.into(), codepage0().id()));
 
         assert_run_vm!(
             "REPEAT",
@@ -1717,14 +1716,14 @@ mod tests {
             PUSHINT 2
             "#
         })?;
-        let c0: RcStackValue = Rc::new(OrdCont::simple(code0.into(), codepage0().id()));
+        let c0 = Rc::new(OrdCont::simple(code0.into(), codepage0().id()));
 
         let code1 = Boc::decode(&tvmasm! {
             r#"
             PUSHINT 0
             "#
         })?;
-        let c1: RcStackValue = Rc::new(OrdCont::simple(code1.into(), codepage0().id()));
+        let c1 = Rc::new(OrdCont::simple(code1.into(), codepage0().id()));
 
         assert_run_vm!(
             "WHILE",
@@ -1747,7 +1746,7 @@ mod tests {
             RETALT
             "#
         })?;
-        let cont_c0: RcStackValue = Rc::new(OrdCont::simple(code_c0.into(), codepage0().id()));
+        let cont_c0 = Rc::new(OrdCont::simple(code_c0.into(), codepage0().id()));
 
         // TODO: probably this behaviour with exit code 1 is okay. Add more cases with more loops
 
@@ -1780,7 +1779,7 @@ mod tests {
             IFNOT
             "#
         })?;
-        let cont_c0: RcStackValue = Rc::new(OrdCont::simple(code_c0.into(), codepage0().id()));
+        let cont_c0 = Rc::new(OrdCont::simple(code_c0.into(), codepage0().id()));
 
         assert_run_vm!(
             "REPEATBRK",
@@ -1823,7 +1822,7 @@ mod tests {
             DUMPSTK
             "#
         })?;
-        let cont_c0: RcStackValue = Rc::new(OrdCont::simple(code_c0.into(), codepage0().id()));
+        let cont_c0 = Rc::new(OrdCont::simple(code_c0.into(), codepage0().id()));
 
         assert_run_vm!(
             "UNTILBRK",
