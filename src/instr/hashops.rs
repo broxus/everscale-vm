@@ -27,7 +27,7 @@ impl Hashops {
             HashSource::Cell => *ok!(stack.pop_cell()).repr_hash(),
             HashSource::Slice => {
                 let cs = ok!(stack.pop_cs());
-                let cell = CellBuilder::build_from_ext(cs.apply_allow_special(), st.gas.context())?;
+                let cell = CellBuilder::build_from_ext(cs.apply_allow_special(), &mut st.gas)?;
                 *cell.repr_hash()
             }
         };

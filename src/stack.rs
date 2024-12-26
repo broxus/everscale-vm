@@ -1,6 +1,5 @@
 use std::rc::Rc;
 
-use everscale_types::cell::LoadMode;
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
 use num_bigint::BigInt;
@@ -10,6 +9,7 @@ use crate::cont::{load_cont, DynCont, RcCont};
 use crate::error::{VmError, VmResult};
 use crate::util::{bitsize, ensure_empty_slice, store_int_to_builder, OwnedCellSlice};
 
+/// A stack of values.
 #[derive(Debug, Default, Clone)]
 pub struct Stack {
     pub items: Vec<RcStackValue>,
@@ -349,39 +349,38 @@ impl Store for Stack {
     }
 }
 
-pub fn load_stack(slice: &mut CellSlice, context: &mut dyn CellContext) -> Result<Stack, Error> {
-    let depth = ok!(slice.load_uint(24)) as usize;
-    if depth == 0 {
-        return Ok(Stack::default());
-    }
-
-    let mut result = Stack {
-        items: Vec::with_capacity(std::cmp::min(depth, 128)),
-    };
-
-    let mut rest = ok!(slice.load_reference());
-    result.items.push(ok!(load_stack_value(slice, context)));
-
-    if depth > 1 {
-        for _ in 0..depth - 2 {
-            let slice = &mut ok!(context
-                .load_dyn_cell(rest, LoadMode::Full)
-                .and_then(CellSlice::new));
-            rest = ok!(slice.load_reference());
-            result.items.push(ok!(load_stack_value(slice, context)));
-            ok!(ensure_empty_slice(slice));
+impl<'a> Load<'a> for Stack {
+    fn load_from(slice: &mut CellSlice<'a>) -> Result<Self, Error> {
+        let depth = ok!(slice.load_uint(24)) as usize;
+        if depth == 0 {
+            return Ok(Stack::default());
         }
 
-        ok!(ensure_empty_slice(&ok!(context
-            .load_dyn_cell(rest, LoadMode::Full)
-            .and_then(CellSlice::new))));
+        let mut result = Stack {
+            items: Vec::with_capacity(std::cmp::min(depth, 128)),
+        };
 
-        result.items.reverse();
+        let mut rest = ok!(slice.load_reference());
+        result.items.push(ok!(load_stack_value(slice)));
+
+        if depth > 1 {
+            for _ in 0..depth - 2 {
+                let slice = &mut ok!(rest.as_slice());
+                rest = ok!(slice.load_reference());
+                result.items.push(ok!(load_stack_value(slice)));
+                ok!(ensure_empty_slice(slice));
+            }
+
+            ok!(ensure_empty_slice(&ok!(rest.as_slice())));
+
+            result.items.reverse();
+        }
+
+        Ok(result)
     }
-
-    Ok(result)
 }
 
+/// A value type of [`StackValue`].
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum StackValueType {
     Null,
@@ -393,6 +392,7 @@ pub enum StackValueType {
     Tuple,
 }
 
+/// Interface of a [`Stack`] item.
 pub trait StackValue: std::fmt::Debug {
     fn ty(&self) -> StackValueType;
 
@@ -586,6 +586,7 @@ impl dyn StackValue + '_ {
     }
 }
 
+/// Static-dispatch type extension for [`StackValue`].
 pub trait StaticStackValue {
     type DynRef<'a>;
 
@@ -598,9 +599,13 @@ fn invalid_type(actual: StackValueType, expected: StackValueType) -> Box<VmError
     Box::new(VmError::InvalidType { expected, actual })
 }
 
+/// [`Stack`] item.
 pub type RcStackValue = Rc<dyn StackValue>;
+
+/// Multiple [`RcStackValue`]s.
 pub type Tuple = Vec<RcStackValue>;
 
+/// Tuple utilities.
 pub trait TupleExt {
     fn try_get(&self, index: usize) -> VmResult<&RcStackValue>;
 
@@ -644,10 +649,7 @@ impl TupleExt for [RcStackValue] {
     }
 }
 
-pub(crate) fn load_stack_value(
-    slice: &mut CellSlice,
-    context: &mut dyn CellContext,
-) -> Result<RcStackValue, Error> {
+pub(crate) fn load_stack_value(slice: &mut CellSlice) -> Result<RcStackValue, Error> {
     let ty = ok!(slice.load_u8());
     Ok(match ty {
         0 => Stack::make_null(),
@@ -661,17 +663,15 @@ pub(crate) fn load_stack_value(
             }
         }
         3 => Rc::new(ok!(slice.load_reference_cloned())),
-        4 => Rc::new(ok!(load_slice_as_stack_value(slice, context))),
+        4 => Rc::new(ok!(load_slice_as_stack_value(slice))),
         5 => {
-            let cell = ok!(context
-                .load_dyn_cell(ok!(slice.load_reference()), LoadMode::Full)
-                .and_then(CellSlice::new));
-
+            let cell = ok!(slice.load_reference());
             let mut builder = CellBuilder::new();
-            ok!(builder.store_slice(cell));
+            builder.set_exotic(cell.is_exotic());
+            ok!(builder.store_slice(cell.as_slice_allow_pruned()));
             Rc::new(builder)
         }
-        6 => ok!(load_cont(slice, context)).into_stack_value(),
+        6 => ok!(load_cont(slice)).into_stack_value(),
         7 => {
             let len = ok!(slice.load_u16()) as usize;
             let mut tuple = Vec::with_capacity(std::cmp::min(len, 128));
@@ -679,27 +679,22 @@ pub(crate) fn load_stack_value(
             match tuple.len() {
                 0 => {}
                 1 => {
-                    tuple.push(ok!(load_stack_value_from_cell(
-                        ok!(slice.load_reference()),
-                        context
-                    )));
+                    tuple.push(ok!(load_stack_value_from_cell(ok!(slice.load_reference()))));
                 }
                 _ => {
                     let mut head = ok!(slice.load_reference());
                     let mut tail = ok!(slice.load_reference());
-                    tuple.push(ok!(load_stack_value_from_cell(tail, context)));
+                    tuple.push(ok!(load_stack_value_from_cell(tail)));
 
                     for _ in 0..len - 2 {
-                        let slice = &mut ok!(context
-                            .load_dyn_cell(head, LoadMode::Full)
-                            .and_then(CellSlice::new));
+                        let slice = &mut ok!(head.as_slice());
                         head = ok!(slice.load_reference());
                         tail = ok!(slice.load_reference());
                         ok!(ensure_empty_slice(slice));
-                        tuple.push(ok!(load_stack_value_from_cell(tail, context)));
+                        tuple.push(ok!(load_stack_value_from_cell(tail)));
                     }
 
-                    tuple.push(ok!(load_stack_value_from_cell(head, context)));
+                    tuple.push(ok!(load_stack_value_from_cell(head)));
                     tuple.reverse();
                 }
             }
@@ -710,14 +705,9 @@ pub(crate) fn load_stack_value(
     })
 }
 
-fn load_stack_value_from_cell(
-    cell: &DynCell,
-    context: &mut dyn CellContext,
-) -> Result<RcStackValue, Error> {
-    let slice = &mut ok!(context
-        .load_dyn_cell(cell, LoadMode::Full)
-        .and_then(CellSlice::new));
-    let res = ok!(load_stack_value(slice, context));
+fn load_stack_value_from_cell(cell: &DynCell) -> Result<RcStackValue, Error> {
+    let slice = &mut ok!(cell.as_slice());
+    let res = ok!(load_stack_value(slice));
     ok!(ensure_empty_slice(slice));
     Ok(res)
 }
@@ -740,6 +730,7 @@ impl StackValue for () {
     }
 }
 
+/// Invalid integer stack value.
 #[derive(Debug, Clone, Copy)]
 pub struct NaN;
 
@@ -1116,10 +1107,7 @@ pub(crate) fn store_slice_as_stack_value(
     builder.store_uint(value, 26)
 }
 
-pub(crate) fn load_slice_as_stack_value(
-    slice: &mut CellSlice,
-    context: &mut dyn CellContext,
-) -> Result<OwnedCellSlice, Error> {
+pub(crate) fn load_slice_as_stack_value(slice: &mut CellSlice) -> Result<OwnedCellSlice, Error> {
     let cell = ok!(slice.load_reference_cloned());
     let range = ok!(slice.load_uint(26));
 
@@ -1131,9 +1119,6 @@ pub(crate) fn load_slice_as_stack_value(
     if bits_start > bits_end || refs_start > refs_end || refs_end > 4 {
         return Err(Error::InvalidData);
     }
-
-    // TODO: is it ok to resolve library cell for stack?
-    let cell = ok!(context.load_cell(cell, LoadMode::Full));
 
     if bits_end > cell.bit_len() || refs_end > cell.reference_count() {
         return Err(Error::InvalidData);

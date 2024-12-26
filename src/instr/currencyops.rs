@@ -183,8 +183,8 @@ fn rewrite_addr_var(
     let mut cb = CellBuilder::new();
     cb.store_slice(pfx)?;
     cb.store_slice(cs)?;
-    let cell = cb.build_ext(gas.context())?;
-    let cell = gas.context().load_cell(cell, LoadMode::UseGas)?;
+    let cell = cb.build_ext(gas)?;
+    let cell = gas.load_cell(cell, LoadMode::UseGas)?;
     Ok(OwnedCellSlice::from(cell))
 }
 

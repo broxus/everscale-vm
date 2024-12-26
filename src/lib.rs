@@ -53,6 +53,7 @@ macro_rules! vm_bail {
     };
 }
 
+/// Stack builder.
 #[macro_export]
 macro_rules! stack {
     ($($item_ty:tt $($value:expr)?),*$(,)?) => {
@@ -101,6 +102,7 @@ macro_rules! assert_run_vm {
     };
 }
 
+#[cfg(test)]
 #[macro_export]
 macro_rules! assert_run_vm_with_c7 {
     (
@@ -138,14 +140,13 @@ pub use self::dispatch::{
     DispatchTable, FnExecInstrArg, FnExecInstrFull, FnExecInstrSimple, Opcode, Opcodes,
 };
 pub use self::error::{VmError, VmException, VmResult};
-pub use self::gas::{GasConsumer, GasConsumerContext, GasParams, LibraryProvider, NoLibraries};
-pub use self::instr::{codepage, codepage0, Module};
+pub use self::gas::{GasConsumer, GasParams, LibraryProvider, NoLibraries};
+pub use self::instr::{codepage, codepage0};
 pub use self::stack::{
-    load_stack, NaN, RcStackValue, Stack, StackValue, StackValueType, StaticStackValue, Tuple,
-    TupleExt,
+    NaN, RcStackValue, Stack, StackValue, StackValueType, StaticStackValue, Tuple, TupleExt,
 };
 pub use self::state::{
-    BehaviouModifiers, CommitedState, SaveCr, VmState, VmStateBuilder, VmVersion,
+    BehaviourModifiers, CommitedState, SaveCr, VmState, VmStateBuilder, VmVersion,
 };
 pub use self::util::OwnedCellSlice;
 

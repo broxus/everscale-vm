@@ -37,6 +37,7 @@ mod randops;
 mod stackops;
 mod tupleops;
 
+/// Codepage resolver.
 pub fn codepage(n: u16) -> Option<&'static DispatchTable> {
     match n {
         0 => Some(codepage0()),
@@ -44,6 +45,7 @@ pub fn codepage(n: u16) -> Option<&'static DispatchTable> {
     }
 }
 
+/// Default codepage.
 pub fn codepage0() -> &'static DispatchTable {
     fn build() -> Result<DispatchTable> {
         let mut cp = DispatchTable::builder(0);
@@ -70,6 +72,6 @@ pub fn codepage0() -> &'static DispatchTable {
     CP0.get_or_init(|| build().unwrap())
 }
 
-pub trait Module {
+trait Module {
     fn init(&self, opcodes: &mut Opcodes) -> Result<()>;
 }

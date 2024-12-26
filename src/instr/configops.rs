@@ -58,7 +58,7 @@ impl ConfigOps {
         store_int_to_builder(&idx, CONFIG_KEY_BITS, true, &mut builder)?;
         let key = builder.as_data_slice();
 
-        let value = dict::dict_get(dict.as_deref(), CONFIG_KEY_BITS, key, st.gas.context())?;
+        let value = dict::dict_get(dict.as_deref(), CONFIG_KEY_BITS, key, &mut st.gas)?;
         let param = match value {
             Some(mut value) => Some(value.load_reference_cloned()?),
             None => None,
@@ -107,14 +107,13 @@ impl ConfigOps {
             let key = builder.as_data_slice();
 
             let Some(mut value) =
-                dict::dict_get(Some(config_root), CONFIG_KEY_BITS, key, st.gas.context())?
+                dict::dict_get(Some(config_root), CONFIG_KEY_BITS, key, &mut st.gas)?
             else {
                 vm_bail!(Unknown("invalid global id config".to_owned()));
             };
 
             let param = value.load_reference()?;
             st.gas
-                .context()
                 .load_dyn_cell(param, LoadMode::Full)?
                 .parse::<u32>()?
         };

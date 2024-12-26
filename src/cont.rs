@@ -7,12 +7,13 @@ use tracing::instrument;
 
 use crate::error::VmResult;
 use crate::stack::{
-    load_slice_as_stack_value, load_stack, load_stack_value, store_slice_as_stack_value,
-    RcStackValue, Stack, StackValue, StackValueType, Tuple, TupleExt,
+    load_slice_as_stack_value, load_stack_value, store_slice_as_stack_value, RcStackValue, Stack,
+    StackValue, StackValueType, Tuple, TupleExt,
 };
 use crate::state::VmState;
 use crate::util::{ensure_empty_slice, rc_ptr_eq, OwnedCellSlice, Uint4};
 
+/// Total state of VM.
 #[derive(Debug, Default, Clone)]
 pub struct ControlData {
     pub nargs: Option<u16>,
@@ -52,24 +53,24 @@ impl Store for ControlData {
     }
 }
 
-fn load_control_data(
-    slice: &mut CellSlice,
-    context: &mut dyn CellContext,
-) -> Result<ControlData, Error> {
-    Ok(ControlData {
-        nargs: match ok!(slice.load_bit()) {
-            false => None,
-            true => Some(ok!(slice.load_uint(13)) as u16),
-        },
-        stack: match ok!(slice.load_bit()) {
-            false => None,
-            true => Some(ok!(load_stack(slice, context).map(Rc::new))),
-        },
-        save: ok!(load_control_regs(slice, context)),
-        cp: ok!(Load::load_from(slice)),
-    })
+impl Load<'_> for ControlData {
+    fn load_from(slice: &mut CellSlice<'_>) -> Result<Self, Error> {
+        Ok(ControlData {
+            nargs: match ok!(slice.load_bit()) {
+                false => None,
+                true => Some(ok!(slice.load_uint(13)) as u16),
+            },
+            stack: match ok!(slice.load_bit()) {
+                false => None,
+                true => Some(ok!(Rc::<Stack>::load_from(slice))),
+            },
+            save: ok!(ControlRegs::load_from(slice)),
+            cp: ok!(Load::load_from(slice)),
+        })
+    }
 }
 
+/// Control registers page.
 #[derive(Default, Debug, Clone)]
 pub struct ControlRegs {
     pub c: [Option<RcCont>; 4],
@@ -291,27 +292,28 @@ impl Store for ControlRegs {
     }
 }
 
-fn load_control_regs(
-    slice: &mut CellSlice,
-    context: &mut dyn CellContext,
-) -> Result<ControlRegs, Error> {
-    let dict = ok!(Dict::<Uint4, CellSlice<'_>>::load_from(slice));
+impl Load<'_> for ControlRegs {
+    fn load_from(slice: &mut CellSlice<'_>) -> Result<Self, Error> {
+        let dict = ok!(Dict::<Uint4, CellSlice<'_>>::load_from(slice));
 
-    let mut result = ControlRegs::default();
-    for entry in dict.iter() {
-        let (key, ref mut slice) = ok!(entry);
-        let value = ok!(load_stack_value(slice, context));
-        ok!(ensure_empty_slice(slice));
-        if result.set(key.0, value).is_err() {
-            return Err(Error::InvalidData);
+        let mut result = ControlRegs::default();
+        for entry in dict.iter() {
+            let (key, ref mut slice) = ok!(entry);
+            let value = ok!(load_stack_value(slice));
+            ok!(ensure_empty_slice(slice));
+            if result.set(key.0, value).is_err() {
+                return Err(Error::InvalidData);
+            }
         }
-    }
 
-    Ok(result)
+        Ok(result)
+    }
 }
 
+/// Dynamic dispatch alias for [`Cont`].
 pub type DynCont = dyn Cont;
 
+/// Continuation interface.
 pub trait Cont: Store + dyn_clone::DynClone + std::fmt::Debug {
     fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue>;
 
@@ -355,6 +357,7 @@ impl<T: Cont + 'static> StackValue for T {
     }
 }
 
+/// Continuation.
 pub type RcCont = Rc<DynCont>;
 
 impl DynCont {
@@ -367,17 +370,7 @@ impl DynCont {
     }
 }
 
-trait LoadWithContext<'a>: Sized {
-    fn load_with_context(
-        slice: &mut CellSlice<'_>,
-        context: &mut dyn CellContext,
-    ) -> Result<Self, Error>;
-}
-
-pub(crate) fn load_cont(
-    slice: &mut CellSlice,
-    context: &mut dyn CellContext,
-) -> Result<RcCont, Error> {
+pub(crate) fn load_cont(slice: &mut CellSlice) -> Result<RcCont, Error> {
     #[allow(clippy::unusual_byte_groupings)]
     const MASK: u64 = 0x1_007_01_1_1_0001_0001;
 
@@ -395,28 +388,29 @@ pub(crate) fn load_cont(
     // Match bit count with tag ranges
     Ok(match n {
         // 00xxxx -> 0 (16)
-        0 => Rc::new(ok!(OrdCont::load_with_context(slice, context))),
+        0 => Rc::new(ok!(OrdCont::load_from(slice))),
         // 01xxxx -> 1 (16)
-        1 => Rc::new(ok!(ArgContExt::load_with_context(slice, context))),
+        1 => Rc::new(ok!(ArgContExt::load_from(slice))),
         // 1000xx -> 2 (4)
-        2 => Rc::new(ok!(QuitCont::load_with_context(slice, context))),
+        2 => Rc::new(ok!(QuitCont::load_from(slice))),
         // 1001xx -> 3 (4)
-        3 => Rc::new(ok!(ExcQuitCont::load_with_context(slice, context))),
+        3 => Rc::new(ok!(ExcQuitCont::load_from(slice))),
         // 10100x -> 4 (2)
-        4 => Rc::new(ok!(RepeatCont::load_with_context(slice, context))),
+        4 => Rc::new(ok!(RepeatCont::load_from(slice))),
         // 110000 -> 5 (1)
-        5 => Rc::new(ok!(UntilCont::load_with_context(slice, context))),
+        5 => Rc::new(ok!(UntilCont::load_from(slice))),
         // 110001 -> 6 (1)
-        6 => Rc::new(ok!(AgainCont::load_with_context(slice, context))),
+        6 => Rc::new(ok!(AgainCont::load_from(slice))),
         // 11001x -> 7 (2)
-        7 => Rc::new(ok!(WhileCont::load_with_context(slice, context))),
+        7 => Rc::new(ok!(WhileCont::load_from(slice))),
         // 1111xx -> 8 (4)
-        8 => Rc::new(ok!(PushIntCont::load_with_context(slice, context))),
+        8 => Rc::new(ok!(PushIntCont::load_from(slice))),
         // all other
         _ => return Err(Error::InvalidTag),
     })
 }
 
+/// Continuation that represents the end of work of TVM.
 #[derive(Debug, Copy, Clone)]
 pub struct QuitCont {
     pub exit_code: i32,
@@ -451,11 +445,8 @@ impl Store for QuitCont {
     }
 }
 
-impl LoadWithContext<'_> for QuitCont {
-    fn load_with_context(
-        slice: &mut CellSlice<'_>,
-        _: &mut dyn CellContext,
-    ) -> Result<Self, Error> {
+impl Load<'_> for QuitCont {
+    fn load_from(slice: &mut CellSlice<'_>) -> Result<Self, Error> {
         if ok!(slice.load_small_uint(4)) != Self::TAG {
             return Err(Error::InvalidTag);
         }
@@ -466,6 +457,7 @@ impl LoadWithContext<'_> for QuitCont {
     }
 }
 
+/// Default exception handler continuation.
 #[derive(Debug, Copy, Clone)]
 pub struct ExcQuitCont;
 
@@ -501,12 +493,9 @@ impl Store for ExcQuitCont {
     }
 }
 
-impl LoadWithContext<'_> for ExcQuitCont {
+impl Load<'_> for ExcQuitCont {
     #[inline]
-    fn load_with_context(
-        slice: &mut CellSlice<'_>,
-        _: &mut dyn CellContext,
-    ) -> Result<Self, Error> {
+    fn load_from(slice: &mut CellSlice<'_>) -> Result<Self, Error> {
         if ok!(slice.load_small_uint(4)) == Self::TAG {
             Ok(Self)
         } else {
@@ -515,6 +504,7 @@ impl LoadWithContext<'_> for ExcQuitCont {
     }
 }
 
+/// Continuation that pushes a single integer to the stack.
 #[derive(Debug, Clone)]
 pub struct PushIntCont {
     pub value: i32,
@@ -564,22 +554,21 @@ impl Store for PushIntCont {
     }
 }
 
-impl LoadWithContext<'_> for PushIntCont {
-    fn load_with_context(
-        slice: &mut CellSlice<'_>,
-        context: &mut dyn CellContext,
-    ) -> Result<Self, Error> {
+impl Load<'_> for PushIntCont {
+    fn load_from(slice: &mut CellSlice<'_>) -> Result<Self, Error> {
         if ok!(slice.load_small_uint(4)) != Self::TAG {
             return Err(Error::InvalidTag);
         }
 
         Ok(Self {
             value: ok!(slice.load_u32()) as i32,
-            next: ok!(load_cont(slice, context)),
+            next: ok!(load_cont(slice)),
         })
     }
 }
 
+/// Continuation that takes an integer `n` and a continuation `c`,
+/// and executes `c` `n` times.
 #[derive(Debug, Clone)]
 pub struct RepeatCont {
     pub count: u64,
@@ -651,23 +640,24 @@ impl Store for RepeatCont {
     }
 }
 
-impl LoadWithContext<'_> for RepeatCont {
-    fn load_with_context(
-        slice: &mut CellSlice<'_>,
-        context: &mut dyn CellContext,
-    ) -> Result<Self, Error> {
+impl Load<'_> for RepeatCont {
+    fn load_from(slice: &mut CellSlice<'_>) -> Result<Self, Error> {
         if ok!(slice.load_small_uint(4)) != Self::TAG {
             return Err(Error::InvalidTag);
         }
 
         Ok(Self {
             count: ok!(slice.load_u64()),
-            body: ok!(load_cont(slice, context)),
-            after: ok!(load_cont(slice, context)),
+            body: ok!(load_cont(slice)),
+            after: ok!(load_cont(slice)),
         })
     }
 }
 
+/// Continuation that executes its body infinitely many times.
+///
+/// A `RET` only begins a new iteration of the infinite loop, which can
+/// be exited only by an exception, or a `RETALT` (or an explicit `JMPX`).
 #[derive(Debug, Clone)]
 pub struct AgainCont {
     pub body: Rc<DynCont>,
@@ -709,21 +699,19 @@ impl Store for AgainCont {
     }
 }
 
-impl LoadWithContext<'_> for AgainCont {
-    fn load_with_context(
-        slice: &mut CellSlice<'_>,
-        context: &mut dyn CellContext,
-    ) -> Result<Self, Error> {
+impl Load<'_> for AgainCont {
+    fn load_from(slice: &mut CellSlice<'_>) -> Result<Self, Error> {
         if ok!(slice.load_small_uint(6)) != Self::TAG {
             return Err(Error::InvalidTag);
         }
 
         Ok(Self {
-            body: ok!(load_cont(slice, context)),
+            body: ok!(load_cont(slice)),
         })
     }
 }
 
+/// Continuation of a loop with postcondition.
 #[derive(Debug, Clone)]
 pub struct UntilCont {
     pub body: Rc<DynCont>,
@@ -773,22 +761,20 @@ impl Store for UntilCont {
     }
 }
 
-impl LoadWithContext<'_> for UntilCont {
-    fn load_with_context(
-        slice: &mut CellSlice<'_>,
-        context: &mut dyn CellContext,
-    ) -> Result<Self, Error> {
+impl Load<'_> for UntilCont {
+    fn load_from(slice: &mut CellSlice<'_>) -> Result<Self, Error> {
         if ok!(slice.load_small_uint(6)) != Self::TAG {
             return Err(Error::InvalidTag);
         }
 
         Ok(Self {
-            body: ok!(load_cont(slice, context)),
-            after: ok!(load_cont(slice, context)),
+            body: ok!(load_cont(slice)),
+            after: ok!(load_cont(slice)),
         })
     }
 }
 
+/// Continuation of a loop with precondition.
 #[derive(Debug, Clone)]
 pub struct WhileCont {
     pub check_cond: bool,
@@ -865,24 +851,22 @@ impl Store for WhileCont {
     }
 }
 
-impl LoadWithContext<'_> for WhileCont {
-    fn load_with_context(
-        slice: &mut CellSlice<'_>,
-        context: &mut dyn CellContext,
-    ) -> Result<Self, Error> {
+impl Load<'_> for WhileCont {
+    fn load_from(slice: &mut CellSlice<'_>) -> Result<Self, Error> {
         if ok!(slice.load_small_uint(5)) != Self::TAG {
             return Err(Error::InvalidTag);
         }
 
         Ok(Self {
             check_cond: ok!(slice.load_bit()),
-            cond: ok!(load_cont(slice, context)),
-            body: ok!(load_cont(slice, context)),
-            after: ok!(load_cont(slice, context)),
+            cond: ok!(load_cont(slice)),
+            body: ok!(load_cont(slice)),
+            after: ok!(load_cont(slice)),
         })
     }
 }
 
+/// Continuation with control data (arguments).
 #[derive(Debug, Clone)]
 pub struct ArgContExt {
     pub data: ControlData,
@@ -939,22 +923,20 @@ impl Store for ArgContExt {
     }
 }
 
-impl LoadWithContext<'_> for ArgContExt {
-    fn load_with_context(
-        slice: &mut CellSlice<'_>,
-        context: &mut dyn CellContext,
-    ) -> Result<Self, Error> {
+impl Load<'_> for ArgContExt {
+    fn load_from(slice: &mut CellSlice<'_>) -> Result<Self, Error> {
         if ok!(slice.load_small_uint(2)) != Self::TAG {
             return Err(Error::InvalidTag);
         }
 
         Ok(Self {
-            data: ok!(load_control_data(slice, context)),
-            ext: ok!(load_cont(slice, context)),
+            data: ok!(ControlData::load_from(slice)),
+            ext: ok!(load_cont(slice)),
         })
     }
 }
 
+/// Ordinary continuation.
 #[derive(Debug, Clone)]
 pub struct OrdCont {
     pub data: ControlData,
@@ -1018,18 +1000,15 @@ impl Store for OrdCont {
     }
 }
 
-impl LoadWithContext<'_> for OrdCont {
-    fn load_with_context(
-        slice: &mut CellSlice<'_>,
-        context: &mut dyn CellContext,
-    ) -> Result<Self, Error> {
+impl Load<'_> for OrdCont {
+    fn load_from(slice: &mut CellSlice<'_>) -> Result<Self, Error> {
         if ok!(slice.load_small_uint(2)) != Self::TAG {
             return Err(Error::InvalidTag);
         }
 
         Ok(Self {
-            data: ok!(load_control_data(slice, context)),
-            code: ok!(load_slice_as_stack_value(slice, context)),
+            data: ok!(ControlData::load_from(slice)),
+            code: ok!(load_slice_as_stack_value(slice)),
         })
     }
 }

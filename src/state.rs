@@ -20,6 +20,7 @@ use crate::instr::{codepage, codepage0};
 use crate::stack::{RcStackValue, Stack};
 use crate::util::OwnedCellSlice;
 
+/// Execution state builder.
 #[derive(Default)]
 pub struct VmStateBuilder {
     pub code: OwnedCellSlice,
@@ -31,7 +32,7 @@ pub struct VmStateBuilder {
     pub same_c3: bool,
     pub version: Option<VmVersion>,
     pub without_push0: bool,
-    pub modifiers: BehaviouModifiers,
+    pub modifiers: BehaviourModifiers,
     pub debug: Option<Box<dyn std::fmt::Write>>,
 }
 
@@ -133,7 +134,7 @@ impl VmStateBuilder {
         self
     }
 
-    pub fn with_modifiers(mut self, modifiers: BehaviouModifiers) -> Self {
+    pub fn with_modifiers(mut self, modifiers: BehaviourModifiers) -> Self {
         self.modifiers = modifiers;
         self
     }
@@ -144,6 +145,7 @@ impl VmStateBuilder {
     }
 }
 
+/// Full execution state.
 pub struct VmState {
     pub code: OwnedCellSlice,
     pub stack: Rc<Stack>,
@@ -155,7 +157,7 @@ pub struct VmState {
     pub gas: GasConsumer,
     pub cp: &'static DispatchTable,
     pub debug: Option<Box<dyn std::fmt::Write>>,
-    pub modifiers: BehaviouModifiers,
+    pub modifiers: BehaviourModifiers,
     pub version: VmVersion,
 }
 
@@ -208,11 +210,7 @@ impl VmState {
             let next_cell = self.code.apply()?.get_reference_cloned(0)?;
 
             self.gas.try_consume_implicit_jmpref_gas()?;
-            let code = self
-                .gas
-                .context()
-                .load_cell(next_cell, LoadMode::Full)?
-                .into();
+            let code = self.gas.load_cell(next_cell, LoadMode::Full)?.into();
 
             let cont = Rc::new(OrdCont::simple(code, self.cp.id()));
             self.jump(cont)
@@ -296,7 +294,7 @@ impl VmState {
     }
 
     pub fn ref_to_cont(&mut self, code: Cell) -> VmResult<Rc<OrdCont>> {
-        let code = self.gas.context().load_cell(code, LoadMode::Full)?;
+        let code = self.gas.load_cell(code, LoadMode::Full)?;
         Ok(Rc::new(OrdCont::simple(code.into(), self.cp.id())))
     }
 
@@ -758,12 +756,14 @@ impl VmState {
     }
 }
 
+/// Falgs to control VM behaviour.
 #[derive(Default, Debug, Clone, Copy)]
-pub struct BehaviouModifiers {
+pub struct BehaviourModifiers {
     pub stop_on_accept: bool,
     pub chksig_always_succeed: bool,
 }
 
+/// Version of a VM context.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum VmVersion {
     Everscale(u32),
@@ -781,12 +781,16 @@ impl VmVersion {
     }
 }
 
+/// Execution effects.
 pub struct CommitedState {
+    /// Contract data.
     pub c4: Cell,
+    /// Result action list.
     pub c5: Cell,
 }
 
 bitflags! {
+    /// A mask to specify which control registers are saved.
     pub struct SaveCr: u8 {
         const NONE = 0;
 

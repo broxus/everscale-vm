@@ -134,10 +134,10 @@ impl Dictops {
         };
 
         let value = if s.is_ref() {
-            let value = dict::dict_get(dict.as_deref(), n, key, st.gas.context())?;
+            let value = dict::dict_get(dict.as_deref(), n, key, &mut st.gas)?;
             ok!(value.map(to_value_ref).transpose())
         } else {
-            dict::dict_get_owned(dict.as_deref(), n, key, st.gas.context())?
+            dict::dict_get_owned(dict.as_deref(), n, key, &mut st.gas)?
                 .map(|parts| Rc::new(OwnedCellSlice::from(parts)) as RcStackValue)
         };
 
@@ -211,7 +211,7 @@ impl Dictops {
         };
 
         let mut dict = dict.as_deref().cloned();
-        let result = dict::dict_insert(&mut dict, &mut key, n, value, mode, st.gas.context());
+        let result = dict::dict_insert(&mut dict, &mut key, n, value, mode, &mut st.gas);
 
         ok!(stack.push_opt(dict));
 
@@ -285,8 +285,7 @@ impl Dictops {
         };
 
         let mut dict = dict.as_deref().cloned();
-        let (_, prev) =
-            dict::dict_insert_owned(&mut dict, &mut key, n, value, mode, st.gas.context())?;
+        let (_, prev) = dict::dict_insert_owned(&mut dict, &mut key, n, value, mode, &mut st.gas)?;
         let prev = ok!(prev.map(|p| extract_value_ref(p, s.is_ref())).transpose());
 
         ok!(stack.push_opt(dict));
@@ -329,7 +328,7 @@ impl Dictops {
         };
 
         let mut dict = dict.as_deref().cloned();
-        let result = dict::dict_remove_owned(&mut dict, &mut key, n, true, st.gas.context())?;
+        let result = dict::dict_remove_owned(&mut dict, &mut key, n, true, &mut st.gas)?;
         ok!(stack.push_opt(dict));
         ok!(stack.push_bool(result.is_some()));
         Ok(0)
@@ -362,7 +361,7 @@ impl Dictops {
         };
 
         let mut dict = dict.as_deref().cloned();
-        let prev = dict::dict_remove_owned(&mut dict, &mut key, n, false, st.gas.context())?;
+        let prev = dict::dict_remove_owned(&mut dict, &mut key, n, false, &mut st.gas)?;
         let prev = ok!(prev.map(|p| extract_value_ref(p, s.is_ref())).transpose());
 
         ok!(stack.push_opt(dict));
@@ -403,7 +402,7 @@ impl Dictops {
             cs.apply()?.load_prefix(n, 0)?
         };
 
-        let value = dict::dict_get(dict.as_deref(), n, key, st.gas.context())?;
+        let value = dict::dict_get(dict.as_deref(), n, key, &mut st.gas)?;
         let value = ok!(value.map(to_value_ref).transpose());
         ok!(stack.push_opt_raw(value));
         Ok(0)
@@ -429,7 +428,7 @@ impl Dictops {
 
         let value = ok!(stack.pop_cell_opt());
 
-        let ctx = st.gas.context();
+        let ctx = &mut st.gas;
         let mut dict = dict.as_deref().cloned();
         let prev = match value {
             Some(cell) => dict::dict_insert_owned(&mut dict, &mut key, n, &cell, SetMode::Set, ctx)
@@ -461,7 +460,7 @@ impl Dictops {
             DictBound::Max
         };
 
-        let ctx = st.gas.context();
+        let ctx = &mut st.gas;
         if s.is_int() {
             let int = ok!(stack.pop_int());
 
@@ -530,7 +529,7 @@ impl Dictops {
         };
 
         let signed = s.is_signed();
-        let ctx = st.gas.context();
+        let ctx = &mut st.gas;
         let key = if s.is_rem() {
             let mut dict = dict.as_deref().cloned();
             let prev = dict::dict_remove_bound_owned(&mut dict, n, bound, signed, ctx)?;
@@ -588,8 +587,7 @@ impl Dictops {
             store_int_to_builder_unchecked(&idx, n, signed, &mut cb)?;
             let key = cb.as_data_slice();
 
-            let Some(value) = dict::dict_get_owned(dict.as_deref(), n, key, st.gas.context())?
-            else {
+            let Some(value) = dict::dict_get_owned(dict.as_deref(), n, key, &mut st.gas)? else {
                 break 'scope;
             };
 
@@ -660,7 +658,7 @@ impl Dictops {
     //     };
 
     //     let subdict =
-    //         dict::dict_get_subdict(dict_deref.as_ref(), 32, &mut prefix, st.gas.context())?;
+    //         dict::dict_get_subdict(dict_deref.as_ref(), 32, &mut prefix, &mut st.gas)?;
 
     //     ok!(stack.push_opt(subdict));
 

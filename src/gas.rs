@@ -10,6 +10,7 @@ use everscale_types::prelude::*;
 
 use crate::stack::Stack;
 
+/// Initialization params for [`GasConsumer`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GasParams {
     /// Maximum possible value of the `limit`.
@@ -45,6 +46,7 @@ impl Default for GasParams {
     }
 }
 
+/// Library cells resolver.
 pub trait LibraryProvider {
     fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error>;
 }
@@ -73,6 +75,7 @@ impl<T: LibraryProvider> LibraryProvider for Arc<T> {
     }
 }
 
+/// Empty libraries provider.
 #[derive(Default, Debug, Clone, Copy)]
 pub struct NoLibraries;
 
@@ -101,6 +104,7 @@ impl<S: BuildHasher> LibraryProvider for std::collections::HashMap<HashBytes, Si
     }
 }
 
+/// Gas tracking context.
 pub struct GasConsumer {
     /// Maximum possible value of the `limit`.
     pub gas_max: u64,
@@ -227,44 +231,28 @@ impl GasConsumer {
         self.gas_base = base;
     }
 
-    #[inline]
-    pub fn context(&mut self) -> &mut GasConsumerContext {
-        GasConsumerContext::wrap(self)
-    }
-}
-
-#[repr(transparent)]
-pub struct GasConsumerContext(GasConsumer);
-
-impl GasConsumerContext {
-    #[inline]
-    fn wrap(consumer: &mut GasConsumer) -> &mut Self {
-        // SAFETY: `GasConsumerContext` has the same memory layout as `GasConsumer`.
-        unsafe { &mut *(consumer as *mut GasConsumer).cast() }
-    }
-
     // TODO: Update gas
     pub fn load_library(&mut self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
-        self.0.libraries.find(library_hash)
+        self.libraries.find(library_hash)
     }
 
     fn consume_load_cell(&mut self, cell: &DynCell, mode: LoadMode) -> Result<(), Error> {
         if mode.use_gas() {
-            let gas = if self.0.loaded_cells.insert(*cell.repr_hash()) {
+            let gas = if self.loaded_cells.insert(*cell.repr_hash()) {
                 GasConsumer::NEW_CELL_GAS
             } else {
                 GasConsumer::OLD_CELL_GAS
             };
-            ok!(self.0.try_consume(gas));
+            ok!(self.try_consume(gas));
         }
         Ok(())
     }
 }
 
-impl CellContext for GasConsumerContext {
+impl CellContext for GasConsumer {
     fn finalize_cell(&mut self, cell: CellParts<'_>) -> Result<Cell, Error> {
-        ok!(self.0.try_consume(GasConsumer::BUILD_CELL_GAS));
-        self.0.empty_context.finalize_cell(cell)
+        ok!(self.try_consume(GasConsumer::BUILD_CELL_GAS));
+        self.empty_context.finalize_cell(cell)
     }
 
     fn load_cell(&mut self, cell: Cell, mode: LoadMode) -> Result<Cell, Error> {

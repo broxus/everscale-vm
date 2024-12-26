@@ -225,7 +225,7 @@ impl Cellops {
     fn exec_builder_to_cell(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let builder = stack.pop_builder()?;
-        let cell = Rc::unwrap_or_clone(builder).build_ext(st.gas.context())?;
+        let cell = Rc::unwrap_or_clone(builder).build_ext(&mut st.gas)?;
         ok!(stack.push(cell));
         Ok(0)
     }
@@ -266,7 +266,7 @@ impl Cellops {
             return finish_store_overflow(stack, builder, child_builder, quiet);
         }
 
-        let cell = Rc::unwrap_or_clone(child_builder).build_ext(st.gas.context())?;
+        let cell = Rc::unwrap_or_clone(child_builder).build_ext(&mut st.gas)?;
         Rc::make_mut(&mut builder).store_reference(cell)?;
 
         finish_store_ok(stack, builder, quiet)
@@ -318,7 +318,7 @@ impl Cellops {
             return finish_store_overflow(stack, child_builder, builder, quiet);
         }
 
-        let cell = Rc::unwrap_or_clone(child_builder).build_ext(st.gas.context())?;
+        let cell = Rc::unwrap_or_clone(child_builder).build_ext(&mut st.gas)?;
         Rc::make_mut(&mut builder).store_reference(cell)?;
 
         finish_store_ok(stack, builder, quiet)
@@ -473,7 +473,7 @@ impl Cellops {
         builder.set_exotic(special);
 
         // TODO: Test if `special` build fails with ordinary cell type in first 8 bits
-        let cell = builder.build_ext(st.gas.context())?;
+        let cell = builder.build_ext(&mut st.gas)?;
 
         ok!(stack.push(cell));
         Ok(0)
@@ -661,7 +661,6 @@ impl Cellops {
 
         let cell = st
             .gas
-            .context()
             .load_cell(Rc::unwrap_or_clone(cell), LoadMode::UseGas)?;
         let cs = OwnedCellSlice::new(cell);
 
@@ -711,7 +710,7 @@ impl Cellops {
 
         let mut slice = cs.apply_allow_special();
         let cell = slice.load_reference_cloned()?;
-        let cell = st.gas.context().load_cell(cell, LoadMode::UseGas)?;
+        let cell = st.gas.load_cell(cell, LoadMode::UseGas)?;
         ok!(stack.push(OwnedCellSlice::new(cell)));
 
         let range = slice.range();
@@ -999,7 +998,6 @@ impl Cellops {
 
         let cell = st
             .gas
-            .context()
             .load_cell(Rc::unwrap_or_clone(cell), LoadMode::UseGas)?;
         let cs = OwnedCellSlice::new(cell);
         ok!(stack.push(cs));
@@ -1013,7 +1011,7 @@ impl Cellops {
         let stack = Rc::make_mut(&mut st.stack);
         let cell: Rc<Cell> = ok!(stack.pop_cell());
         let cell = Rc::unwrap_or_clone(cell);
-        let loaded_cell_res = st.gas.context().load_cell(cell, LoadMode::UseGas);
+        let loaded_cell_res = st.gas.load_cell(cell, LoadMode::UseGas);
         let mut cell: Cell = match loaded_cell_res {
             Err(_) if quiet => {
                 ok!(stack.push_bool(false));
@@ -1039,7 +1037,7 @@ impl Cellops {
 
             let hash_bytes = HashBytes::from_slice(&cell.data()[1..]);
 
-            match st.gas.context().load_library(&hash_bytes)? {
+            match st.gas.load_library(&hash_bytes)? {
                 Some(library) => cell = library,
                 None if quiet => {
                     ok!(stack.push_bool(false));
@@ -1299,11 +1297,11 @@ fn exec_push_ref_common(
     ok!(match mode {
         PushRefMode::Cell => stack.push(cell),
         PushRefMode::Slice => {
-            let cell = st.gas.context().load_cell(cell, LoadMode::UseGas)?;
+            let cell = st.gas.load_cell(cell, LoadMode::UseGas)?;
             stack.push(OwnedCellSlice::new(cell))
         }
         PushRefMode::Cont => {
-            let code = st.gas.context().load_cell(cell, LoadMode::Full)?;
+            let code = st.gas.load_cell(cell, LoadMode::Full)?;
             let cont = Rc::new(OrdCont::simple(code.into(), st.cp.id()));
             stack.push_raw(cont)
         }

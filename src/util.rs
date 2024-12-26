@@ -10,6 +10,7 @@ use everscale_types::prelude::*;
 use num_bigint::{BigInt, Sign};
 use num_traits::{One, ToPrimitive, Zero};
 
+/// A wrapper around [`CellSliceParts`] extending its lifetime.
 #[derive(Default, Debug, Clone)]
 #[repr(transparent)]
 pub struct OwnedCellSlice(CellSliceParts);

@@ -6,12 +6,16 @@ use everscale_types::prelude::*;
 use crate::error::VmResult;
 use crate::state::VmState;
 
+/// Opcode description.
 pub trait Opcode: Send + Sync {
+    /// Opcode range aligned to 24 bits.
     fn range(&self) -> (u32, u32);
 
+    /// Execute this opcode.
     fn dispatch(&self, st: &mut VmState, opcode: u32, bits: u16) -> VmResult<i32>;
 }
 
+/// Code page.
 pub struct DispatchTable {
     id: u16,
     opcodes: Vec<(u32, Box<dyn Opcode>)>,
@@ -59,6 +63,7 @@ impl DispatchTable {
     }
 }
 
+/// A builder for [`DispatchTable`].
 pub struct Opcodes {
     id: u16,
     opcodes: BTreeMap<u32, Box<dyn Opcode>>,
@@ -289,10 +294,13 @@ impl Opcode for ExtOpcode {
     }
 }
 
+/// Fn pointer for a simple opcode.
 pub type FnExecInstrSimple = fn(&mut VmState) -> VmResult<i32>;
 
+/// Fn pointer for an opcode with a single argument.
 pub type FnExecInstrArg = fn(&mut VmState, u32) -> VmResult<i32>;
 
+/// Fn pointer for an extended opcode.
 pub type FnExecInstrFull = fn(&mut VmState, u32, u16) -> VmResult<i32>;
 
 const MAX_OPCODE_BITS: u16 = 24;

@@ -2,8 +2,10 @@ use everscale_types::error::Error;
 
 use crate::stack::StackValueType;
 
+/// Result of VM-related stuff.
 pub type VmResult<T> = Result<T, Box<VmError>>;
 
+/// VM execution error.
 #[derive(Debug, thiserror::Error)]
 pub enum VmError {
     #[error("stack underflow at depth {0}")]
@@ -76,6 +78,7 @@ impl From<Error> for Box<VmError> {
     }
 }
 
+/// A code for an execution error.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 #[repr(u8)]
 pub enum VmException {

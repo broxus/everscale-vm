@@ -120,7 +120,6 @@ impl MessageOps {
         let raw_msg_cell = ok!(stack.pop_cell());
         let msg_cell = st
             .gas
-            .context()
             .load_cell(Cell::clone(&raw_msg_cell), LoadMode::Full)?;
         let msg = msg_cell.parse::<RelaxedMessage<'_>>()?;
 
@@ -166,14 +165,13 @@ impl MessageOps {
                 b.store_u32(if is_masterchain { 24 } else { 25 }).unwrap();
                 let key = b.as_data_slice();
 
-                let Some(mut value) = dict::dict_get(Some(config_root), 32, key, st.gas.context())?
+                let Some(mut value) = dict::dict_get(Some(config_root), 32, key, &mut st.gas)?
                 else {
                     vm_bail!(Unknown("invalid prices config".to_owned()));
                 };
 
                 let param = value.load_reference()?;
                 st.gas
-                    .context()
                     .load_dyn_cell(param, LoadMode::Full)?
                     .parse::<MsgForwardPrices>()?
             }
@@ -437,7 +435,7 @@ fn add_action(regs: &mut ControlRegs, gas: &mut GasConsumer, action: OutAction) 
         vm_bail!(ControlRegisterOutOfRange(ACTIONS_REG_IDX))
     };
 
-    let actions_head = CellBuilder::build_from_ext((c5, action), gas.context())?;
+    let actions_head = CellBuilder::build_from_ext((c5, action), gas)?;
 
     vm_log_trace!("installing an output action");
     regs.set_d(ACTIONS_REG_IDX, actions_head);
