@@ -45,7 +45,7 @@ impl Arithops {
         let int = load_int_from_slice(&mut cs, value_len, true)?;
         st.code.set_range(cs.range());
 
-        vm_log!("execute PUSHINT {int}");
+        vm_log_op!("PUSHINT {int}");
 
         ok!(Rc::make_mut(&mut st.stack).push_int(int));
         Ok(0)
@@ -387,6 +387,7 @@ impl Arithops {
     #[op(code = "a98m", fmt = ("MUL{}", DumpDivmod(m)), args(quiet = false))]
     #[op(code = "b7a98m", fmt = ("QMUL{}", DumpDivmod(m)), args(quiet = true))]
     fn exec_muldivmod(st: &mut VmState, m: u32, quiet: bool) -> VmResult<i32> {
+        #[allow(clippy::enum_variant_names)]
         enum Operation {
             MulDiv,
             MulMod,
@@ -802,7 +803,7 @@ impl RoundMode {
 
 fn int_div(x: &BigInt, y: &BigInt, round_mode: RoundMode) -> BigInt {
     match round_mode {
-        RoundMode::Floor => x.div_floor(&y),
+        RoundMode::Floor => x.div_floor(y),
         RoundMode::Nearest => {
             let (mut q, r) = x.div_rem(y);
             if nearest_rounding_required(&r, x, y) {

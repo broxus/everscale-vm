@@ -121,7 +121,7 @@ impl<'a> StorageStatExt<'a> {
                     continue;
                 }
 
-                if self.stats.cell_count >= self.limit as u64 {
+                if self.stats.cell_count >= self.limit {
                     return false;
                 }
 

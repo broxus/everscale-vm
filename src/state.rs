@@ -42,7 +42,7 @@ impl VmStateBuilder {
 
     pub fn build(mut self) -> Result<VmState> {
         if self.same_c3 && !self.without_push0 {
-            vm_log!("implicit PUSH 0 at start");
+            vm_log_trace!("implicit PUSH 0 at start");
             self.stack.push(Rc::new(BigInt::zero()));
         }
 
@@ -203,7 +203,7 @@ impl VmState {
         if !self.code.range().is_data_empty() {
             self.cp.dispatch(self)
         } else if !self.code.range().is_refs_empty() {
-            vm_log!("implicit JMPREF");
+            vm_log_op!("implicit JMPREF");
 
             let next_cell = self.code.apply()?.get_reference_cloned(0)?;
 
@@ -217,7 +217,7 @@ impl VmState {
             let cont = Rc::new(OrdCont::simple(code, self.cp.id()));
             self.jump(cont)
         } else {
-            vm_log!("implicit RET");
+            vm_log_op!("implicit RET");
 
             self.gas.try_consume_implicit_ret_gas()?;
             self.ret()
@@ -235,7 +235,7 @@ impl VmState {
                 }
                 Err(e) => {
                     let exception = e.as_exception();
-                    vm_log!(e = ?exception, "handling exception: {e:?}");
+                    vm_log_trace!(e = ?exception, "handling exception: {e:?}");
 
                     self.steps += 1;
                     match self.throw_exception(exception as i32) {
@@ -245,7 +245,7 @@ impl VmState {
                             self.throw_out_of_gas()
                         }
                         Err(e) => {
-                            vm_log!(e = ?exception, "double exception: {e:?}");
+                            vm_log_trace!(e = ?exception, "double exception: {e:?}");
                             return exception.as_exit_code();
                         }
                     }
@@ -255,7 +255,7 @@ impl VmState {
 
         // Try commit on ~(0) and ~(-1) exit codes
         if res | 1 == -1 && !self.try_commit() {
-            vm_log!("automatic commit failed");
+            vm_log_trace!("automatic commit failed");
             self.stack = Rc::new(Stack {
                 items: vec![Rc::new(BigInt::default())],
             });
@@ -421,7 +421,7 @@ impl VmState {
 
     pub fn throw_out_of_gas(&mut self) -> i32 {
         let consumed = self.gas.gas_consumed();
-        vm_log!(consumed, limit = self.gas.gas_limit, "out of gas");
+        vm_log_trace!(consumed, limit = self.gas.gas_limit, "out of gas");
         self.stack = Rc::new(Stack {
             items: vec![Rc::new(BigInt::from(consumed))],
         });

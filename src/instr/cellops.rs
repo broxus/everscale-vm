@@ -81,7 +81,7 @@ impl Cellops {
         code_range.skip_first(data_bits, refs).ok();
 
         let code = OwnedCellSlice::from((st.code.cell().clone(), slice_range));
-        vm_log!("execute PUSHCONT {}", code);
+        vm_log_op!("PUSHCONT {}", code);
 
         let cont = Rc::new(OrdCont::simple(code, st.cp.id()));
         ok!(Rc::make_mut(&mut st.stack).push_raw(cont));
@@ -101,7 +101,7 @@ impl Cellops {
         code_range.skip_first(data_bits, 0).ok();
 
         let code = OwnedCellSlice::from((st.code.cell().clone(), slice_range));
-        vm_log!("execute PUSHCONT {}", code);
+        vm_log_op!("PUSHCONT {}", code);
 
         let cont = Rc::new(OrdCont::simple(code, st.cp.id()));
         ok!(Rc::make_mut(&mut st.stack).push_raw(cont));
@@ -396,7 +396,7 @@ impl Cellops {
         vm_ensure!(code_range.has_remaining(bits, refs), InvalidOpcode);
         code_range.skip_first(bits, 0).ok();
 
-        vm_log!("execute STREF{refs}CONST");
+        vm_log_op!("STREF{refs}CONST");
 
         let stack = Rc::make_mut(&mut st.stack);
         let mut builder = ok!(stack.pop_builder());
@@ -635,8 +635,8 @@ impl Cellops {
         let mut slice = slice_range.apply(st.code.cell())?;
         remove_trailing(&mut slice)?;
 
-        vm_log!(
-            "execute STSLICECONST {}",
+        vm_log_op!(
+            "STSLICECONST {}",
             OwnedCellSlice::from((st.code.cell().clone(), slice_range))
         );
 
@@ -893,8 +893,8 @@ impl Cellops {
         let mut slice = slice_range.apply(st.code.cell())?;
         remove_trailing(&mut slice)?;
 
-        vm_log!(
-            "execute SDBEGINS{} {}",
+        vm_log_op!(
+            "SDBEGINS{} {}",
             if quiet { "Q" } else { "" },
             OwnedCellSlice::from((st.code.cell().clone(), slice_range))
         );
@@ -1293,7 +1293,7 @@ fn exec_push_ref_common(
     let ok = st.code.range_mut().skip_first(0, 1).is_ok();
     debug_assert!(ok);
 
-    vm_log!("execute {name} ({})", cell.repr_hash());
+    vm_log_op!("{name} ({})", cell.repr_hash());
 
     let stack = Rc::make_mut(&mut st.stack);
     ok!(match mode {
@@ -1332,7 +1332,7 @@ fn exec_push_slice_common(st: &mut VmState, bits: u16, data_bits: u16, refs: u8)
     }
 
     let slice: RcStackValue = Rc::new(OwnedCellSlice::from((st.code.cell().clone(), slice_range)));
-    vm_log!("execute PUSHSLICE {}", slice.display_list());
+    vm_log_op!("PUSHSLICE {}", slice.display_list());
 
     ok!(Rc::make_mut(&mut st.stack).push_raw(slice));
     Ok(0)

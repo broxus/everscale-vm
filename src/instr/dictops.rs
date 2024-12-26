@@ -623,8 +623,8 @@ impl Dictops {
         let n = code.load_uint(10)? as u16;
         st.code.set_range(code.range());
 
-        vm_log!(
-            "execute DICTPUSHCONST {n} ({})",
+        vm_log_op!(
+            "DICTPUSHCONST {n} ({})",
             OwnedCellSlice::from((st.code.cell().clone(), slice_range))
         );
         ok!(stack.push(dict));

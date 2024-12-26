@@ -370,8 +370,8 @@ impl Contops {
             let ok = code.range_mut().skip_first(0, 1).is_ok();
             debug_assert!(ok);
 
-            vm_log!(
-                "execute IFREFELSEREF ({}) ({})",
+            vm_log_op!(
+                "IFREFELSEREF ({}) ({})",
                 cell1.repr_hash(),
                 cell0.repr_hash()
             );
@@ -417,8 +417,8 @@ impl Contops {
 
         let negate = (args & 0x20) != 0;
         let bit = args & 0x1f;
-        vm_log!(
-            "execute {}BITJMPREF {bit} ({})",
+        vm_log_op!(
+            "{}BITJMPREF {bit} ({})",
             if negate { "N" } else { "" },
             cell.repr_hash()
         );
@@ -1033,7 +1033,7 @@ fn exec_ref_prefix(st: &mut VmState, bits: u16, name: &str) -> VmResult<Rc<OrdCo
     let ok = st.code.range_mut().skip_first(0, 1).is_ok();
     debug_assert!(ok);
 
-    vm_log!("execute {name} ({})", code.repr_hash());
+    vm_log_op!("{name} ({})", code.repr_hash());
     st.ref_to_cont(code)
 }
 
@@ -1049,7 +1049,7 @@ fn exec_cell_prefix(st: &mut VmState, bits: u16, name: &str) -> VmResult<Cell> {
     let ok = st.code.range_mut().skip_first(0, 1).is_ok();
     debug_assert!(ok);
 
-    vm_log!("execute {name} ({})", cell.repr_hash());
+    vm_log_op!("{name} ({})", cell.repr_hash());
     Ok(cell)
 }
 
@@ -1071,7 +1071,7 @@ fn exec_ifelse_ref_impl(st: &mut VmState, bits: u16, ref_first: bool) -> VmResul
             false => "IFELSEREF",
         };
 
-        vm_log!("execute {name} ({})", cell.repr_hash());
+        vm_log_op!("{name} ({})", cell.repr_hash());
 
         let stack = Rc::make_mut(&mut st.stack);
         let cont = ok!(stack.pop_cont());

@@ -215,7 +215,7 @@ impl GasConsumer {
 
     pub fn set_limit(&mut self, limit: u64) {
         let limit = std::cmp::min(limit, self.gas_max);
-        vm_log!(limit, "changing gas limit");
+        vm_log_trace!(limit, "changing gas limit");
 
         self.gas_credit = 0;
         self.gas_limit = limit;

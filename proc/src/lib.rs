@@ -272,7 +272,7 @@ fn process_instr_definition(
                 let range_from_span = &instr.code.span();
 
                 let range_from_bits = range_from.len() * 4;
-                let range_from = u32::from_str_radix(&range_from, 16).map_err(|e| {
+                let range_from = u32::from_str_radix(range_from, 16).map_err(|e| {
                     Error::custom(format!("Invalid `range_from` value: {e}"))
                         .with_span(range_from_span)
                 })?;
@@ -307,7 +307,7 @@ fn process_instr_definition(
                 let range_to_span = &instr.code.span();
 
                 let range_to_bits = range_to.len() * 4;
-                let range_to = u32::from_str_radix(&range_to, 16).map_err(|e| {
+                let range_to = u32::from_str_radix(range_to, 16).map_err(|e| {
                     Error::custom(format!("Invalid `range_to` value: {e}")).with_span(range_to_span)
                 })?;
 
@@ -449,7 +449,7 @@ fn process_instr_definition(
             quote! {
                 fn #wrapper_func_name(st: &mut ::everscale_vm::state::VmState) -> ::everscale_vm::error::VmResult<i32> {
                     #(#arg_definitions)*
-                    vm_log!("execute {}", format_args!(#fmt));
+                    vm_log_op!(#fmt);
                     #function_name(st, #(#arg_idents),*)
                 }
             }
@@ -463,7 +463,7 @@ fn process_instr_definition(
                 fn #wrapper_func_name(st: &mut ::everscale_vm::state::VmState, args: u32) -> ::everscale_vm::error::VmResult<i32> {
                     #(#arg_definitions)*
                     #cond
-                    vm_log!("execute {}", format_args!(#fmt));
+                    vm_log_op!(#fmt);
                     #function_name(st, #(#arg_idents),*)
                 }
             }

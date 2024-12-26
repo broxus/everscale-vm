@@ -105,7 +105,7 @@ impl Debugops {
         remove_trailing(&mut prefix)?;
 
         println!("{}", prefix.size_bits());
-        vm_log!("execute DEBUGSTR {}", prefix.display_data());
+        vm_log_op!("DEBUGSTR {}", prefix.display_data());
 
         let ok = st.code.range_mut().skip_first(data_bits, 0).is_ok();
         debug_assert!(ok);

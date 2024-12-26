@@ -61,7 +61,7 @@ impl CurrencyOps {
         let mut csr = ok!(stack.pop_cs());
 
         let mut cs = csr.apply()?;
-        let mut addr = cs.clone();
+        let mut addr = cs;
         match skip_message_addr(&mut cs) {
             Ok(()) => {
                 addr.skip_last(cs.size_bits(), cs.size_refs())?;
@@ -221,7 +221,7 @@ fn parse_message_addr(cell: &Cell, range: &mut CellSliceRange) -> Result<AddrPar
             // len:(## 9)
             let len = cs.load_uint(9)? as u16;
             // external_address:(bits len) = MsgAddressExt;
-            let addr = cs.load_prefix(len as u16, 0)?;
+            let addr = cs.load_prefix(len, 0)?;
 
             Ok(AddrParts::Ext {
                 addr: OwnedCellSlice::from((cell.clone(), addr.range())),
@@ -342,7 +342,7 @@ fn skip_message_addr(cs: &mut CellSlice) -> Result<(), Error> {
             // len:(## 9)
             let len = cs.load_uint(9)? as u16;
             // external_address:(bits len) = MsgAddressExt;
-            cs.skip_first(len as u16, 0)
+            cs.skip_first(len, 0)
         }
         // addr_std$10
         0b10 => {

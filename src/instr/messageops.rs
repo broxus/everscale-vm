@@ -439,7 +439,7 @@ fn add_action(regs: &mut ControlRegs, gas: &mut GasConsumer, action: OutAction) 
 
     let actions_head = CellBuilder::build_from_ext((c5, action), gas.context())?;
 
-    vm_log!("installing an output action");
+    vm_log_trace!("installing an output action");
     regs.set_d(ACTIONS_REG_IDX, actions_head);
     Ok(0)
 }

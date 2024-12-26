@@ -15,12 +15,27 @@ macro_rules! ok {
 }
 
 #[cfg(feature = "tracing")]
-macro_rules! vm_log {
+macro_rules! vm_log_op {
+    ($($tt:tt)*) => { $crate::__log_op(format_args!($($tt)*)) };
+}
+
+#[cfg(feature = "tracing")]
+fn __log_op(args: std::fmt::Arguments<'_>) {
+    tracing::trace!("execute {args}");
+}
+
+#[cfg(feature = "tracing")]
+macro_rules! vm_log_trace {
     ($($tt:tt)*) => { tracing::trace!($($tt)*) };
 }
 
 #[cfg(not(feature = "tracing"))]
-macro_rules! vm_log {
+macro_rules! vm_log_op {
+    ($($tt:tt)*) => {{}};
+}
+
+#[cfg(not(feature = "tracing"))]
+macro_rules! vm_log_trace {
     ($($tt:tt)*) => {{}};
 }
 

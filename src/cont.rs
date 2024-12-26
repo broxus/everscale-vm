@@ -490,7 +490,7 @@ impl Cont for ExcQuitCont {
         let n = Rc::make_mut(&mut state.stack)
             .pop_smallint_range(0, 0xffff)
             .unwrap_or_else(|e| e.as_exception() as u32);
-        vm_log!(n, "terminating vm in the default exception handler");
+        vm_log_trace!(n, "terminating vm in the default exception handler");
         Ok(!(n as i32))
     }
 }
@@ -748,10 +748,10 @@ impl Cont for UntilCont {
         instrument(level = "trace", name = "until_cont", skip_all)
     )]
     fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
-        vm_log!("until loop condition end");
+        vm_log_trace!("until loop condition end");
         let terminated = ok!(Rc::make_mut(&mut state.stack).pop_bool());
         if terminated {
-            vm_log!("until loop terminated");
+            vm_log_trace!("until loop terminated");
             return state.jump(self.after.clone());
         }
         if !self.body.has_c0() {
@@ -821,14 +821,14 @@ impl Cont for WhileCont {
     )]
     fn jump(mut self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
         let next = if self.check_cond {
-            vm_log!("while loop condition end");
+            vm_log_trace!("while loop condition end");
             if !ok!(Rc::make_mut(&mut state.stack).pop_bool()) {
-                vm_log!("while loop terminated");
+                vm_log_trace!("while loop terminated");
                 return state.jump(self.after.clone());
             }
             self.body.clone()
         } else {
-            vm_log!("while loop body end");
+            vm_log_trace!("while loop body end");
             self.cond.clone()
         };
 
