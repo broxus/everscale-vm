@@ -18,10 +18,10 @@ pub struct CurrencyOps;
 
 #[vm_module]
 impl CurrencyOps {
-    #[instr(code = "fa00", fmt = "LDGRAMS", args(len_bits = 4, signed = false))]
-    #[instr(code = "fa01", fmt = "LDVARINT16", args(len_bits = 4, signed = true))]
-    #[instr(code = "fa04", fmt = "LDVARUINT32", args(len_bits = 5, signed = false))]
-    #[instr(code = "fa05", fmt = "LDVARINT32", args(len_bits = 5, signed = true))]
+    #[op(code = "fa00", fmt = "LDGRAMS", args(len_bits = 4, signed = false))]
+    #[op(code = "fa01", fmt = "LDVARINT16", args(len_bits = 4, signed = true))]
+    #[op(code = "fa04", fmt = "LDVARUINT32", args(len_bits = 5, signed = false))]
+    #[op(code = "fa05", fmt = "LDVARINT32", args(len_bits = 5, signed = true))]
     fn exec_load_var_integer(st: &mut VmState, len_bits: u16, signed: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut csr = ok!(stack.pop_cs());
@@ -39,10 +39,10 @@ impl CurrencyOps {
         Ok(0)
     }
 
-    #[instr(code = "fa02", fmt = "STGRAMS", args(len_bits = 4, signed = false))]
-    #[instr(code = "fa03", fmt = "STVARINT16", args(len_bits = 4, signed = true))]
-    #[instr(code = "fa06", fmt = "STVARUINT32", args(len_bits = 5, signed = false))]
-    #[instr(code = "fa07", fmt = "STVARINT32", args(len_bits = 5, signed = true))]
+    #[op(code = "fa02", fmt = "STGRAMS", args(len_bits = 4, signed = false))]
+    #[op(code = "fa03", fmt = "STVARINT16", args(len_bits = 4, signed = true))]
+    #[op(code = "fa06", fmt = "STVARUINT32", args(len_bits = 5, signed = false))]
+    #[op(code = "fa07", fmt = "STVARINT32", args(len_bits = 5, signed = true))]
     fn exec_store_var_integer(st: &mut VmState, len_bits: u16, signed: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let int = ok!(stack.pop_int());
@@ -54,8 +54,8 @@ impl CurrencyOps {
         Ok(0)
     }
 
-    #[instr(code = "fa40", fmt = "LDMSGADDR", args(quiet = false))]
-    #[instr(code = "fa41", fmt = "LDMSGADDRQ", args(quiet = true))]
+    #[op(code = "fa40", fmt = "LDMSGADDR", args(quiet = false))]
+    #[op(code = "fa41", fmt = "LDMSGADDRQ", args(quiet = true))]
     fn exec_load_message_addr(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut csr = ok!(stack.pop_cs());
@@ -85,8 +85,8 @@ impl CurrencyOps {
         Ok(0)
     }
 
-    #[instr(code = "fa42", fmt = "PARSEMSGADDR", args(quiet = false))]
-    #[instr(code = "fa43", fmt = "PARSEMSGADDRQ", args(quiet = true))]
+    #[op(code = "fa42", fmt = "PARSEMSGADDR", args(quiet = false))]
+    #[op(code = "fa43", fmt = "PARSEMSGADDRQ", args(quiet = true))]
     fn exec_parse_message_addr(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let csr = ok!(stack.pop_cs());
@@ -105,10 +105,10 @@ impl CurrencyOps {
         Ok(0)
     }
 
-    #[instr(code = "fa44", fmt = "REWRITESTDADDR", args(var = false, q = false))]
-    #[instr(code = "fa45", fmt = "REWRITESTDADDRQ", args(var = false, q = true))]
-    #[instr(code = "fa46", fmt = "REWRITEVARADDR", args(var = true, q = false))]
-    #[instr(code = "fa47", fmt = "REWRITEVARADDR", args(var = true, q = true))]
+    #[op(code = "fa44", fmt = "REWRITESTDADDR", args(var = false, q = false))]
+    #[op(code = "fa45", fmt = "REWRITESTDADDRQ", args(var = false, q = true))]
+    #[op(code = "fa46", fmt = "REWRITEVARADDR", args(var = true, q = false))]
+    #[op(code = "fa47", fmt = "REWRITEVARADDR", args(var = true, q = true))]
     fn exec_rewrite_message_addr(st: &mut VmState, var: bool, q: bool) -> VmResult<i32> {
         let handle_error = |stack: &mut Stack, e: Error| {
             if q {

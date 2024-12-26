@@ -16,52 +16,52 @@ pub struct Contops;
 impl Contops {
     // === Jump ops ===
 
-    #[instr(code = "d8", fmt = "EXECUTE")]
+    #[op(code = "d8", fmt = "EXECUTE")]
     fn exec_execute(st: &mut VmState) -> VmResult<i32> {
         let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         st.call(cont)
     }
 
-    #[instr(code = "d9", fmt = "JMPX")]
+    #[op(code = "d9", fmt = "JMPX")]
     fn exec_jmpx(st: &mut VmState) -> VmResult<i32> {
         let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         st.jump(cont)
     }
 
-    #[instr(code = "dapr", fmt = "CALLXARGS {p},{r}")]
+    #[op(code = "dapr", fmt = "CALLXARGS {p},{r}")]
     fn exec_callx_args(st: &mut VmState, p: u32, r: u32) -> VmResult<i32> {
         let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         st.call_ext(cont, Some(p as _), Some(r as _))
     }
 
-    #[instr(code = "db0p", fmt = "CALLXARGS {p},-1")]
+    #[op(code = "db0p", fmt = "CALLXARGS {p},-1")]
     fn exec_callx_args_p(st: &mut VmState, p: u32) -> VmResult<i32> {
         let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         st.call_ext(cont, Some(p as _), None)
     }
 
-    #[instr(code = "db1p", fmt = "JMPXARGS {p}")]
+    #[op(code = "db1p", fmt = "JMPXARGS {p}")]
     fn exec_jmpx_args(st: &mut VmState, p: u32) -> VmResult<i32> {
         let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         st.jump_ext(cont, Some(p as _))
     }
 
-    #[instr(code = "db2r", fmt = "RETARGS {r}")]
+    #[op(code = "db2r", fmt = "RETARGS {r}")]
     fn exec_ret_args(st: &mut VmState, r: u32) -> VmResult<i32> {
         st.ret_ext(Some(r as _))
     }
 
-    #[instr(code = "db30", fmt = "RET")]
+    #[op(code = "db30", fmt = "RET")]
     fn exec_ret(st: &mut VmState) -> VmResult<i32> {
         st.ret()
     }
 
-    #[instr(code = "db31", fmt = "RETALT")]
+    #[op(code = "db31", fmt = "RETALT")]
     fn exec_ret_alt(st: &mut VmState) -> VmResult<i32> {
         st.ret_alt()
     }
 
-    #[instr(code = "db32", fmt = "RETBOOL")]
+    #[op(code = "db32", fmt = "RETBOOL")]
     fn exec_ret_bool(st: &mut VmState) -> VmResult<i32> {
         if ok!(Rc::make_mut(&mut st.stack).pop_bool()) {
             st.ret()
@@ -70,7 +70,7 @@ impl Contops {
         }
     }
 
-    #[instr(code = "db34", fmt = "CALLCC")]
+    #[op(code = "db34", fmt = "CALLCC")]
     fn exec_callcc(st: &mut VmState) -> VmResult<i32> {
         let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         let cc = ok!(st.extract_cc(SaveCr::C0_C1, None, None));
@@ -78,7 +78,7 @@ impl Contops {
         st.jump(cont)
     }
 
-    #[instr(code = "db35", fmt = "JMPXDATA")]
+    #[op(code = "db35", fmt = "JMPXDATA")]
     fn exec_jmpx_data(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let cont = ok!(stack.pop_cont());
@@ -86,7 +86,7 @@ impl Contops {
         st.jump(cont)
     }
 
-    #[instr(code = "db36pr", fmt = "CALLCCARGS {p},{r}", args(r = ((args as i32 + 1) & 0xf) - 1))]
+    #[op(code = "db36pr", fmt = "CALLCCARGS {p},{r}", args(r = ((args as i32 + 1) & 0xf) - 1))]
     fn exec_callcc_args(st: &mut VmState, p: u32, r: i32) -> VmResult<i32> {
         let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         let cc = ok!(st.extract_cc(SaveCr::C0_C1, Some(p as _), (r >= 0).then_some(r as _)));
@@ -94,7 +94,7 @@ impl Contops {
         st.jump(cont)
     }
 
-    #[instr(code = "db38", fmt = "CALLXVARARGS")]
+    #[op(code = "db38", fmt = "CALLXVARARGS")]
     fn exec_callx_varargs(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let r = ok!(stack.pop_smallint_signed_range(-1, 254));
@@ -103,13 +103,13 @@ impl Contops {
         st.call_ext(cont, (p >= 0).then_some(p as _), (r >= 0).then_some(r as _))
     }
 
-    #[instr(code = "db39", fmt = "RETVARARGS")]
+    #[op(code = "db39", fmt = "RETVARARGS")]
     fn exec_ret_varargs(st: &mut VmState) -> VmResult<i32> {
         let r = ok!(Rc::make_mut(&mut st.stack).pop_smallint_signed_range(-1, 254));
         st.ret_ext((r >= 0).then_some(r as _))
     }
 
-    #[instr(code = "db3a", fmt = "JMPXVARARGS")]
+    #[op(code = "db3a", fmt = "JMPXVARARGS")]
     fn exec_jmpx_varargs(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let p = ok!(stack.pop_smallint_signed_range(-1, 254));
@@ -117,7 +117,7 @@ impl Contops {
         st.jump_ext(cont, (p >= 0).then_some(p as _))
     }
 
-    #[instr(code = "db3b", fmt = "CALLCCVARARGS")]
+    #[op(code = "db3b", fmt = "CALLCCVARARGS")]
     fn exec_callcc_varargs(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let r = ok!(stack.pop_smallint_signed_range(-1, 254));
@@ -155,7 +155,7 @@ impl Contops {
         st.jump(cont)
     }
 
-    #[instr(code = "db3f", fmt = "RETDATA")]
+    #[op(code = "db3f", fmt = "RETDATA")]
     fn exec_ret_data(st: &mut VmState) -> VmResult<i32> {
         ok!(Rc::make_mut(&mut st.stack).push(st.code.clone()));
         st.ret()
@@ -163,7 +163,7 @@ impl Contops {
 
     // === Conditions and loops ===
 
-    #[instr(code = "dc", fmt = "IFRET")]
+    #[op(code = "dc", fmt = "IFRET")]
     fn exec_ifret(st: &mut VmState) -> VmResult<i32> {
         if ok!(Rc::make_mut(&mut st.stack).pop_bool()) {
             st.ret()
@@ -172,7 +172,7 @@ impl Contops {
         }
     }
 
-    #[instr(code = "dd", fmt = "IFNOTRET")]
+    #[op(code = "dd", fmt = "IFNOTRET")]
     fn exec_ifnotret(st: &mut VmState) -> VmResult<i32> {
         if ok!(Rc::make_mut(&mut st.stack).pop_bool()) {
             Ok(0)
@@ -181,7 +181,7 @@ impl Contops {
         }
     }
 
-    #[instr(code = "de", fmt = "IF")]
+    #[op(code = "de", fmt = "IF")]
     fn exec_if(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let cont = ok!(stack.pop_cont());
@@ -192,7 +192,7 @@ impl Contops {
         }
     }
 
-    #[instr(code = "df", fmt = "IFNOT")]
+    #[op(code = "df", fmt = "IFNOT")]
     fn exec_ifnot(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let cont = ok!(stack.pop_cont());
@@ -203,7 +203,7 @@ impl Contops {
         }
     }
 
-    #[instr(code = "e0", fmt = "IFJMP")]
+    #[op(code = "e0", fmt = "IFJMP")]
     fn exec_if_jmp(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let cont = ok!(stack.pop_cont());
@@ -214,7 +214,7 @@ impl Contops {
         }
     }
 
-    #[instr(code = "e1", fmt = "IFNOTJMP")]
+    #[op(code = "e1", fmt = "IFNOTJMP")]
     fn exec_ifnot_jmp(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let cont = ok!(stack.pop_cont());
@@ -225,7 +225,7 @@ impl Contops {
         }
     }
 
-    #[instr(code = "e2", fmt = "IFELSE")]
+    #[op(code = "e2", fmt = "IFELSE")]
     fn exec_if_else(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let cont = {
@@ -287,7 +287,7 @@ impl Contops {
         }
     }
 
-    #[instr(code = "e304", fmt = "CONDSEL")]
+    #[op(code = "e304", fmt = "CONDSEL")]
     fn exec_condsel(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop());
@@ -300,7 +300,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "e305", fmt = "CONDSELCHK")]
+    #[op(code = "e305", fmt = "CONDSELCHK")]
     fn exec_condsel_chk(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop());
@@ -317,7 +317,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "e308", fmt = "IFRETALT")]
+    #[op(code = "e308", fmt = "IFRETALT")]
     fn exec_ifretalt(st: &mut VmState) -> VmResult<i32> {
         if ok!(Rc::make_mut(&mut st.stack).pop_bool()) {
             st.ret_alt()
@@ -326,7 +326,7 @@ impl Contops {
         }
     }
 
-    #[instr(code = "e309", fmt = "IFNOTRETALT")]
+    #[op(code = "e309", fmt = "IFNOTRETALT")]
     fn exec_ifnotretalt(st: &mut VmState) -> VmResult<i32> {
         if ok!(Rc::make_mut(&mut st.stack).pop_bool()) {
             Ok(0)
@@ -385,7 +385,7 @@ impl Contops {
         st.call(cont)
     }
 
-    #[instr(code = "e3$10nx#x", fmt = ("IF{}BITJMP {x}", if n { "N" } else { "" }))]
+    #[op(code = "e3$10nx#x", fmt = ("IF{}BITJMP {x}", if n { "N" } else { "" }))]
     fn exec_if_bit_jmp(st: &mut VmState, n: bool, x: u32) -> VmResult<i32> {
         let (cont, bit) = {
             let stack = Rc::make_mut(&mut st.stack);
@@ -439,8 +439,8 @@ impl Contops {
         }
     }
 
-    #[instr(code = "e4", fmt = "REPEAT", args(brk = false))]
-    #[instr(code = "e314", fmt = "REPEATBRK", args(brk = true))]
+    #[op(code = "e4", fmt = "REPEAT", args(brk = false))]
+    #[op(code = "e314", fmt = "REPEATBRK", args(brk = true))]
     fn exec_repeat(st: &mut VmState, brk: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let body = ok!(stack.pop_cont());
@@ -454,8 +454,8 @@ impl Contops {
         st.repeat(body, after, n as _)
     }
 
-    #[instr(code = "e5", fmt = "REPEATEND", args(brk = false))]
-    #[instr(code = "e315", fmt = "REPEATENDBRK", args(brk = true))]
+    #[op(code = "e5", fmt = "REPEATEND", args(brk = false))]
+    #[op(code = "e315", fmt = "REPEATENDBRK", args(brk = true))]
     fn exec_repeat_end(st: &mut VmState, brk: bool) -> VmResult<i32> {
         let n = ok!(Rc::make_mut(&mut st.stack).pop_smallint_signed_range(i32::MIN, i32::MAX));
         if n <= 0 {
@@ -469,8 +469,8 @@ impl Contops {
         st.repeat(body, after, n as _)
     }
 
-    #[instr(code = "e6", fmt = "UNTIL", args(brk = false))]
-    #[instr(code = "e316", fmt = "UNTILBRK", args(brk = true))]
+    #[op(code = "e6", fmt = "UNTIL", args(brk = false))]
+    #[op(code = "e316", fmt = "UNTILBRK", args(brk = true))]
     fn exec_until(st: &mut VmState, brk: bool) -> VmResult<i32> {
         let body = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         let cc = ok!(st.extract_cc(SaveCr::C0, None, None));
@@ -478,8 +478,8 @@ impl Contops {
         st.until(body, after)
     }
 
-    #[instr(code = "e7", fmt = "UNTILEND", args(brk = false))]
-    #[instr(code = "e317", fmt = "UNTILENDBRK", args(brk = true))]
+    #[op(code = "e7", fmt = "UNTILEND", args(brk = false))]
+    #[op(code = "e317", fmt = "UNTILENDBRK", args(brk = true))]
     fn exec_until_end(st: &mut VmState, brk: bool) -> VmResult<i32> {
         let body = ok!(st.extract_cc(SaveCr::NONE, None, None));
         let Some(c0) = st.cr.c[0].clone() else {
@@ -489,8 +489,8 @@ impl Contops {
         st.until(body, after)
     }
 
-    #[instr(code = "e8", fmt = "WHILE", args(brk = false))]
-    #[instr(code = "e318", fmt = "WHILEBRK", args(brk = true))]
+    #[op(code = "e8", fmt = "WHILE", args(brk = false))]
+    #[op(code = "e318", fmt = "WHILEBRK", args(brk = true))]
     fn exec_while(st: &mut VmState, brk: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let body = ok!(stack.pop_cont());
@@ -501,8 +501,8 @@ impl Contops {
         st.loop_while(cond, body, after)
     }
 
-    #[instr(code = "e9", fmt = "WHILEEND", args(brk = false))]
-    #[instr(code = "e319", fmt = "WHILEENDBRK", args(brk = true))]
+    #[op(code = "e9", fmt = "WHILEEND", args(brk = false))]
+    #[op(code = "e319", fmt = "WHILEENDBRK", args(brk = true))]
     fn exec_while_end(st: &mut VmState, brk: bool) -> VmResult<i32> {
         let cond = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         let body = ok!(st.extract_cc(SaveCr::NONE, None, None));
@@ -513,8 +513,8 @@ impl Contops {
         st.loop_while(cond, body, after)
     }
 
-    #[instr(code = "ea", fmt = "AGAIN", args(brk = false))]
-    #[instr(code = "e31a", fmt = "AGAINBRK", args(brk = true))]
+    #[op(code = "ea", fmt = "AGAIN", args(brk = false))]
+    #[op(code = "e31a", fmt = "AGAINBRK", args(brk = true))]
     fn exec_again(st: &mut VmState, brk: bool) -> VmResult<i32> {
         if brk {
             let cc = ok!(st.extract_cc(SaveCr::C0_C1, None, None));
@@ -524,8 +524,8 @@ impl Contops {
         st.again(body)
     }
 
-    #[instr(code = "eb", fmt = "AGAINEND", args(brk = false))]
-    #[instr(code = "e31b", fmt = "AGAINENDBRK", args(brk = true))]
+    #[op(code = "eb", fmt = "AGAINEND", args(brk = false))]
+    #[op(code = "e31b", fmt = "AGAINENDBRK", args(brk = true))]
     fn exec_again_end(st: &mut VmState, brk: bool) -> VmResult<i32> {
         if brk {
             st.c1_save_set();
@@ -536,26 +536,26 @@ impl Contops {
 
     // === Continuation change ===
 
-    #[instr(code = "ecrn", fmt = "SETCONTARGS {r},{n}", args(n = ((args as i32 + 1) & 0xf) - 1))]
+    #[op(code = "ecrn", fmt = "SETCONTARGS {r},{n}", args(n = ((args as i32 + 1) & 0xf) - 1))]
     fn exec_setcontargs(st: &mut VmState, r: u32, n: i32) -> VmResult<i32> {
         ok!(exec_setcontargs_common(st, r, n));
         Ok(0)
     }
 
-    #[instr(code = "ed0p", fmt = "RETURNARGS {p}")]
+    #[op(code = "ed0p", fmt = "RETURNARGS {p}")]
     fn exec_return_args(st: &mut VmState, p: u32) -> VmResult<i32> {
         ok!(exec_return_args_common(st, p));
         Ok(0)
     }
 
-    #[instr(code = "ed10", fmt = "RETURNVARARGS")]
+    #[op(code = "ed10", fmt = "RETURNVARARGS")]
     fn exec_return_varargs(st: &mut VmState) -> VmResult<i32> {
         let count = ok!(Rc::make_mut(&mut st.stack).pop_smallint_range(0, 255));
         ok!(exec_return_args_common(st, count));
         Ok(0)
     }
 
-    #[instr(code = "ed11", fmt = "SETCONTVARARGS")]
+    #[op(code = "ed11", fmt = "SETCONTVARARGS")]
     fn exec_setcont_varargs(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let more = ok!(stack.pop_smallint_signed_range(-1, 255));
@@ -564,14 +564,14 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "ed12", fmt = "SETNUMVARARGS")]
+    #[op(code = "ed12", fmt = "SETNUMVARARGS")]
     fn exec_setnum_varargs(st: &mut VmState) -> VmResult<i32> {
         let more = ok!(Rc::make_mut(&mut st.stack).pop_smallint_signed_range(-1, 255));
         ok!(exec_setcontargs_common(st, 0, more));
         Ok(0)
     }
 
-    #[instr(code = "ed1e", fmt = "BLESS")]
+    #[op(code = "ed1e", fmt = "BLESS")]
     fn exec_bless(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let code = ok!(stack.pop_cs());
@@ -580,7 +580,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "ed1f", fmt = "BLESSVARARGS")]
+    #[op(code = "ed1f", fmt = "BLESSVARARGS")]
     fn exec_bless_varargs(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let more = ok!(stack.pop_smallint_signed_range(-1, 255));
@@ -589,14 +589,14 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "ed4i", fmt = "PUSH c{i}")]
+    #[op(code = "ed4i", fmt = "PUSH c{i}")]
     fn exec_push_ctr(st: &mut VmState, i: u32) -> VmResult<i32> {
         vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
         ok!(Rc::make_mut(&mut st.stack).push_opt_raw(st.cr.get_as_stack_value(i as _)));
         Ok(0)
     }
 
-    #[instr(code = "ed5i", fmt = "POP c{i}")]
+    #[op(code = "ed5i", fmt = "POP c{i}")]
     fn exec_pop_ctr(st: &mut VmState, i: u32) -> VmResult<i32> {
         vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
         let value = ok!(Rc::make_mut(&mut st.stack).pop());
@@ -604,7 +604,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "ed6i", fmt = "SETCONTCTR c{i}")]
+    #[op(code = "ed6i", fmt = "SETCONTCTR c{i}")]
     fn exec_setcont_ctr(st: &mut VmState, i: u32) -> VmResult<i32> {
         vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
         let stack = Rc::make_mut(&mut st.stack);
@@ -615,7 +615,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "ed7i", fmt = "SETRETCTR c{i}")]
+    #[op(code = "ed7i", fmt = "SETRETCTR c{i}")]
     fn exec_setret_ctr(st: &mut VmState, i: u32) -> VmResult<i32> {
         vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
         let cont = st.cr.c[0].as_mut().expect("c0 should always be set");
@@ -624,7 +624,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "ed8i", fmt = "SETALTCTR c{i}")]
+    #[op(code = "ed8i", fmt = "SETALTCTR c{i}")]
     fn exec_setalt_ctr(st: &mut VmState, i: u32) -> VmResult<i32> {
         vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
         // TODO: Check if c1 is always set
@@ -634,7 +634,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "ed9i", fmt = "POPSAVE c{i}")]
+    #[op(code = "ed9i", fmt = "POPSAVE c{i}")]
     fn exec_popsave(st: &mut VmState, i: u32) -> VmResult<i32> {
         vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
         let stack = Rc::make_mut(&mut st.stack);
@@ -665,7 +665,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "edai", fmt = "SAVECTR c{i}")]
+    #[op(code = "edai", fmt = "SAVECTR c{i}")]
     fn exec_savectr(st: &mut VmState, i: u32) -> VmResult<i32> {
         vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
 
@@ -681,7 +681,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "edbi", fmt = "SAVEALTCTR c{i}")]
+    #[op(code = "edbi", fmt = "SAVEALTCTR c{i}")]
     fn exec_savealt_ctr(st: &mut VmState, i: u32) -> VmResult<i32> {
         vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
 
@@ -698,7 +698,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "edci", fmt = "SAVEBOTHCTR c{i}")]
+    #[op(code = "edci", fmt = "SAVEBOTHCTR c{i}")]
     fn exec_saveboth_ctr(st: &mut VmState, i: u32) -> VmResult<i32> {
         vm_ensure!(ControlRegs::is_valid_idx(i as _), InvalidOpcode);
 
@@ -717,7 +717,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "ede0", fmt = "PUSHCTRX")]
+    #[op(code = "ede0", fmt = "PUSHCTRX")]
     fn exec_push_ctr_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let idx = ok!(stack.pop_smallint_range(0, 16)) as usize;
@@ -728,7 +728,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "ede1", fmt = "POPCTRX")]
+    #[op(code = "ede1", fmt = "POPCTRX")]
     fn exec_pop_ctr_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let idx = ok!(stack.pop_smallint_range(0, 16)) as usize;
@@ -742,7 +742,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "ede2", fmt = "SETCONTCTRX")]
+    #[op(code = "ede2", fmt = "SETCONTCTRX")]
     fn exec_setcont_ctr_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let idx = ok!(stack.pop_smallint_range(0, 16)) as usize;
@@ -757,8 +757,8 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "ede3xx", fmt = ("SETCONTCTRMANY {}", args & 0xff), args(x = Some(args & 0xff)))]
-    #[instr(code = "ede4", fmt = "SETCONTCTRMANYX", args(x = None))]
+    #[op(code = "ede3xx", fmt = ("SETCONTCTRMANY {}", args & 0xff), args(x = Some(args & 0xff)))]
+    #[op(code = "ede4", fmt = "SETCONTCTRMANYX", args(x = None))]
     fn exec_setcont_ctr_many(st: &mut VmState, x: Option<u32>) -> VmResult<i32> {
         ok!(st.version.require_ton(9..));
 
@@ -789,9 +789,9 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "edf0", fmt = "BOOLAND", args(op = Compose::And))]
-    #[instr(code = "edf1", fmt = "BOOLOR", args(op = Compose::Or))]
-    #[instr(code = "edf2", fmt = "COMPOSBOTH", args(op = Compose::Both))]
+    #[op(code = "edf0", fmt = "BOOLAND", args(op = Compose::And))]
+    #[op(code = "edf1", fmt = "BOOLOR", args(op = Compose::Or))]
+    #[op(code = "edf2", fmt = "COMPOSBOTH", args(op = Compose::Both))]
     fn exec_compos(st: &mut VmState, op: Compose) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let value = ok!(stack.pop_cont());
@@ -809,7 +809,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "edf3", fmt = "ATEXIT")]
+    #[op(code = "edf3", fmt = "ATEXIT")]
     fn exec_atexit(st: &mut VmState) -> VmResult<i32> {
         let mut cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         force_cdata(&mut cont).save.define_c0(&st.cr.c[0]);
@@ -817,7 +817,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "edf4", fmt = "ATEXITALT")]
+    #[op(code = "edf4", fmt = "ATEXITALT")]
     fn exec_atexit_alt(st: &mut VmState) -> VmResult<i32> {
         let mut cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         force_cdata(&mut cont).save.define_c1(&st.cr.c[1]);
@@ -825,7 +825,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "edf5", fmt = "SETEXITALT")]
+    #[op(code = "edf5", fmt = "SETEXITALT")]
     fn exec_setexit_alt(st: &mut VmState) -> VmResult<i32> {
         let mut cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
         let cr = force_cdata(&mut cont);
@@ -835,7 +835,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "edf6", fmt = "THENRET")]
+    #[op(code = "edf6", fmt = "THENRET")]
     fn exec_thenret(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut cont = ok!(stack.pop_cont());
@@ -844,7 +844,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "edf7", fmt = "THENRETALT")]
+    #[op(code = "edf7", fmt = "THENRETALT")]
     fn exec_thenret_alt(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut cont = ok!(stack.pop_cont());
@@ -853,13 +853,13 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "edf8", fmt = "INVERT")]
+    #[op(code = "edf8", fmt = "INVERT")]
     fn exec_invert(st: &mut VmState) -> VmResult<i32> {
         st.cr.c.swap(0, 1);
         Ok(0)
     }
 
-    #[instr(code = "edf9", fmt = "BOOLEVAL")]
+    #[op(code = "edf9", fmt = "BOOLEVAL")]
     fn exec_booleval(st: &mut VmState) -> VmResult<i32> {
         let cont = ok!(Rc::make_mut(&mut st.stack).pop_cont());
 
@@ -873,8 +873,8 @@ impl Contops {
         st.jump(cont)
     }
 
-    #[instr(code = "edfa", fmt = "SAMEALT", args(save = false))]
-    #[instr(code = "edfb", fmt = "SAMEALTSAVE", args(save = true))]
+    #[op(code = "edfa", fmt = "SAMEALT", args(save = false))]
+    #[op(code = "edfb", fmt = "SAMEALTSAVE", args(save = true))]
     fn exec_samealt(st: &mut VmState, save: bool) -> VmResult<i32> {
         let [c0, c1, ..] = &mut st.cr.c;
 
@@ -888,7 +888,7 @@ impl Contops {
         Ok(0)
     }
 
-    #[instr(code = "eern", fmt = "BLESSARGS {r},{n}", args(n = ((args as i32 + 1) & 0xf) - 1))]
+    #[op(code = "eern", fmt = "BLESSARGS {r},{n}", args(n = ((args as i32 + 1) & 0xf) - 1))]
     fn exec_bless_args(st: &mut VmState, r: u32, n: i32) -> VmResult<i32> {
         ok!(exec_bless_args_common(st, r, n));
         Ok(0)
@@ -896,8 +896,8 @@ impl Contops {
 
     // === Dictjump ===
 
-    #[instr(code = "f0nn", fmt = "CALLDICT {n}")]
-    #[instr(code = "f1$00nn#n", fmt = "CALLDICT {n}")]
+    #[op(code = "f0nn", fmt = "CALLDICT {n}")]
+    #[op(code = "f1$00nn#n", fmt = "CALLDICT {n}")]
     fn exec_calldict_short(st: &mut VmState, n: u32) -> VmResult<i32> {
         ok!(Rc::make_mut(&mut st.stack).push_int(n));
         let Some(c3) = st.cr.c[3].clone() else {
@@ -909,7 +909,7 @@ impl Contops {
         st.call(c3)
     }
 
-    #[instr(code = "f1$01nn#n", fmt = "JMPDICT {n}")]
+    #[op(code = "f1$01nn#n", fmt = "JMPDICT {n}")]
     fn exec_jmpdict(st: &mut VmState, n: u32) -> VmResult<i32> {
         ok!(Rc::make_mut(&mut st.stack).push_int(n));
         let Some(c3) = st.cr.c[3].clone() else {
@@ -921,7 +921,7 @@ impl Contops {
         st.jump(c3)
     }
 
-    #[instr(code = "f1$10nn#n", fmt = "PREPAREDICT {n}")]
+    #[op(code = "f1$10nn#n", fmt = "PREPAREDICT {n}")]
     fn exec_preparedict(st: &mut VmState, n: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         ok!(stack.push_int(n));
@@ -936,12 +936,12 @@ impl Contops {
 
     // === Exceptions ===
 
-    #[instr(code = "f2$00nn#n", fmt = "THROW {n}", args(mode = ThrowMode::Direct))]
-    #[instr(code = "f2$01nn#n", fmt = "THROWIF {n}", args(mode = ThrowMode::Cond(true)))]
-    #[instr(code = "f2$10nn#n", fmt = "THROWIFNOT {n}", args(mode = ThrowMode::Cond(false)))]
-    #[instr(code = "f2c$0nnn#nn", fmt = "THROW {n}", args(mode = ThrowMode::Direct))]
-    #[instr(code = "f2d$0nnn#nn", fmt = "THROWIF {n}", args(mode = ThrowMode::Cond(true)))]
-    #[instr(code = "f2e$0nnn#nn", fmt = "THROWIFNOT {n}", args(mode = ThrowMode::Cond(false)))]
+    #[op(code = "f2$00nn#n", fmt = "THROW {n}", args(mode = ThrowMode::Direct))]
+    #[op(code = "f2$01nn#n", fmt = "THROWIF {n}", args(mode = ThrowMode::Cond(true)))]
+    #[op(code = "f2$10nn#n", fmt = "THROWIFNOT {n}", args(mode = ThrowMode::Cond(false)))]
+    #[op(code = "f2c$0nnn#nn", fmt = "THROW {n}", args(mode = ThrowMode::Direct))]
+    #[op(code = "f2d$0nnn#nn", fmt = "THROWIF {n}", args(mode = ThrowMode::Cond(true)))]
+    #[op(code = "f2e$0nnn#nn", fmt = "THROWIFNOT {n}", args(mode = ThrowMode::Cond(false)))]
     fn exec_throw_fixed(st: &mut VmState, n: u32, mode: ThrowMode) -> VmResult<i32> {
         if let ThrowMode::Cond(cond) = mode {
             if ok!(Rc::make_mut(&mut st.stack).pop_bool()) != cond {
@@ -952,9 +952,9 @@ impl Contops {
         st.throw_exception(n as i32)
     }
 
-    #[instr(code = "f2c$1nnn#n", fmt = "THROWARG {n}", args(mode = ThrowMode::Direct))]
-    #[instr(code = "f2d$1nnn#n", fmt = "THROWARGIF {n}", args(mode = ThrowMode::Cond(true)))]
-    #[instr(code = "f2e$1nnn#n", fmt = "THROWARGIFNOT {n}", args(mode = ThrowMode::Cond(false)))]
+    #[op(code = "f2c$1nnn#n", fmt = "THROWARG {n}", args(mode = ThrowMode::Direct))]
+    #[op(code = "f2d$1nnn#n", fmt = "THROWARGIF {n}", args(mode = ThrowMode::Cond(true)))]
+    #[op(code = "f2e$1nnn#n", fmt = "THROWARGIFNOT {n}", args(mode = ThrowMode::Cond(false)))]
     fn exec_throw_arg_fixed(st: &mut VmState, n: u32, mode: ThrowMode) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
 
@@ -969,7 +969,7 @@ impl Contops {
         st.throw_exception_with_arg(n as i32, arg)
     }
 
-    #[instr(code = "f2fx @ ..f2f6", fmt = ThrowAnyArgs(x))]
+    #[op(code = "f2fx @ ..f2f6", fmt = ThrowAnyArgs(x))]
     fn exec_throw_any(st: &mut VmState, x: u32) -> VmResult<i32> {
         let args = ThrowAnyArgs(x);
 
@@ -994,27 +994,27 @@ impl Contops {
         }
     }
 
-    #[instr(code = "f2ff", fmt = "TRY")]
+    #[op(code = "f2ff", fmt = "TRY")]
     fn exec_try(st: &mut VmState) -> VmResult<i32> {
         exec_try_common(st, None)
     }
 
-    #[instr(code = "f3pr", fmt = "TRYARGS {p},{r}")]
+    #[op(code = "f3pr", fmt = "TRYARGS {p},{r}")]
     fn exec_tryargs(st: &mut VmState, p: u32, r: u32) -> VmResult<i32> {
         exec_try_common(st, Some((p as u16, r as u16)))
     }
 
     // === Codepage ops ===
-    #[instr(code = "fff0", fmt = "SETCPX")]
+    #[op(code = "fff0", fmt = "SETCPX")]
     fn exec_set_cp_any(st: &mut VmState) -> VmResult<i32> {
         let cp = ok!(Rc::make_mut(&mut st.stack).pop_smallint_signed_range(-0x8000, 0x7fff));
         ok!(st.force_cp(cp as i16 as u16));
         Ok(0)
     }
 
-    #[instr(code = "ff00", fmt = "SETCP0", args(x = 0i16))]
-    #[instr(code = "ffxx @ ff01..fff0", fmt = "SETCP", args(x = (args & 0xff) as i16),)]
-    #[instr(code = "fffx @ fff1..", fmt = "SETCP {x}", args(x = (args & 0xf) as i16 - 16))]
+    #[op(code = "ff00", fmt = "SETCP0", args(x = 0i16))]
+    #[op(code = "ffxx @ ff01..fff0", fmt = "SETCP", args(x = (args & 0xff) as i16),)]
+    #[op(code = "fffx @ fff1..", fmt = "SETCP {x}", args(x = (args & 0xf) as i16 - 16))]
     fn exec_set_cp(st: &mut VmState, x: i16) -> VmResult<i32> {
         ok!(st.force_cp(x as u16));
         Ok(0)

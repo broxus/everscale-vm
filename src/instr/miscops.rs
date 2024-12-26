@@ -15,10 +15,10 @@ pub struct Miscops;
 
 #[vm_module]
 impl Miscops {
-    #[instr(code = "f940", fmt = "CDATASIZEQ", args(is_slice = false, q = true))]
-    #[instr(code = "f941", fmt = "CDATASIZE", args(is_slice = false, q = false))]
-    #[instr(code = "f942", fmt = "SDATASIZEQ", args(is_slice = true, q = true))]
-    #[instr(code = "f943", fmt = "SDATASIZE", args(is_slice = true, q = false))]
+    #[op(code = "f940", fmt = "CDATASIZEQ", args(is_slice = false, q = true))]
+    #[op(code = "f941", fmt = "CDATASIZE", args(is_slice = false, q = false))]
+    #[op(code = "f942", fmt = "SDATASIZEQ", args(is_slice = true, q = true))]
+    #[op(code = "f943", fmt = "SDATASIZE", args(is_slice = true, q = false))]
     pub fn exec_compute_data_size(st: &mut VmState, is_slice: bool, q: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let bound = ok!(stack.pop_int_or_nan());

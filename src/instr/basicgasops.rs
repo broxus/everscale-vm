@@ -11,12 +11,12 @@ pub struct BasicGasOps;
 
 #[vm_module]
 impl BasicGasOps {
-    #[instr(code = "f800", fmt = "ACCEPT")]
+    #[op(code = "f800", fmt = "ACCEPT")]
     fn exec_accept(st: &mut VmState) -> VmResult<i32> {
         exec_set_gas(st, u64::MAX)
     }
 
-    #[instr(code = "f801", fmt = "SETGASLIMIT")]
+    #[op(code = "f801", fmt = "SETGASLIMIT")]
     fn exec_set_gas_limit(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let x = ok!(stack.pop_int());
@@ -29,7 +29,7 @@ impl BasicGasOps {
         exec_set_gas(st, limit)
     }
 
-    #[instr(code = "f807", fmt = "GASCONSUMED")]
+    #[op(code = "f807", fmt = "GASCONSUMED")]
     fn exec_gas_consumed(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(4..));
 
@@ -38,7 +38,7 @@ impl BasicGasOps {
         Ok(0)
     }
 
-    #[instr(code = "f80f", fmt = "COMMIT")]
+    #[op(code = "f80f", fmt = "COMMIT")]
     fn exec_commit(st: &mut VmState) -> VmResult<i32> {
         st.force_commit()?;
         Ok(0)

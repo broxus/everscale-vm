@@ -22,14 +22,14 @@ pub struct ConfigOps;
 
 #[vm_module]
 impl ConfigOps {
-    #[instr(code = "f82s", fmt = DisplayConfigOpsArgs(s))]
+    #[op(code = "f82s", fmt = DisplayConfigOpsArgs(s))]
     fn exec_get_param(st: &mut VmState, s: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         ok!(get_and_push_param(&mut st.cr, stack, s as usize));
         Ok(0)
     }
 
-    #[instr(code = "f830", fmt = "CONFIGDICT")]
+    #[op(code = "f830", fmt = "CONFIGDICT")]
     fn exec_get_config_dict(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         ok!(get_and_push_param(
@@ -41,8 +41,8 @@ impl ConfigOps {
         Ok(0)
     }
 
-    #[instr(code = "f832", fmt = "CONFIGPARAM", args(opt = false))]
-    #[instr(code = "f833", fmt = "CONFIGOPTPARAM", args(opt = true))]
+    #[op(code = "f832", fmt = "CONFIGPARAM", args(opt = false))]
+    #[op(code = "f833", fmt = "CONFIGOPTPARAM", args(opt = true))]
     fn exec_get_config_param(st: &mut VmState, opt: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let idx = ok!(stack.pop_int());
@@ -78,8 +78,8 @@ impl ConfigOps {
         Ok(0)
     }
 
-    #[instr(code = "f83400", fmt = "PREVMCBLOCKS", args(i = 0))]
-    #[instr(code = "f83401", fmt = "PREVKEYBLOCK", args(i = 1))]
+    #[op(code = "f83400", fmt = "PREVMCBLOCKS", args(i = 0))]
+    #[op(code = "f83401", fmt = "PREVKEYBLOCK", args(i = 1))]
     fn exec_get_prev_blocks_info(st: &mut VmState, i: u32) -> VmResult<i32> {
         ok!(st.version.require_ton(4..));
         let t1 = ok!(st.cr.get_c7_params());
@@ -89,7 +89,7 @@ impl ConfigOps {
         Ok(0)
     }
 
-    #[instr(code = "f835", fmt = "GLOBALID")]
+    #[op(code = "f835", fmt = "GLOBALID")]
     fn exec_get_global_id(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(4..));
 
@@ -123,7 +123,7 @@ impl ConfigOps {
         Ok(0)
     }
 
-    #[instr(code = "f836", fmt = "GETGASFEE")]
+    #[op(code = "f836", fmt = "GETGASFEE")]
     fn exec_get_gas_fee(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(6..));
 
@@ -140,7 +140,7 @@ impl ConfigOps {
         Ok(0)
     }
 
-    #[instr(code = "f837", fmt = "GETSTORAGEFEE")]
+    #[op(code = "f837", fmt = "GETSTORAGEFEE")]
     fn exec_get_storage_fee(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(6..));
 
@@ -166,7 +166,7 @@ impl ConfigOps {
         Ok(0)
     }
 
-    #[instr(code = "f838", fmt = "GETFORWARDFEE")]
+    #[op(code = "f838", fmt = "GETFORWARDFEE")]
     fn exec_get_forward_fee(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(6..));
 
@@ -187,7 +187,7 @@ impl ConfigOps {
         Ok(0)
     }
 
-    #[instr(code = "f839", fmt = "GETPRECOMPILEDGAS")]
+    #[op(code = "f839", fmt = "GETPRECOMPILEDGAS")]
     fn exec_get_precompiled_gas(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(6..));
 
@@ -200,7 +200,7 @@ impl ConfigOps {
         Ok(0)
     }
 
-    #[instr(code = "f83a", fmt = "GETORIGINALFWDFEE")]
+    #[op(code = "f83a", fmt = "GETORIGINALFWDFEE")]
     fn exec_get_original_fwd_fee(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(6..));
 
@@ -230,7 +230,7 @@ impl ConfigOps {
         Ok(0)
     }
 
-    #[instr(code = "f83b", fmt = "GETGASFEESIMPLE")]
+    #[op(code = "f83b", fmt = "GETGASFEESIMPLE")]
     fn exec_get_gas_fee_simple(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(6..));
 
@@ -247,7 +247,7 @@ impl ConfigOps {
         Ok(0)
     }
 
-    #[instr(code = "f83c", fmt = "GETFORWARDFEESIMPLE")]
+    #[op(code = "f83c", fmt = "GETFORWARDFEESIMPLE")]
     fn exec_get_forward_fee_simple(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(6..));
 
@@ -268,27 +268,27 @@ impl ConfigOps {
         Ok(0)
     }
 
-    #[instr(code = "f840", fmt = "GETGLOBVAR")]
+    #[op(code = "f840", fmt = "GETGLOBVAR")]
     fn exec_get_global_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let args = ok!(stack.pop_smallint_range(0, 254));
         get_global_common(&mut st.cr, stack, args as usize)
     }
 
-    #[instr(code = "f8ii @ f841..f860", fmt = "GETGLOB {i}", args(i = args & 31))]
+    #[op(code = "f8ii @ f841..f860", fmt = "GETGLOB {i}", args(i = args & 31))]
     fn exec_get_global(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         get_global_common(&mut st.cr, stack, i as usize)
     }
 
-    #[instr(code = "f860", fmt = "SETGLOBVAR")]
+    #[op(code = "f860", fmt = "SETGLOBVAR")]
     fn exec_set_global_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let args = ok!(stack.pop_smallint_range(0, 254));
         set_global_common(&mut st.cr, stack, &mut st.gas, args as usize)
     }
 
-    #[instr(code = "f8ii @ f861..f880", fmt = "SETGLOB {i}", args(i = args & 31))]
+    #[op(code = "f8ii @ f861..f880", fmt = "SETGLOB {i}", args(i = args & 31))]
     fn exec_set_global(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         set_global_common(&mut st.cr, stack, &mut st.gas, i as usize)

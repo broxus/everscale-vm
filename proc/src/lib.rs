@@ -46,7 +46,7 @@ pub fn vm_module(_: TokenStream, input: TokenStream) -> TokenStream {
         let mut remaining_attr = Vec::new();
         for attr in fun.attrs.drain(..) {
             if let Some(path) = attr.meta.path().get_ident() {
-                if path == "instr" {
+                if path == "op" {
                     instr_attrs.push(attr);
                     continue;
                 } else if path == "init" {

@@ -37,15 +37,6 @@ pub struct VmStateBuilder {
     pub debug: Option<Box<dyn std::fmt::Write>>,
 }
 
-#[derive(Default)]
-pub struct GasParameters {
-    pub gas_max: u64,
-    pub gas_limit: u64,
-    pub gas_credit: u64,
-    pub gas_remaining: u64,
-    pub gas_base: u64,
-}
-
 impl VmStateBuilder {
     pub fn new() -> Self {
         Self::default()
@@ -186,6 +177,15 @@ impl VmStateBuilder {
         self.version = Some(version);
         self
     }
+}
+
+#[derive(Default)]
+pub struct GasParameters {
+    pub gas_max: u64,
+    pub gas_limit: u64,
+    pub gas_credit: u64,
+    pub gas_remaining: u64,
+    pub gas_base: u64,
 }
 
 pub struct VmState {

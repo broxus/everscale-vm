@@ -24,9 +24,9 @@ impl Arithops {
         Ok(())
     }
 
-    #[instr(code = "7x", fmt = "PUSHINT {x}", args(x = ((args as i32 + 5) & 0xf) - 5))]
-    #[instr(code = "80xx", fmt = "PUSHINT {x}", args(x = args as i8 as i32))]
-    #[instr(code = "81xxxx", fmt = "PUSHINT {x}", args(x = args as i16 as i32))]
+    #[op(code = "7x", fmt = "PUSHINT {x}", args(x = ((args as i32 + 5) & 0xf) - 5))]
+    #[op(code = "80xx", fmt = "PUSHINT {x}", args(x = args as i8 as i32))]
+    #[op(code = "81xxxx", fmt = "PUSHINT {x}", args(x = args as i16 as i32))]
     fn exec_push_tinyint4(st: &mut VmState, x: i32) -> VmResult<i32> {
         ok!(Rc::make_mut(&mut st.stack).push_int(x));
         Ok(0)
@@ -51,20 +51,20 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "83xx @ ..83ff", fmt = "PUSHPOW2 {x}", args(x = (args & 0xff) + 1))]
+    #[op(code = "83xx @ ..83ff", fmt = "PUSHPOW2 {x}", args(x = (args & 0xff) + 1))]
     pub fn exec_push_pow2(st: &mut VmState, x: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         ok!(stack.push_int(BigInt::from(1) << x));
         Ok(0)
     }
 
-    #[instr(code = "83ff", fmt = "PUSHNAN")]
+    #[op(code = "83ff", fmt = "PUSHNAN")]
     fn exec_push_nan(st: &mut VmState) -> VmResult<i32> {
         ok!(Rc::make_mut(&mut st.stack).push_nan());
         Ok(0)
     }
 
-    #[instr(code = "84xx", fmt = "PUSHPOW2DEC {x}", args(x = (args & 0xff) + 1))]
+    #[op(code = "84xx", fmt = "PUSHPOW2DEC {x}", args(x = (args & 0xff) + 1))]
     fn exec_push_pow2dec(st: &mut VmState, x: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut value = BigInt::from(1) << x;
@@ -73,15 +73,15 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "85xx", fmt = "PUSHNEGPOW2 {x}", args(x = (args & 0xff) + 1))]
+    #[op(code = "85xx", fmt = "PUSHNEGPOW2 {x}", args(x = (args & 0xff) + 1))]
     fn exec_push_negpow2(st: &mut VmState, x: u32) -> VmResult<i32> {
         ok!(Rc::make_mut(&mut st.stack).push_int(-(BigInt::from(1) << x)));
         Ok(0)
     }
 
     // === Simple math instructions ===
-    #[instr(code = "a0", fmt = "ADD", args(quiet = false))]
-    #[instr(code = "b7a0", fmt = "QADD", args(quiet = true))]
+    #[op(code = "a0", fmt = "ADD", args(quiet = false))]
+    #[op(code = "b7a0", fmt = "QADD", args(quiet = true))]
     fn exec_add(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
@@ -97,8 +97,8 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "a1", fmt = "SUB", args(quiet = false))]
-    #[instr(code = "b7a1", fmt = "QSUB", args(quiet = true))]
+    #[op(code = "a1", fmt = "SUB", args(quiet = false))]
+    #[op(code = "b7a1", fmt = "QSUB", args(quiet = true))]
     fn exec_sub(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
@@ -114,8 +114,8 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "a2", fmt = "SUBR", args(quiet = false))]
-    #[instr(code = "b7a2", fmt = "QSUBR", args(quiet = true))]
+    #[op(code = "a2", fmt = "SUBR", args(quiet = false))]
+    #[op(code = "b7a2", fmt = "QSUBR", args(quiet = true))]
     fn exec_subr(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
@@ -131,8 +131,8 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "a3", fmt = "NEGATE", args(quiet = false))]
-    #[instr(code = "b7a3", fmt = "QNEGATE", args(quiet = true))]
+    #[op(code = "a3", fmt = "NEGATE", args(quiet = false))]
+    #[op(code = "b7a3", fmt = "QNEGATE", args(quiet = true))]
     fn exec_negate(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
@@ -149,8 +149,8 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "a4", fmt = "INC", args(quiet = false))]
-    #[instr(code = "b7a4", fmt = "QINC", args(quiet = true))]
+    #[op(code = "a4", fmt = "INC", args(quiet = false))]
+    #[op(code = "b7a4", fmt = "QINC", args(quiet = true))]
     fn exec_inc(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
@@ -164,8 +164,8 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "a5", fmt = "DEC", args(quiet = false))]
-    #[instr(code = "b7a5", fmt = "QDEC", args(quiet = true))]
+    #[op(code = "a5", fmt = "DEC", args(quiet = false))]
+    #[op(code = "b7a5", fmt = "QDEC", args(quiet = true))]
     fn exec_dec(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
@@ -179,8 +179,8 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "a6yy", fmt = "ADDINT {y}", args(y = args as i8, quiet = false))]
-    #[instr(code = "b7a6yy", fmt = "QADDINT {y}", args(y = args as i8, quiet = true))]
+    #[op(code = "a6yy", fmt = "ADDINT {y}", args(y = args as i8, quiet = false))]
+    #[op(code = "b7a6yy", fmt = "QADDINT {y}", args(y = args as i8, quiet = true))]
     fn exec_addint(st: &mut VmState, y: i8, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
@@ -194,8 +194,8 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "a7yy", fmt = "MULINT {y}", args(y = args as i8, quiet = false))]
-    #[instr(code = "b7a7yy", fmt = "QMULINT {y}", args(y = args as i8, quiet = true))]
+    #[op(code = "a7yy", fmt = "MULINT {y}", args(y = args as i8, quiet = false))]
+    #[op(code = "b7a7yy", fmt = "QMULINT {y}", args(y = args as i8, quiet = true))]
     fn exec_mulint(st: &mut VmState, y: i8, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
@@ -209,8 +209,8 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "a8", fmt = "MUL", args(quiet = false))]
-    #[instr(code = "b7a8", fmt = "QMUL", args(quiet = true))]
+    #[op(code = "a8", fmt = "MUL", args(quiet = false))]
+    #[op(code = "b7a8", fmt = "QMUL", args(quiet = true))]
     fn exec_mul(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
@@ -227,8 +227,8 @@ impl Arithops {
     }
 
     // === Division instructions ===
-    #[instr(code = "a90m", fmt = DumpDivmod(m), args(quiet = false))]
-    #[instr(code = "b7a90m", fmt = DumpDivmod(m), args(quiet = true))]
+    #[op(code = "a90m", fmt = DumpDivmod(m), args(quiet = false))]
+    #[op(code = "b7a90m", fmt = DumpDivmod(m), args(quiet = true))]
     fn exec_divmod(st: &mut VmState, m: u32, quiet: bool) -> VmResult<i32> {
         enum Operation {
             Div,
@@ -298,9 +298,9 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "a92m", fmt = DumpShr(m, false), args(imm = false, quiet = false))]
-    #[instr(code = "a93mmm", fmt = DumpShr(m, true), args(imm = true, quiet = false))]
-    #[instr(code = "b7a92m", fmt = ("Q{}", DumpShr(m, false)), args(imm = false, quiet = true))]
+    #[op(code = "a92m", fmt = DumpShr(m, false), args(imm = false, quiet = false))]
+    #[op(code = "a93mmm", fmt = DumpShr(m, true), args(imm = true, quiet = false))]
+    #[op(code = "b7a92m", fmt = ("Q{}", DumpShr(m, false)), args(imm = false, quiet = true))]
     fn exec_shrmod(st: &mut VmState, mut m: u32, imm: bool, quiet: bool) -> VmResult<i32> {
         enum Operation {
             RShift,
@@ -384,8 +384,8 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "a98m", fmt = ("MUL{}", DumpDivmod(m)), args(quiet = false))]
-    #[instr(code = "b7a98m", fmt = ("QMUL{}", DumpDivmod(m)), args(quiet = true))]
+    #[op(code = "a98m", fmt = ("MUL{}", DumpDivmod(m)), args(quiet = false))]
+    #[op(code = "b7a98m", fmt = ("QMUL{}", DumpDivmod(m)), args(quiet = true))]
     fn exec_muldivmod(st: &mut VmState, m: u32, quiet: bool) -> VmResult<i32> {
         enum Operation {
             MulDiv,
@@ -460,9 +460,9 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "a9am", fmt = ("MUL{}", DumpShr(m, false)), args(imm = false, quiet = false))]
-    #[instr(code = "a9bmmm", fmt = ("MUL{}", DumpShr(m, true)), args(imm = true, quiet = false))]
-    #[instr(code = "b7a9am", fmt = ("QMUL{}", DumpShr(m, false)), args(imm = false, quiet = true))]
+    #[op(code = "a9am", fmt = ("MUL{}", DumpShr(m, false)), args(imm = false, quiet = false))]
+    #[op(code = "a9bmmm", fmt = ("MUL{}", DumpShr(m, true)), args(imm = true, quiet = false))]
+    #[op(code = "b7a9am", fmt = ("QMUL{}", DumpShr(m, false)), args(imm = false, quiet = true))]
     fn exec_mulshrmod(st: &mut VmState, mut m: u32, imm: bool, quiet: bool) -> VmResult<i32> {
         enum Operation {
             MulRShift,
@@ -552,9 +552,9 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "a9cm", fmt = DumpShl(m, false), args(imm = false, quiet = false))]
-    #[instr(code = "a9dmmm", fmt = DumpShl(m, true), args(imm = true, quiet = false))]
-    #[instr(code = "b7a9cm", fmt = ("Q{}", DumpShl(m, false)), args(imm = false, quiet = true))]
+    #[op(code = "a9cm", fmt = DumpShl(m, false), args(imm = false, quiet = false))]
+    #[op(code = "a9dmmm", fmt = DumpShl(m, true), args(imm = true, quiet = false))]
+    #[op(code = "b7a9cm", fmt = ("Q{}", DumpShl(m, false)), args(imm = false, quiet = true))]
     fn exec_shldivmod(st: &mut VmState, mut m: u32, imm: bool, quiet: bool) -> VmResult<i32> {
         enum Operation {
             Div,
@@ -642,12 +642,12 @@ impl Arithops {
 
     // === Other opcodes ===
 
-    #[instr(code = "b608", fmt = "MIN", args(mn = true, mx = false, q = false))]
-    #[instr(code = "b609", fmt = "MAX", args(mn = false, mx = true, q = false))]
-    #[instr(code = "b60a", fmt = "MINMAX", args(mn = true, mx = true, q = false))]
-    #[instr(code = "b7b608", fmt = "QMIN", args(mn = true, mx = false, q = true))]
-    #[instr(code = "b7b609", fmt = "QMAX", args(mn = false, mx = true, q = true))]
-    #[instr(code = "b7b60a", fmt = "QMINMAX", args(mn = true, mx = true, q = true))]
+    #[op(code = "b608", fmt = "MIN", args(mn = true, mx = false, q = false))]
+    #[op(code = "b609", fmt = "MAX", args(mn = false, mx = true, q = false))]
+    #[op(code = "b60a", fmt = "MINMAX", args(mn = true, mx = true, q = false))]
+    #[op(code = "b7b608", fmt = "QMIN", args(mn = true, mx = false, q = true))]
+    #[op(code = "b7b609", fmt = "QMAX", args(mn = false, mx = true, q = true))]
+    #[op(code = "b7b60a", fmt = "QMINMAX", args(mn = true, mx = true, q = true))]
     fn exec_minmax(st: &mut VmState, mn: bool, mx: bool, q: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let x = ok!(stack.pop_int_or_nan());
@@ -677,8 +677,8 @@ impl Arithops {
         Ok(0)
     }
 
-    #[instr(code = "b60b", fmt = "ABS", args(quiet = false))]
-    #[instr(code = "b7b60b", fmt = "QABS", args(quiet = true))]
+    #[op(code = "b60b", fmt = "ABS", args(quiet = false))]
+    #[op(code = "b7b60b", fmt = "QABS", args(quiet = true))]
     fn exec_abs(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {

@@ -12,8 +12,8 @@ pub struct CmpOps;
 
 #[vm_module]
 impl CmpOps {
-    #[instr(code = "b8", fmt = "SGN", args(quiet = false))]
-    #[instr(code = "b7b8", fmt = "QSGN", args(quiet = true))]
+    #[op(code = "b8", fmt = "SGN", args(quiet = false))]
+    #[op(code = "b7b8", fmt = "QSGN", args(quiet = true))]
     fn exec_sgn(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let Some(x) = ok!(stack.pop_int_or_nan()) else {
@@ -29,20 +29,20 @@ impl CmpOps {
         Ok(0)
     }
 
-    #[instr(code = "b9", fmt = "LESS", args(mode = 0x887, quiet = false))]
-    #[instr(code = "ba", fmt = "EQUAL", args(mode = 0x878, quiet = false))]
-    #[instr(code = "bb", fmt = "LEQ", args(mode = 0x877, quiet = false))]
-    #[instr(code = "bc", fmt = "GREATER", args(mode = 0x788, quiet = false))]
-    #[instr(code = "bd", fmt = "NEQ", args(mode = 0x787, quiet = false))]
-    #[instr(code = "be", fmt = "GEQ", args(mode = 0x778, quiet = false))]
-    #[instr(code = "bf", fmt = "CMP", args(mode = 0x987, quiet = false))]
-    #[instr(code = "b7b9", fmt = "QLESS", args(mode = 0x887, quiet = true))]
-    #[instr(code = "b7ba", fmt = "QEQUAL", args(mode = 0x878, quiet = true))]
-    #[instr(code = "b7bb", fmt = "QLEQ", args(mode = 0x877, quiet = true))]
-    #[instr(code = "b7bc", fmt = "QGREATER", args(mode = 0x788, quiet = true))]
-    #[instr(code = "b7bd", fmt = "QNEQ", args(mode = 0x787, quiet = true))]
-    #[instr(code = "b7be", fmt = "QGEQ", args(mode = 0x778, quiet = true))]
-    #[instr(code = "b7bf", fmt = "QCMP", args(mode = 0x987, quiet = true))]
+    #[op(code = "b9", fmt = "LESS", args(mode = 0x887, quiet = false))]
+    #[op(code = "ba", fmt = "EQUAL", args(mode = 0x878, quiet = false))]
+    #[op(code = "bb", fmt = "LEQ", args(mode = 0x877, quiet = false))]
+    #[op(code = "bc", fmt = "GREATER", args(mode = 0x788, quiet = false))]
+    #[op(code = "bd", fmt = "NEQ", args(mode = 0x787, quiet = false))]
+    #[op(code = "be", fmt = "GEQ", args(mode = 0x778, quiet = false))]
+    #[op(code = "bf", fmt = "CMP", args(mode = 0x987, quiet = false))]
+    #[op(code = "b7b9", fmt = "QLESS", args(mode = 0x887, quiet = true))]
+    #[op(code = "b7ba", fmt = "QEQUAL", args(mode = 0x878, quiet = true))]
+    #[op(code = "b7bb", fmt = "QLEQ", args(mode = 0x877, quiet = true))]
+    #[op(code = "b7bc", fmt = "QGREATER", args(mode = 0x788, quiet = true))]
+    #[op(code = "b7bd", fmt = "QNEQ", args(mode = 0x787, quiet = true))]
+    #[op(code = "b7be", fmt = "QGEQ", args(mode = 0x778, quiet = true))]
+    #[op(code = "b7bf", fmt = "QCMP", args(mode = 0x987, quiet = true))]
     fn exec_cmp(st: &mut VmState, mode: i32, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
@@ -59,14 +59,14 @@ impl CmpOps {
         Ok(0)
     }
 
-    #[instr(code = "c0yy", fmt = "EQINT {y}", args(y = args as i8, mode = 0x878, quiet = false))]
-    #[instr(code = "c1yy", fmt = "LESSINT {y}", args(y = args as i8, mode = 0x887, quiet = false))]
-    #[instr(code = "c2yy", fmt = "GTINT {y}", args(y = args as i8, mode = 0x788, quiet = false))]
-    #[instr(code = "c3yy", fmt = "NEQINT {y}", args(y = args as i8, mode = 0x787, quiet = false))]
-    #[instr(code = "b7c0yy", fmt = "QEQINT {y}", args(y = args as i8, mode = 0x878, quiet = true))]
-    #[instr(code = "b7c1yy", fmt = "QLESSINT {y}", args(y = args as i8, mode = 0x887, quiet = true))]
-    #[instr(code = "b7c2yy", fmt = "QGTINT {y}", args(y = args as i8, mode = 0x788, quiet = true))]
-    #[instr(code = "b7c3yy", fmt = "QNEQINT {y}", args(y = args as i8, mode = 0x787, quiet = true))]
+    #[op(code = "c0yy", fmt = "EQINT {y}", args(y = args as i8, mode = 0x878, quiet = false))]
+    #[op(code = "c1yy", fmt = "LESSINT {y}", args(y = args as i8, mode = 0x887, quiet = false))]
+    #[op(code = "c2yy", fmt = "GTINT {y}", args(y = args as i8, mode = 0x788, quiet = false))]
+    #[op(code = "c3yy", fmt = "NEQINT {y}", args(y = args as i8, mode = 0x787, quiet = false))]
+    #[op(code = "b7c0yy", fmt = "QEQINT {y}", args(y = args as i8, mode = 0x878, quiet = true))]
+    #[op(code = "b7c1yy", fmt = "QLESSINT {y}", args(y = args as i8, mode = 0x887, quiet = true))]
+    #[op(code = "b7c2yy", fmt = "QGTINT {y}", args(y = args as i8, mode = 0x788, quiet = true))]
+    #[op(code = "b7c3yy", fmt = "QNEQINT {y}", args(y = args as i8, mode = 0x787, quiet = true))]
     fn exec_cmp_int(st: &mut VmState, y: i8, mode: i32, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
@@ -80,7 +80,7 @@ impl CmpOps {
         Ok(0)
     }
 
-    #[instr(code = "c4", fmt = "ISNAN")]
+    #[op(code = "c4", fmt = "ISNAN")]
     fn exec_is_nan(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let x = ok!(stack.pop_int_or_nan());
@@ -88,7 +88,7 @@ impl CmpOps {
         Ok(0)
     }
 
-    #[instr(code = "c5", fmt = "CHKNAN")]
+    #[op(code = "c5", fmt = "CHKNAN")]
     fn exec_chk_nan(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let int = ok!(stack.pop_int());

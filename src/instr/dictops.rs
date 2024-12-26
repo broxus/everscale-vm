@@ -27,7 +27,7 @@ impl Dictops {
         Ok(())
     }
 
-    #[instr(code = "f400", fmt = "STDICT")]
+    #[op(code = "f400", fmt = "STDICT")]
     fn exec_stdict(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
 
@@ -39,7 +39,7 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f401", fmt = "SKIPDICT")]
+    #[op(code = "f401", fmt = "SKIPDICT")]
     fn exec_skip_dict(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut csr = ok!(stack.pop_cs());
@@ -55,8 +55,8 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f402", fmt = "LDDICTS", args(preload = false))]
-    #[instr(code = "f403", fmt = "PLDDICTS", args(preload = true))]
+    #[op(code = "f402", fmt = "LDDICTS", args(preload = false))]
+    #[op(code = "f403", fmt = "PLDDICTS", args(preload = true))]
     fn exec_load_dict_slice(st: &mut VmState, preload: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut csr = ok!(stack.pop_cs());
@@ -73,10 +73,10 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f404", fmt = "LDDICT", args(preload = false, quiet = false))]
-    #[instr(code = "f405", fmt = "PLDDICT", args(preload = true, quiet = false))]
-    #[instr(code = "f406", fmt = "LDDICTQ", args(preload = false, quiet = true))]
-    #[instr(code = "f407", fmt = "PLDDICTQ", args(preload = true, quiet = true))]
+    #[op(code = "f404", fmt = "LDDICT", args(preload = false, quiet = false))]
+    #[op(code = "f405", fmt = "PLDDICT", args(preload = true, quiet = false))]
+    #[op(code = "f406", fmt = "LDDICTQ", args(preload = false, quiet = true))]
+    #[op(code = "f407", fmt = "PLDDICTQ", args(preload = true, quiet = true))]
     fn exec_load_dict(st: &mut VmState, preload: bool, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut csr = ok!(stack.pop_cs());
@@ -108,7 +108,7 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f40s @ f40a..f40f", fmt = s.display("GET"), args(s = DictOpArgs(args)))]
+    #[op(code = "f40s @ f40a..f40f", fmt = s.display("GET"), args(s = DictOpArgs(args)))]
     fn exec_dict_get(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
@@ -151,32 +151,32 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(
+    #[op(
         code = "f4ss @ f412..f418",
         fmt = s.display("SET"),
         args(s = DictOpArgs(args), b = false, mode = SetMode::Set)
     )]
-    #[instr(
+    #[op(
         code = "f4ss @ f422..f428",
         fmt = s.display("REPLACE"),
         args(s = DictOpArgs(args), b = false, mode = SetMode::Replace)
     )]
-    #[instr(
+    #[op(
         code = "f4ss @ f432..f438",
         fmt = s.display("ADD"),
         args(s = DictOpArgs(args), b = false, mode = SetMode::Add)
     )]
-    #[instr(
+    #[op(
         code = "f4ss @ f441..f444",
         fmt = s.display_b("SET"),
         args(s = DictOpArgs(args << 1), b = true, mode = SetMode::Set)
     )]
-    #[instr(
+    #[op(
         code = "f4ss @ f449..f44c",
         fmt = s.display_b("REPLACE"),
         args(s = DictOpArgs(args << 1), b = true, mode = SetMode::Replace)
     )]
-    #[instr(
+    #[op(
         code = "f4ss @ f451..f454",
         fmt = s.display_b("ADD"),
         args(s = DictOpArgs(args << 1), b = true, mode = SetMode::Add)
@@ -223,32 +223,32 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(
+    #[op(
         code = "f4ss @ f41a..f420",
         fmt = s.display("SETGET"),
         args(s = DictOpArgs(args), b = false, mode = SetMode::Set)
     )]
-    #[instr(
+    #[op(
         code = "f4ss @ f42a..f430",
         fmt = s.display("REPLACEGET"),
         args(s = DictOpArgs(args), b = false, mode = SetMode::Replace)
     )]
-    #[instr(
+    #[op(
         code = "f4ss @ f43a..f440",
         fmt = s.display("ADDGET"),
         args(s = DictOpArgs(args), b = false, mode = SetMode::Add)
     )]
-    #[instr(
+    #[op(
         code = "f4ss @ f445..f448",
         fmt = s.display_b("SETGET"),
         args(s = DictOpArgs(args << 1), b = true, mode = SetMode::Set)
     )]
-    #[instr(
+    #[op(
         code = "f4ss @ f44d..f450",
         fmt = s.display_b("REPLACEGET"),
         args(s = DictOpArgs(args << 1), b = true, mode = SetMode::Replace)
     )]
-    #[instr(
+    #[op(
         code = "f4ss @ f455..f458",
         fmt = s.display_b("ADDGET"),
         args(s = DictOpArgs(args << 1), b = true, mode = SetMode::Add)
@@ -302,7 +302,7 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f4ss @ f459..f45c", fmt = s.display("DEL"), args(s = ShortDictOpArgs(args)))]
+    #[op(code = "f4ss @ f459..f45c", fmt = s.display("DEL"), args(s = ShortDictOpArgs(args)))]
     fn exec_dict_delete(st: &mut VmState, s: ShortDictOpArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
@@ -335,7 +335,7 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f4ss @ f462..f468", fmt = s.display("DELGET"), args(s = DictOpArgs(args)))]
+    #[op(code = "f4ss @ f462..f468", fmt = s.display("DELGET"), args(s = DictOpArgs(args)))]
     fn exec_dict_deleteget(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
@@ -378,7 +378,7 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f4ss @ f469..f46c", fmt = s.display("GETOPTREF"), args(s = ShortDictOpArgs(args)))]
+    #[op(code = "f4ss @ f469..f46c", fmt = s.display("GETOPTREF"), args(s = ShortDictOpArgs(args)))]
     fn exec_dict_get_optref(st: &mut VmState, s: ShortDictOpArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
@@ -409,7 +409,7 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f4ss @ f46d..f470", fmt = s.display("SETGETOPTREF"), args(s = ShortDictOpArgs(args)))]
+    #[op(code = "f4ss @ f46d..f470", fmt = s.display("SETGETOPTREF"), args(s = ShortDictOpArgs(args)))]
     fn exec_dict_setget_optref(st: &mut VmState, s: ShortDictOpArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
@@ -443,7 +443,7 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f4ss @ f474..f480", fmt = s, args(s = DictGetNearArgs(args)))]
+    #[op(code = "f4ss @ f474..f480", fmt = s, args(s = DictGetNearArgs(args)))]
     fn exec_dict_get_near(st: &mut VmState, s: DictGetNearArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
 
@@ -508,10 +508,10 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f4ss @ f482..f488", fmt = s.display("MIN"), args(s = DictOpArgs(args)))]
-    #[instr(code = "f4ss @ f48a..f490", fmt = s.display("MAX"), args(s = DictOpArgs(args)))]
-    #[instr(code = "f4ss @ f492..f498", fmt = s.display("REMMIN"), args(s = DictOpArgs(args)))]
-    #[instr(code = "f4ss @ f49a..f4a0", fmt = s.display("REMMAX"), args(s = DictOpArgs(args)))]
+    #[op(code = "f4ss @ f482..f488", fmt = s.display("MIN"), args(s = DictOpArgs(args)))]
+    #[op(code = "f4ss @ f48a..f490", fmt = s.display("MAX"), args(s = DictOpArgs(args)))]
+    #[op(code = "f4ss @ f492..f498", fmt = s.display("REMMIN"), args(s = DictOpArgs(args)))]
+    #[op(code = "f4ss @ f49a..f4a0", fmt = s.display("REMMAX"), args(s = DictOpArgs(args)))]
     fn exec_dict_get_min(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
 
@@ -570,8 +570,8 @@ impl Dictops {
         Ok(0)
     }
 
-    #[instr(code = "f4a$00ss", fmt = s, args(s = DictExecArgs(args)))]
-    #[instr(code = "f4b$11ss", fmt = s, args(s = DictExecArgs(args)))]
+    #[op(code = "f4a$00ss", fmt = s, args(s = DictExecArgs(args)))]
+    #[op(code = "f4b$11ss", fmt = s, args(s = DictExecArgs(args)))]
     fn exec_dict_get_exec(st: &mut VmState, s: DictExecArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
@@ -633,8 +633,8 @@ impl Dictops {
     }
 
     // TODO: Implement a proper subdictionary cut.
-    // #[instr(code = "f4ss @ f4b1..f4b4", fmt = s.display("GET"), args(s = SubDictOpArgs(args)))]
-    // #[instr(code = "f4ss @ f4b5..f4b8", fmt = s.display("RPGET"), args(s = SubDictOpArgs(args)))]
+    // #[op(code = "f4ss @ f4b1..f4b4", fmt = s.display("GET"), args(s = SubDictOpArgs(args)))]
+    // #[op(code = "f4ss @ f4b5..f4b8", fmt = s.display("RPGET"), args(s = SubDictOpArgs(args)))]
     // fn exec_subdict_get(st: &mut VmState, s: SubDictOpArgs) -> VmResult<i32> {
     //     let stack = Rc::make_mut(&mut st.stack);
     //     let n = ok!(stack.pop_smallint_range(0, 1023));

@@ -15,7 +15,7 @@ pub struct RandOps;
 
 #[vm_module]
 impl RandOps {
-    #[instr(code = "f810", fmt = "RANDU256")]
+    #[op(code = "f810", fmt = "RANDU256")]
     fn exec_randu256(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let random_bytes = ok!(generate_random_u256(&mut st.cr, &mut st.gas));
@@ -24,7 +24,7 @@ impl RandOps {
         Ok(0)
     }
 
-    #[instr(code = "f811", fmt = "RAND")]
+    #[op(code = "f811", fmt = "RAND")]
     fn exec_rand_int(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut int = ok!(stack.pop_int());
@@ -41,8 +41,8 @@ impl RandOps {
         Ok(0)
     }
 
-    #[instr(code = "f814", fmt = "SETRAND", args(mix = false))]
-    #[instr(code = "f815", fmt = "ADDRAND", args(mix = true))]
+    #[op(code = "f814", fmt = "SETRAND", args(mix = false))]
+    #[op(code = "f815", fmt = "ADDRAND", args(mix = true))]
     fn exec_set_rand(st: &mut VmState, mix: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
 

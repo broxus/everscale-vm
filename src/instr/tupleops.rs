@@ -11,14 +11,14 @@ pub struct Tupleops;
 
 #[vm_module]
 impl Tupleops {
-    #[instr(code = "6d", fmt = "PUSHNULL")]
+    #[op(code = "6d", fmt = "PUSHNULL")]
     fn exec_push_null(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         ok!(stack.push_null());
         Ok(0)
     }
 
-    #[instr(code = "6e", fmt = "ISNULL")]
+    #[op(code = "6e", fmt = "ISNULL")]
     fn exec_is_null(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let top = ok!(stack.pop());
@@ -26,111 +26,111 @@ impl Tupleops {
         Ok(0)
     }
 
-    #[instr(code = "6f0i", fmt = "TUPLE {i}")]
+    #[op(code = "6f0i", fmt = "TUPLE {i}")]
     fn exec_mktuple(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         make_tuple_impl(stack, i as _, &mut st.gas)
     }
 
-    #[instr(code = "6f1i", fmt = "INDEX {i}")]
+    #[op(code = "6f1i", fmt = "INDEX {i}")]
     fn exec_tuple_index(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         tuple_index_impl(stack, i as _)
     }
 
-    #[instr(code = "6f2i", fmt = "UNTUPLE {i}")]
+    #[op(code = "6f2i", fmt = "UNTUPLE {i}")]
     fn exec_untuple(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         untuple_impl(stack, i, &mut st.gas)
     }
 
-    #[instr(code = "6f3i", fmt = "UNPACKFIRST {i}")]
+    #[op(code = "6f3i", fmt = "UNPACKFIRST {i}")]
     fn exec_untuple_first(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         untuple_first_impl(stack, i, &mut st.gas)
     }
 
-    #[instr(code = "6f4i", fmt = "EXPLODE {i}")]
+    #[op(code = "6f4i", fmt = "EXPLODE {i}")]
     fn exec_explode_tuple(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         explode_tuple_impl(stack, i, &mut st.gas)
     }
 
-    #[instr(code = "6f5i", fmt = "SETINDEX {i}")]
+    #[op(code = "6f5i", fmt = "SETINDEX {i}")]
     fn exec_tuple_set_index(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         tuple_set_index_impl(stack, i as _, &mut st.gas)
     }
 
-    #[instr(code = "6f6i", fmt = "INDEXQ {i}")]
+    #[op(code = "6f6i", fmt = "INDEXQ {i}")]
     fn exec_tuple_quiet_index(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         tuple_index_quiet_impl(stack, i as _)
     }
 
-    #[instr(code = "6f7i", fmt = "SETINDEXQ {i}")]
+    #[op(code = "6f7i", fmt = "SETINDEXQ {i}")]
     fn exec_tuple_quiet_set_index(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         tuple_set_index_quiet_impl(stack, i as _, &mut st.gas)
     }
 
-    #[instr(code = "6f80", fmt = "TUPLEVAR")]
+    #[op(code = "6f80", fmt = "TUPLEVAR")]
     fn exec_mktuple_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 255));
         make_tuple_impl(stack, n as _, &mut st.gas)
     }
 
-    #[instr(code = "6f81", fmt = "INDEXVAR")]
+    #[op(code = "6f81", fmt = "INDEXVAR")]
     fn exec_tuple_index_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let i = ok!(stack.pop_smallint_range(0, 254));
         tuple_index_impl(stack, i as _)
     }
 
-    #[instr(code = "6f82", fmt = "UNTUPLEVAR")]
+    #[op(code = "6f82", fmt = "UNTUPLEVAR")]
     fn exec_untuple_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 255));
         untuple_impl(stack, n as _, &mut st.gas)
     }
 
-    #[instr(code = "6f83", fmt = "UNPACKFIRSTVAR")]
+    #[op(code = "6f83", fmt = "UNPACKFIRSTVAR")]
     fn exec_untuple_first_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 255));
         untuple_first_impl(stack, n, &mut st.gas)
     }
 
-    #[instr(code = "6f84", fmt = "EXPLODEVAR")]
+    #[op(code = "6f84", fmt = "EXPLODEVAR")]
     fn exec_explode_tuple_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 255));
         explode_tuple_impl(stack, n, &mut st.gas)
     }
 
-    #[instr(code = "6f85", fmt = "SETINDEXVAR")]
+    #[op(code = "6f85", fmt = "SETINDEXVAR")]
     fn exec_tuple_set_index_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let i = ok!(stack.pop_smallint_range(0, 254));
         tuple_set_index_impl(stack, i as usize, &mut st.gas)
     }
 
-    #[instr(code = "6f86", fmt = "INDEXVARQ")]
+    #[op(code = "6f86", fmt = "INDEXVARQ")]
     fn exec_tuple_quiet_index_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let i = ok!(stack.pop_smallint_range(0, 254));
         tuple_index_quiet_impl(stack, i as _)
     }
 
-    #[instr(code = "6f87", fmt = "SETINDEXVARQ")]
+    #[op(code = "6f87", fmt = "SETINDEXVARQ")]
     fn exec_tuple_quiet_set_index_var(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let i = ok!(stack.pop_smallint_range(0, 254));
         tuple_set_index_quiet_impl(stack, i as _, &mut st.gas)
     }
 
-    #[instr(code = "6f88", fmt = "TLEN")]
+    #[op(code = "6f88", fmt = "TLEN")]
     fn exec_tuple_length(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let tuple = ok!(stack.pop_tuple_range(0, 255));
@@ -138,7 +138,7 @@ impl Tupleops {
         Ok(0)
     }
 
-    #[instr(code = "6f89", fmt = "QTLEN")]
+    #[op(code = "6f89", fmt = "QTLEN")]
     fn exec_tuple_length_quiet(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let value = ok!(stack.pop());
@@ -150,7 +150,7 @@ impl Tupleops {
         Ok(0)
     }
 
-    #[instr(code = "6f8a", fmt = "ISTUPLE")]
+    #[op(code = "6f8a", fmt = "ISTUPLE")]
     fn exec_is_tuple(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let is_tuple = ok!(stack.pop()).is_tuple();
@@ -158,7 +158,7 @@ impl Tupleops {
         Ok(0)
     }
 
-    #[instr(code = "6f8b", fmt = "LAST")]
+    #[op(code = "6f8b", fmt = "LAST")]
     fn exec_tuple_last(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let tuple = ok!(stack.pop_tuple_range(1, 255));
@@ -168,7 +168,7 @@ impl Tupleops {
         Ok(0)
     }
 
-    #[instr(code = "6f8c", fmt = "TPUSH")]
+    #[op(code = "6f8c", fmt = "TPUSH")]
     fn exec_tuple_push(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let x = ok!(stack.pop());
@@ -179,7 +179,7 @@ impl Tupleops {
         Ok(0)
     }
 
-    #[instr(code = "6f8d", fmt = "TPOP")]
+    #[op(code = "6f8d", fmt = "TPOP")]
     fn exec_tuple_pop(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mut tuple = ok!(stack.pop_tuple_range(1, 255));
@@ -192,10 +192,10 @@ impl Tupleops {
         Ok(0)
     }
 
-    #[instr(code = "6fa0", fmt = "NULLSWAPIF", args(c = true, d = false))]
-    #[instr(code = "6fa1", fmt = "NULLSWAPIFNOT", args(c = false, d = false))]
-    #[instr(code = "6fa2", fmt = "NULLROTRIF", args(c = true, d = true))]
-    #[instr(code = "6fa3", fmt = "NULLROTRIFNOT", args(c = false, d = true))]
+    #[op(code = "6fa0", fmt = "NULLSWAPIF", args(c = true, d = false))]
+    #[op(code = "6fa1", fmt = "NULLSWAPIFNOT", args(c = false, d = false))]
+    #[op(code = "6fa2", fmt = "NULLROTRIF", args(c = true, d = true))]
+    #[op(code = "6fa3", fmt = "NULLROTRIFNOT", args(c = false, d = true))]
     fn exec_null_swap_if(st: &mut VmState, c: bool, d: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let x = ok!(stack.pop_int());
@@ -209,10 +209,10 @@ impl Tupleops {
         Ok(0)
     }
 
-    #[instr(code = "6fa4", fmt = "NULLSWAPIF2", args(c = true, d = false))]
-    #[instr(code = "6fa5", fmt = "NULLSWAPIFNOT2", args(c = false, d = false))]
-    #[instr(code = "6fa6", fmt = "NULLROTRIF2", args(c = true, d = true))]
-    #[instr(code = "6fa7", fmt = "NULLROTRIFNOT2", args(c = false, d = true))]
+    #[op(code = "6fa4", fmt = "NULLSWAPIF2", args(c = true, d = false))]
+    #[op(code = "6fa5", fmt = "NULLSWAPIFNOT2", args(c = false, d = false))]
+    #[op(code = "6fa6", fmt = "NULLROTRIF2", args(c = true, d = true))]
+    #[op(code = "6fa7", fmt = "NULLROTRIFNOT2", args(c = false, d = true))]
     fn exec_null_swap_if2(st: &mut VmState, c: bool, d: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let x = ok!(stack.pop_int());
@@ -227,7 +227,7 @@ impl Tupleops {
         Ok(0)
     }
 
-    #[instr(code = "6fb$iijj", fmt = "INDEX2 {i},{j}")]
+    #[op(code = "6fb$iijj", fmt = "INDEX2 {i},{j}")]
     fn exec_tuple_index2(st: &mut VmState, i: u32, j: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let tuple = ok!(stack.pop_tuple_range(0, 255));
@@ -245,7 +245,7 @@ impl Tupleops {
         Ok(0)
     }
 
-    #[instr(code = "6f$11iijjkk", fmt = "INDEX3 {i},{j},{k}")]
+    #[op(code = "6f$11iijjkk", fmt = "INDEX3 {i},{j},{k}")]
     fn exec_tuple_index3(st: &mut VmState, i: u32, j: u32, k: u32) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let tuple = ok!(stack.pop_tuple_range(0, 255));

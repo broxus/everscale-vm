@@ -25,7 +25,7 @@ pub struct MessageOps;
 
 #[vm_module]
 impl MessageOps {
-    #[instr(code = "fb00", fmt = "SENDRAWMSG")]
+    #[op(code = "fb00", fmt = "SENDRAWMSG")]
     fn exec_send_message_raw(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mode = ok!(stack.pop_smallint_range(0, 255)) as u8;
@@ -37,8 +37,8 @@ impl MessageOps {
         })
     }
 
-    #[instr(code = "fb02", fmt = "RAWRESERVE", args(x = false))]
-    #[instr(code = "fb03", fmt = "RAWRESERVEX", args(x = true))]
+    #[op(code = "fb02", fmt = "RAWRESERVE", args(x = false))]
+    #[op(code = "fb03", fmt = "RAWRESERVEX", args(x = true))]
     fn exec_reserve_raw(st: &mut VmState, x: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mode = ok!(stack.pop_smallint_range(
@@ -61,7 +61,7 @@ impl MessageOps {
         })
     }
 
-    #[instr(code = "fb04", fmt = "SETCODE")]
+    #[op(code = "fb04", fmt = "SETCODE")]
     fn exec_set_code(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let code = ok!(stack.pop_cell());
@@ -71,7 +71,7 @@ impl MessageOps {
         })
     }
 
-    #[instr(code = "fb06", fmt = "SETLIBCODE")]
+    #[op(code = "fb06", fmt = "SETLIBCODE")]
     fn exec_set_lib_code(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mode = ok!(pop_change_library_mode(st.version, stack));
@@ -83,7 +83,7 @@ impl MessageOps {
         })
     }
 
-    #[instr(code = "fb07", fmt = "CHANGELIB")]
+    #[op(code = "fb07", fmt = "CHANGELIB")]
     fn exec_change_lib(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let mode = ok!(pop_change_library_mode(st.version, stack));
@@ -110,7 +110,7 @@ impl MessageOps {
         })
     }
 
-    #[instr(code = "fb08", fmt = "SENDMSG")]
+    #[op(code = "fb08", fmt = "SENDMSG")]
     fn exec_send_message(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(4..));
 

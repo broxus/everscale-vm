@@ -17,8 +17,8 @@ pub struct Hashops;
 
 #[vm_module]
 impl Hashops {
-    #[instr(code = "f900", fmt = "HASHCU", args(src = HashSource::Cell))]
-    #[instr(code = "f901", fmt = "HASHSU", args(src = HashSource::Slice))]
+    #[op(code = "f900", fmt = "HASHCU", args(src = HashSource::Cell))]
+    #[op(code = "f901", fmt = "HASHSU", args(src = HashSource::Slice))]
     fn exec_compute_hash(st: &mut VmState, src: HashSource) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
 
@@ -36,7 +36,7 @@ impl Hashops {
         Ok(0)
     }
 
-    #[instr(code = "f902", fmt = "SHA256U")]
+    #[op(code = "f902", fmt = "SHA256U")]
     fn exec_compute_sha256(st: &mut VmState) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let cs = ok!(stack.pop_cs());
@@ -52,7 +52,7 @@ impl Hashops {
         Ok(0)
     }
 
-    #[instr(code = "f90$01pr#ii", fmt = DisplayHashArgsExt { p, r, i })]
+    #[op(code = "f90$01pr#ii", fmt = DisplayHashArgsExt { p, r, i })]
     fn exec_hash_ext(st: &mut VmState, p: bool, r: bool, mut i: u32) -> VmResult<i32> {
         ok!(st.version.require_ton(4..));
 
@@ -89,8 +89,8 @@ impl Hashops {
         Ok(0)
     }
 
-    #[instr(code = "f910", fmt = "CHKSIGNU", args(from_slice = false))]
-    #[instr(code = "f911", fmt = "CHKSIGNS", args(from_slice = true))]
+    #[op(code = "f910", fmt = "CHKSIGNU", args(from_slice = false))]
+    #[op(code = "f911", fmt = "CHKSIGNS", args(from_slice = true))]
     fn exec_ed25519_check_signature(st: &mut VmState, from_slice: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let key_int = ok!(stack.pop_int());

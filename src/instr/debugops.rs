@@ -12,7 +12,7 @@ pub struct Debugops;
 
 #[vm_module]
 impl Debugops {
-    #[instr(code = "fe00", fmt = "DUMPSTK")]
+    #[op(code = "fe00", fmt = "DUMPSTK")]
     fn exec_dump_stack(st: &mut VmState) -> VmResult<i32> {
         let Some(debug) = &mut st.debug else {
             return Ok(0);
@@ -33,15 +33,15 @@ impl Debugops {
         Ok(0)
     }
 
-    #[instr(code = "fexx @ fe01..fe14", fmt = "DEBUG {x}", args(x = args & 0xff))]
-    #[instr(code = "fexx @ fe15..fe20", fmt = "DEBUG {x}", args(x = args & 0xff))]
-    #[instr(code = "fexx @ fe30..fef0", fmt = "DEBUG {x}", args(x = args & 0xff))]
+    #[op(code = "fexx @ fe01..fe14", fmt = "DEBUG {x}", args(x = args & 0xff))]
+    #[op(code = "fexx @ fe15..fe20", fmt = "DEBUG {x}", args(x = args & 0xff))]
+    #[op(code = "fexx @ fe30..fef0", fmt = "DEBUG {x}", args(x = args & 0xff))]
     fn exec_dummy_debug(_: &mut VmState, x: u32) -> VmResult<i32> {
         _ = x;
         Ok(0)
     }
 
-    #[instr(code = "fe14", fmt = "STRDUMP")]
+    #[op(code = "fe14", fmt = "STRDUMP")]
     fn exec_dump_string(st: &mut VmState) -> VmResult<i32> {
         let Some(debug) = &mut st.debug else {
             return Ok(0);
@@ -65,7 +65,7 @@ impl Debugops {
         Ok(0)
     }
 
-    #[instr(code = "fe2x", fmt = "DUMP s{x}")]
+    #[op(code = "fe2x", fmt = "DUMP s{x}")]
     fn exec_dump_value(st: &mut VmState, x: u32) -> VmResult<i32> {
         let Some(debug) = &mut st.debug else {
             return Ok(0);

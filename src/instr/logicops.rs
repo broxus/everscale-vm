@@ -12,8 +12,8 @@ pub struct LogicOps;
 
 #[vm_module]
 impl LogicOps {
-    #[instr(code = "aayy", fmt = "LSHIFT {y}", args(y = (args & 0xff) + 1, quiet = false))]
-    #[instr(code = "b7aayy", fmt = "QLSHIFT {y}", args(y = (args & 0xff) + 1, quiet = true))]
+    #[op(code = "aayy", fmt = "LSHIFT {y}", args(y = (args & 0xff) + 1, quiet = false))]
+    #[op(code = "b7aayy", fmt = "QLSHIFT {y}", args(y = (args & 0xff) + 1, quiet = true))]
     fn exec_lshift_tinyint8(st: &mut VmState, y: u32, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
@@ -27,8 +27,8 @@ impl LogicOps {
         Ok(0)
     }
 
-    #[instr(code = "abyy", fmt = "RSHIFT {y}", args(y = (args & 0xff) + 1, quiet = false))]
-    #[instr(code = "b7abyy", fmt = "QRSHIFT {y}", args(y = (args & 0xff) + 1, quiet = true))]
+    #[op(code = "abyy", fmt = "RSHIFT {y}", args(y = (args & 0xff) + 1, quiet = false))]
+    #[op(code = "b7abyy", fmt = "QRSHIFT {y}", args(y = (args & 0xff) + 1, quiet = true))]
     fn exec_rshift_tinyint8(st: &mut VmState, y: u32, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
@@ -42,8 +42,8 @@ impl LogicOps {
         Ok(0)
     }
 
-    #[instr(code = "ac", fmt = "LSHIFT", args(quiet = false))]
-    #[instr(code = "b7ac", fmt = "QLSHIFT", args(quiet = true))]
+    #[op(code = "ac", fmt = "LSHIFT", args(quiet = false))]
+    #[op(code = "b7ac", fmt = "QLSHIFT", args(quiet = true))]
     fn exec_lshift(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_smallint_range(0, 1023));
@@ -58,8 +58,8 @@ impl LogicOps {
         Ok(0)
     }
 
-    #[instr(code = "ad", fmt = "RSHIFT", args(quiet = false))]
-    #[instr(code = "b7ad", fmt = "QRSHIFT", args(quiet = true))]
+    #[op(code = "ad", fmt = "RSHIFT", args(quiet = false))]
+    #[op(code = "b7ad", fmt = "QRSHIFT", args(quiet = true))]
     fn exec_rshift(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_smallint_range(0, 1023));
@@ -74,8 +74,8 @@ impl LogicOps {
         Ok(0)
     }
 
-    #[instr(code = "ae", fmt = "POW2", args(quiet = false))]
-    #[instr(code = "b7ae", fmt = "QPOW2", args(quiet = true))]
+    #[op(code = "ae", fmt = "POW2", args(quiet = false))]
+    #[op(code = "b7ae", fmt = "QPOW2", args(quiet = true))]
     fn exec_pow2(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_smallint_range(0, 1023));
@@ -83,8 +83,8 @@ impl LogicOps {
         Ok(0)
     }
 
-    #[instr(code = "b0", fmt = "AND", args(quiet = false))]
-    #[instr(code = "b7b0", fmt = "QAND", args(quiet = true))]
+    #[op(code = "b0", fmt = "AND", args(quiet = false))]
+    #[op(code = "b7b0", fmt = "QAND", args(quiet = true))]
     fn exec_and(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
@@ -105,8 +105,8 @@ impl LogicOps {
         Ok(0)
     }
 
-    #[instr(code = "b1", fmt = "OR", args(quiet = false))]
-    #[instr(code = "b7b1", fmt = "QOR", args(quiet = true))]
+    #[op(code = "b1", fmt = "OR", args(quiet = false))]
+    #[op(code = "b7b1", fmt = "QOR", args(quiet = true))]
     fn exec_or(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
@@ -129,8 +129,8 @@ impl LogicOps {
         Ok(0)
     }
 
-    #[instr(code = "b2", fmt = "XOR", args(quiet = false))]
-    #[instr(code = "b7b2", fmt = "QXOR", args(quiet = true))]
+    #[op(code = "b2", fmt = "XOR", args(quiet = false))]
+    #[op(code = "b7b2", fmt = "QXOR", args(quiet = true))]
     fn exec_xor(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
@@ -146,8 +146,8 @@ impl LogicOps {
         Ok(0)
     }
 
-    #[instr(code = "b3", fmt = "NOT", args(quiet = false))]
-    #[instr(code = "b7b3", fmt = "QNOT", args(quiet = true))]
+    #[op(code = "b3", fmt = "NOT", args(quiet = false))]
+    #[op(code = "b7b3", fmt = "QNOT", args(quiet = true))]
     fn exec_not(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
@@ -164,10 +164,10 @@ impl LogicOps {
         Ok(0)
     }
 
-    #[instr(code = "b4yy", fmt = "FITS {y}", args(y = (args & 0xff) + 1, s = true, quiet = false))]
-    #[instr(code = "b7b4yy", fmt = "QFITS {y}", args(y = (args & 0xff) + 1, s = true, quiet = true))]
-    #[instr(code = "b5yy", fmt = "UFITS {y}", args(y = (args & 0xff) + 1, s = false, quiet = false))]
-    #[instr(code = "b7b5yy", fmt = "QUFITS {y}", args(y = (args & 0xff) + 1, s = false, quiet = true))]
+    #[op(code = "b4yy", fmt = "FITS {y}", args(y = (args & 0xff) + 1, s = true, quiet = false))]
+    #[op(code = "b7b4yy", fmt = "QFITS {y}", args(y = (args & 0xff) + 1, s = true, quiet = true))]
+    #[op(code = "b5yy", fmt = "UFITS {y}", args(y = (args & 0xff) + 1, s = false, quiet = false))]
+    #[op(code = "b7b5yy", fmt = "QUFITS {y}", args(y = (args & 0xff) + 1, s = false, quiet = true))]
     fn exec_fits_tinyint8(st: &mut VmState, y: u32, s: bool, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
@@ -180,10 +180,10 @@ impl LogicOps {
         Ok(0)
     }
 
-    #[instr(code = "b600", fmt = "FITSX", args(s = true, quiet = false))]
-    #[instr(code = "b7b600", fmt = "QFITSX", args(s = true, quiet = true))]
-    #[instr(code = "b601", fmt = "UFITSX", args(s = false, quiet = false))]
-    #[instr(code = "b7b601", fmt = "QUFITSX", args(s = false, quiet = true))]
+    #[op(code = "b600", fmt = "FITSX", args(s = true, quiet = false))]
+    #[op(code = "b7b600", fmt = "QFITSX", args(s = true, quiet = true))]
+    #[op(code = "b601", fmt = "UFITSX", args(s = false, quiet = false))]
+    #[op(code = "b7b601", fmt = "QUFITSX", args(s = false, quiet = true))]
     fn exec_fits(st: &mut VmState, s: bool, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_smallint_range(0, 1023));
@@ -197,10 +197,10 @@ impl LogicOps {
         Ok(0)
     }
 
-    #[instr(code = "b602", fmt = "BITSIZE", args(s = true, quiet = false))]
-    #[instr(code = "b7b602", fmt = "QBITSIZE", args(s = true, quiet = true))]
-    #[instr(code = "b603", fmt = "UBITSIZE", args(s = false, quiet = false))]
-    #[instr(code = "b7b603", fmt = "QUBITSIZE", args(s = false, quiet = true))]
+    #[op(code = "b602", fmt = "BITSIZE", args(s = true, quiet = false))]
+    #[op(code = "b7b602", fmt = "QBITSIZE", args(s = true, quiet = true))]
+    #[op(code = "b603", fmt = "UBITSIZE", args(s = false, quiet = false))]
+    #[op(code = "b7b603", fmt = "QUBITSIZE", args(s = false, quiet = true))]
     fn exec_bitsize(st: &mut VmState, s: bool, quiet: bool) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
