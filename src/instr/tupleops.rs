@@ -193,6 +193,41 @@ impl Tupleops {
         Ok(0)
     }
 
+    #[op(code = "6f90", fmt = "ZEROSWAPIF", args(c = true, d = false))]
+    #[op(code = "6f91", fmt = "ZEROSWAPIFNOT", args(c = false, d = false))]
+    #[op(code = "6f92", fmt = "ZEROROTRIF", args(c = true, d = true))]
+    #[op(code = "6f93", fmt = "ZEROROTRIFNOT", args(c = false, d = true))]
+    fn exec_zero_swap_if(st: &mut VmState, c: bool, d: bool) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let x = ok!(stack.pop_int());
+        if x.is_zero() != c {
+            ok!(stack.push_zero());
+            if d {
+                ok!(stack.swap(0, 1));
+            }
+        }
+        ok!(stack.push_raw(x));
+        Ok(0)
+    }
+
+    #[op(code = "6f94", fmt = "ZEROSWAPIF2", args(c = true, d = false))]
+    #[op(code = "6f95", fmt = "ZEROSWAPIFNOT2", args(c = false, d = false))]
+    #[op(code = "6f96", fmt = "ZEROROTRIF2", args(c = true, d = true))]
+    #[op(code = "6f97", fmt = "ZEROROTRIFNOT2", args(c = false, d = true))]
+    fn exec_zero_swap_if2(st: &mut VmState, c: bool, d: bool) -> VmResult<i32> {
+        let stack = Rc::make_mut(&mut st.stack);
+        let x = ok!(stack.pop_int());
+        if x.is_zero() != c {
+            ok!(stack.push_zero());
+            ok!(stack.push_zero());
+            if d {
+                ok!(stack.swap(0, 2));
+            }
+        }
+        ok!(stack.push_raw(x));
+        Ok(0)
+    }
+
     #[op(code = "6fa0", fmt = "NULLSWAPIF", args(c = true, d = false))]
     #[op(code = "6fa1", fmt = "NULLSWAPIFNOT", args(c = false, d = false))]
     #[op(code = "6fa2", fmt = "NULLROTRIF", args(c = true, d = true))]
