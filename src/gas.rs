@@ -5,7 +5,7 @@ use std::sync::Arc;
 use ahash::HashSet;
 use everscale_types::cell::{CellParts, LoadMode};
 use everscale_types::error::Error;
-use everscale_types::models::SimpleLib;
+use everscale_types::models::{LibDescr, SimpleLib};
 use everscale_types::prelude::*;
 
 use crate::stack::Stack;
@@ -95,6 +95,12 @@ impl LibraryProvider for Vec<Dict<HashBytes, SimpleLib>> {
             }
         }
         Ok(None)
+    }
+}
+
+impl LibraryProvider for Dict<HashBytes, LibDescr> {
+    fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
+        Ok(self.get(library_hash)?.map(|lib| lib.lib.clone()))
     }
 }
 
