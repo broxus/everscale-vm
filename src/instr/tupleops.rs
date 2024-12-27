@@ -519,7 +519,7 @@ mod tests {
         assert_run_vm!("INDEX 0 INDEX 0 INDEX 2", [raw tuple.clone()] => [int 3]);
         assert_run_vm!("INDEX2 0, 0 INDEX 2", [raw tuple.clone()] => [int 3]);
 
-        let t = 1 + 3 + 2 * 4 + 1 * 4 * 4;
+        let t = 1 + 3 + 2 * 4 + 4 * 4;
         assert_run_vm!("INDEX3 1, 2, 3", [raw tuple.clone()] => [int t]);
         assert_run_vm!("INDEX 1 INDEX 2 INDEX 3", [raw tuple.clone()] => [int t]);
         assert_run_vm!("INDEX2 1, 2 INDEX 3", [raw tuple.clone()] => [int t]);

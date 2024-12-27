@@ -39,6 +39,35 @@ impl Stack {
         EMPTY_TUPLE.with(Rc::clone)
     }
 
+    pub fn make_zero() -> RcStackValue {
+        thread_local! {
+            static ONE: RcStackValue = Rc::new(BigInt::zero());
+        }
+        ONE.with(Rc::clone)
+    }
+
+    pub fn make_minus_one() -> RcStackValue {
+        thread_local! {
+            static MINUS_ONE: RcStackValue = Rc::new(-BigInt::one());
+        }
+        MINUS_ONE.with(Rc::clone)
+    }
+
+    pub fn make_one() -> RcStackValue {
+        thread_local! {
+            static ONE: RcStackValue = Rc::new(BigInt::one());
+        }
+        ONE.with(Rc::clone)
+    }
+
+    pub fn make_bool(value: bool) -> RcStackValue {
+        if value {
+            Self::make_minus_one()
+        } else {
+            Self::make_zero()
+        }
+    }
+
     pub fn depth(&self) -> usize {
         self.items.len()
     }
@@ -93,20 +122,11 @@ impl Stack {
     }
 
     pub fn push_bool(&mut self, value: bool) -> VmResult<()> {
-        thread_local! {
-            static TRUE: RcStackValue = Rc::new(-BigInt::one());
-            static FALSE: RcStackValue = Rc::new(BigInt::zero());
-        }
-
-        self.push_raw(if value {
-            TRUE.with(Rc::clone)
-        } else {
-            FALSE.with(Rc::clone)
-        })
+        self.push_raw(Self::make_bool(value))
     }
 
     pub fn push_zero(&mut self) -> VmResult<()> {
-        self.push_bool(false)
+        self.push_raw(Self::make_zero())
     }
 
     pub fn push_int<T: Into<BigInt>>(&mut self, value: T) -> VmResult<()> {
@@ -301,7 +321,6 @@ impl Stack {
         vm_ensure!(lhs < depth, StackUnderflow(lhs));
         vm_ensure!(rhs < depth, StackUnderflow(rhs));
         self.items.swap(depth - lhs - 1, depth - rhs - 1);
-        // eprintln!("AFTER SWAP: {}", self.display_dump());
         Ok(())
     }
 

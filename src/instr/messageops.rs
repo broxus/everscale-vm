@@ -17,8 +17,9 @@ use num_traits::ToPrimitive;
 use crate::cont::ControlRegs;
 use crate::error::VmResult;
 use crate::gas::GasConsumer;
+use crate::smc_info::{SmcInfoBase, SmcInfoTonV4, SmcInfoTonV6, VmVersion};
 use crate::stack::{Stack, Tuple, TupleExt};
-use crate::state::{VmState, VmVersion};
+use crate::state::VmState;
 use crate::util::{MsgForwardPricesExt, OwnedCellSlice};
 
 pub struct MessageOps;
@@ -127,13 +128,13 @@ impl MessageOps {
         let t1 = ok!(st.cr.get_c7_params());
         let t2 = if st.version.is_ton(6..) {
             Some(ok!(t1.try_get_tuple_range(
-                VmState::PARSED_CONFIG_GLOBAL_IDX,
+                SmcInfoTonV6::PARSED_CONFIG_IDX,
                 0..=255
             )))
         } else {
             None
         };
-        let my_addr = ok!(t1.try_get_ref::<OwnedCellSlice>(VmState::MYADDR_GLOBAL_IDX));
+        let my_addr = ok!(t1.try_get_ref::<OwnedCellSlice>(SmcInfoBase::MYADDR_IDX));
         let my_workchain = ok!(parse_addr_workchain(my_addr));
 
         // Prefetch msg info.
@@ -159,7 +160,7 @@ impl MessageOps {
                 MsgForwardPrices::load_from(&mut cs.apply()?)?
             }
             None => {
-                let config_root = ok!(t1.try_get_ref::<Cell>(VmState::CONFIG_GLOBAL_IDX));
+                let config_root = ok!(t1.try_get_ref::<Cell>(SmcInfoBase::CONFIG_IDX));
 
                 let mut b = CellBuilder::new();
                 b.store_u32(if is_masterchain { 24 } else { 25 }).unwrap();
@@ -197,11 +198,11 @@ impl MessageOps {
         // Adjust outgoing message value and extra currencies.
         if matches!(&msg.info, RelaxedMsgInfo::Int(_)) {
             if mode.contains(SendMsgFlags::ALL_BALANCE) {
-                let balance = ok!(t1.try_get_ref::<Tuple>(VmState::BALANCE_GLOBAL_IDX));
+                let balance = ok!(t1.try_get_ref::<Tuple>(SmcInfoBase::BALANCE_IDX));
                 value = ok!(balance.try_get_ref::<BigInt>(0).and_then(bigint_to_tokens));
                 has_extra_currencies = balance.get(1).and_then(|v| v.as_cell()).is_some();
             } else if mode.contains(SendMsgFlags::WITH_REMAINING_BALANCE) {
-                let balance = ok!(t1.try_get_ref::<Tuple>(VmState::IN_MSG_VALUE_GLOBAL_IDX));
+                let balance = ok!(t1.try_get_ref::<Tuple>(SmcInfoTonV4::IN_MSG_VALUE_IDX));
                 let msg_value = ok!(balance.try_get_ref::<BigInt>(0).and_then(bigint_to_tokens));
                 value.try_add_assign(msg_value)?;
                 has_extra_currencies |= balance.get(1).and_then(|v| v.as_cell()).is_some();
@@ -444,25 +445,21 @@ fn add_action(regs: &mut ControlRegs, gas: &mut GasConsumer, action: OutAction) 
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
-    use std::str::FromStr;
-
     use everscale_types::cell::{Cell, CellBuilder};
-    use everscale_types::models::{Account, AccountState, OwnedMessage, StdAddr};
+    use everscale_types::models::{
+        Account, AccountState, CurrencyCollection, IntAddr, OwnedMessage,
+    };
     use everscale_types::prelude::{Boc, CellFamily, Load};
-    use everscale_vm::stack::Tuple;
-    use num_bigint::BigInt;
     use tracing_test::traced_test;
 
-    use crate::cont::OrdCont;
     use crate::gas::GasParams;
-    use crate::stack::{RcStackValue, Stack};
+    use crate::smc_info::SmcInfoBase;
     use crate::state::VmState;
     use crate::util::OwnedCellSlice;
 
     #[test]
     #[traced_test]
-    fn send_msg_test() {
+    fn send_msg_test() -> anyhow::Result<()> {
         let code = Boc::decode(tvmasm! {
             r#"
             SETCP0 DUP IFNOTRET // return if recv_internal
@@ -495,7 +492,6 @@ mod tests {
             NOW
             XCHG s1, s3
             LEQ
-            DUMPSTK
             THROWIF 35
 
             PUSH c4 CTOS
@@ -537,190 +533,121 @@ mod tests {
             ENDC
             POP c4
             "#
-        })
-        .unwrap();
+        })?;
 
-        let code = OwnedCellSlice::from(code);
-
-        let balance_tuple: Tuple = vec![Rc::new(BigInt::from(10000000000u64)), Stack::make_null()];
-
-        let addr =
-            StdAddr::from_str("0:4f4f10cb9a30582792fb3c1e364de5a6fbe6fe04f4167f1f12f83468c767aeb3")
-                .unwrap();
-        let addr = OwnedCellSlice::from(CellBuilder::build_from(addr).unwrap());
-
-        let c7: Vec<RcStackValue> = vec![
-            Rc::new(BigInt::from(0x076ef1ea)),
-            Rc::new(BigInt::from(0)),                 // actions
-            Rc::new(BigInt::from(0)),                 // msgs_sent
-            Rc::new(BigInt::from(1732042729)),        // unix_time
-            Rc::new(BigInt::from(55364288000000u64)), // block_logical_time
-            Rc::new(BigInt::from(55396331000001u64)), // transaction_logical_time
-            Rc::new(BigInt::from(0)),                 // rand_seed
-            Rc::new(balance_tuple),
-            Rc::new(addr),
-            Stack::make_null(),
-            Rc::new(code.clone()),
-        ];
-
-        let c4_data = Boc::decode_base64(
+        let data = Boc::decode_base64(
             "te6ccgEBAQEAKgAAUAAAAblLqS2KyLDWxgjLA6yhKJfmGLWfXdvRC34pWEXEek1ncgteNXU=",
-        )
-        .unwrap();
+        )?;
 
-        let message_cell = Boc::decode_base64("te6ccgEBAgEAqQAB34gAnp4hlzRgsE8l9ng8bJvLTffN/AnoLP4+JfBo0Y7PXWYHO+2B5vPMosfjPalLE/qz0rm+wRn9g9sSu0q4Zwo0Lq5vB/YbhvWObr1T6jLdyEU3xEQ2uSP7sKARmIsEqMbIal1JbFM55wEgAAANyBwBAGhCACeniGXNGCwTyX2eDxsm8tN9838Cegs/j4l8GjRjs9dZodzWUAAAAAAAAAAAAAAAAAAA").unwrap();
-        let message = OwnedMessage::load_from(
-            &mut OwnedCellSlice::from(message_cell.clone()).apply().unwrap(),
-        )
-        .unwrap();
-        let message_body = OwnedCellSlice::from(message.body);
+        let message_cell = Boc::decode_base64("te6ccgEBAgEAqQAB34gAnp4hlzRgsE8l9ng8bJvLTffN/AnoLP4+JfBo0Y7PXWYHO+2B5vPMosfjPalLE/qz0rm+wRn9g9sSu0q4Zwo0Lq5vB/YbhvWObr1T6jLdyEU3xEQ2uSP7sKARmIsEqMbIal1JbFM55wEgAAANyBwBAGhCACeniGXNGCwTyX2eDxsm8tN9838Cegs/j4l8GjRjs9dZodzWUAAAAAAAAAAAAAAAAAAA")?;
+        let message = message_cell.parse::<OwnedMessage>()?;
 
-        let stack: Vec<RcStackValue> = vec![
-            Rc::new(BigInt::from(1406127106355u64)),
-            Rc::new(BigInt::from(0)),
-            Rc::new(message_cell),
-            Rc::new(message_body),
-            Rc::new(BigInt::from(-1)),
-        ];
-
-        let mut builder = VmState::builder();
-        builder.c7 = Some(vec![Rc::new(c7)]);
-        builder.stack = stack;
-        builder.code = code;
-        let mut vm_state = builder
-            .with_gas(GasParams::getter())
-            .with_debug(TracingOutput::default())
-            .build()
-            .unwrap();
-        vm_state.cr.set(4, Rc::new(c4_data)).unwrap();
-        let result = vm_state.run();
-        println!("code {result}");
-    }
-
-    #[test]
-    #[traced_test]
-    pub fn e_wallet_send_msg() {
-        let code = Boc::decode_base64("te6cckEBBgEA/AABFP8A9KQT9LzyyAsBAgEgAgMABNIwAubycdcBAcAA8nqDCNcY7UTQgwfXAdcLP8j4KM8WI88WyfkAA3HXAQHDAJqDB9cBURO68uBk3oBA1wGAINcBgCDXAVQWdfkQ8qj4I7vyeWa++COBBwiggQPoqFIgvLHydAIgghBM7mRsuuMPAcjL/8s/ye1UBAUAmDAC10zQ+kCDBtcBcdcBeNcB10z4AHCAEASqAhSxyMsFUAXPFlAD+gLLaSLQIc8xIddJoIQJuZgzcAHLAFjPFpcwcQHLABLM4skB+wAAPoIQFp4+EbqOEfgAApMg10qXeNcB1AL7AOjRkzLyPOI+zYS/").unwrap();
-        let code = OwnedCellSlice::from(code);
-
-        let balance_tuple: Tuple = vec![Rc::new(BigInt::from(10000000000u64)), Stack::make_null()];
-
-        let addr =
-            StdAddr::from_str("0:6301b2c75596e6e569a6d13ae4ec70c94f177ece0be19f968ddce73d44e7afc7")
-                .unwrap();
-        let addr = OwnedCellSlice::from(CellBuilder::build_from(addr).unwrap());
-
-        let c7: Vec<RcStackValue> = vec![
-            Rc::new(BigInt::from(0x076ef1ea)),
-            Rc::new(BigInt::from(0)),                 // actions
-            Rc::new(BigInt::from(0)),                 // msgs_sent
-            Rc::new(BigInt::from(1732048342)),        // unix_time
-            Rc::new(BigInt::from(55398352000001u64)), // block_logical_time
-            Rc::new(BigInt::from(55398317000004u64)), // transaction_logical_time
-            Rc::new(BigInt::from(0)),                 // rand_seed
-            Rc::new(balance_tuple),
-            Rc::new(addr),
-            Stack::make_null(),
-            Rc::new(code.clone()),
-        ];
-
-        let c4_data = Boc::decode_base64(
-            "te6ccgEBAQEAKgAAUMiw1sYIywOsoSiX5hi1n13b0Qt+KVhFxHpNZ3ILXjV1AAABk0YeykY=",
-        )
-        .unwrap();
-
-        let message_cell = Boc::decode_base64("te6ccgEBBAEA0gABRYgAxgNljqstzcrTTaJ1ydjhkp4u/ZwXwz8tG7nOeonPX44MAQHhmt2/xQjjwjfYraY7Tv53Ct8o9OAtI8nD7DFB19TrG7W8wYMxQKtbXuvGvaKFoB9D0lMZwnPpZ1fEBWxaXZgtg/IsNbGCMsDrKEol+YYtZ9d29ELfilYRcR6TWdyC141dQAAAZNGIEb+Zzz2EEzuZGyACAWWADGA2WOqy3NytNNonXJ2OGSni79nBfDPy0buc56ic9fjgAAAAAAAAAAAAAAAHc1lAADgDAAA=").unwrap();
-        let message = OwnedMessage::load_from(
-            &mut OwnedCellSlice::from(message_cell.clone()).apply().unwrap(),
-        )
-        .unwrap();
-        let message_body = OwnedCellSlice::from(message.body);
-
-        let stack: Vec<RcStackValue> = vec![
-            Rc::new(BigInt::from(4989195982u64)),
-            Rc::new(BigInt::from(0)),
-            Rc::new(message_cell),
-            Rc::new(message_body),
-            Rc::new(BigInt::from(-1)),
-        ];
-
-        let mut builder = VmState::builder();
-        builder.c7 = Some(vec![Rc::new(c7)]);
-        builder.stack = stack;
-        builder.code = code;
-
-        let mut vm_state = builder
-            .with_gas(GasParams::getter())
-            .with_debug(TracingOutput::default())
-            .build()
-            .unwrap();
-        vm_state.cr.set(4, Rc::new(c4_data)).unwrap();
-        let result = vm_state.run();
-        println!("code {result}");
-    }
-
-    #[test]
-    #[traced_test]
-    pub fn jetton() {
-        let code = Boc::decode_base64("te6ccgECGgEABQ4AART/APSkE/S88sgLAQIBYgIDAgLLBAUCASAQEQHX0MtDTAwFxsI5EMIAg1yHTHwGCEBeNRRm6kTDhgEDXIfoAMO1E0PoA+kD6QNTU0/8B+GHRUEWhQTT4QchQBvoCUATPFljPFszMy//J7VTg+kD6QDH6ADH0AfoAMfoAATFw+DoC0x8BAdM/ARKBgAdojhkZYOA54tkgUGD+gvABPztRND6APpA+kDU1NP/Afhh0SaCEGQrfQe6jss1NVFhxwXy4EkE+kAh+kQwwADy4U36ANTRINDTHwGCEBeNRRm68uBIgEDXIfoA+kAx+kAx+gAg1wsAmtdLwAEBwAGw8rGRMOJUQxvgOSWCEHvdl9664wIlghAsdrlzuuMCNCQHCAkKAY4hkXKRceL4OSBuk4F4LpEg4iFulDGBfuCRAeJQI6gToHOBBK1w+DygAnD4NhKgAXD4NqBzgQUTghAJZgGAcPg3oLzysCVZfwsB5jUF+gD6QPgo+EEoEDQB2zxvIjD5AHB0yMsCygfL/8nQUAjHBfLgShKhRBRQNvhByFAG+gJQBM8WWM8WzMzL/8ntVPpA0SDXCwHAALOOIsiAEAHLBQHPFnD6AnABy2qCENUydtsByx8BAcs/yYBC+wCRW+IYAdI1XwM0AfpA0gABAdGVyCHPFsmRbeLIgBABywVQBM8WcPoCcAHLaoIQ0XNUAAHLH1AEAcs/I/pEMMAAjp34KPhBEDVBUNs8byIw+QBwdMjLAsoHy//J0BLPFpcxbBJwAcsB4vQAyYBQ+wAYBP6CEGUB81S6jiUwM1FCxwXy4EkC+kDRQAME+EHIUAb6AlAEzxZYzxbMzMv/ye1U4CSCEPuI4Rm6jiQxMwPRUTHHBfLgSYsCQDT4QchQBvoCUATPFljPFszMy//J7VTgJIIQy4YpArrjAjAjghAlCNZquuMCI4IQdDHyIbrjAhA2DA0ODwHAghA7msoAcPsC+Cj4QRA2QVDbPG8iMCD5AHB0yMsCygfL/8iAGAHLBQHPF1j6AgKYWHdQA8trzMyXMAFxWMtqzOLJgBH7AFAFoEMU+EHIUAb6AlAEzxZYzxbMzMv/ye1UGABONDZRRccF8uBJyFADzxbJEDQS+EHIUAb6AlAEzxZYzxbMzMv/ye1UACI2XwMCxwXy4EnU1NEB7VT7BABKM1BCxwXy4EkB0YsCiwJANPhByFAG+gJQBM8WWM8WzMzL/8ntVAAcXwaCENNyFYy63IQP8vACAUgSEwICcRYXAT+10V2omh9AH0gfSBqamn/gPww6IovgnwUfCCJbZ43kUBgCAWoUFQAuq1vtRND6APpA+kDU1NP/Afhh0RAkXwQALqpn7UTQ+gD6QPpA1NTT/wH4YdFfBfhBAVutvPaiaH0AfSB9IGpqaf+A/DDoii+CfBR8IIltnjeRGHyAODpkZYFlA+X/5OhAGACLrxb2omh9AH0gfSBqamn/gPww6L+Z6DbBeDhy69tRTZyXwoO38K5ReQKeK2EZw5RicZ5PRu2PdBPmLHgKOGRlg/oAZKGAQAH2hA9/cCb6RDGr+1MRSUYYBMjLA1AD+gIBzxYBzxbL/yCBAMrIyw8Bzxck+QAl12UlggIBNMjLFxLLD8sPy/+OKQakXAHLCXH5BABScAHL/3H5BACr+yiyUwS5kzQ0I5Ew4iDAICTAALEX5hAjXwMzMyJwA8sJySLIywESGQAU9AD0AMsAyQFvAg==").unwrap();
-        let code = OwnedCellSlice::from(code);
-
-        let balance_tuple: Tuple = vec![Rc::new(BigInt::from(1931553923u64)), Stack::make_null()];
-
-        let addr =
-            StdAddr::from_str("0:2a0c78148c73416b63250b990efdfbf9d5897bf3b33e2f5498a2fe0617174bb8")
-                .unwrap();
-        let addr = OwnedCellSlice::from(CellBuilder::build_from(addr).unwrap());
-
-        let c7: Vec<RcStackValue> = vec![
-            Rc::new(BigInt::from(0x076ef1ea)),
-            Rc::new(BigInt::from(0)),                 // actions
-            Rc::new(BigInt::from(0)),                 // msgs_sent
-            Rc::new(BigInt::from(1733142533)),        // unix_time
-            Rc::new(BigInt::from(50899537000013u64)), // block_logical_time
-            Rc::new(BigInt::from(50899537000013u64)), // transaction_logical_time
-            Rc::new(BigInt::from(0)),                 // rand_seed
-            Rc::new(balance_tuple),
-            Rc::new(addr.clone()),
-            Stack::make_null(),
-            // Rc::new(code.clone()),
-        ];
-
-        let c4_data = Boc::decode_base64(
-            "te6ccgEBBAEA3gACTmE+QBlNGKCvtRVlwuLLP8LwzhcDJNm1TPewFBFqmlIYet7ln0NupwECCEICDvGeG/QPK6SS/KrDhu7KWb9oJ6OFBwjZ/NmttoOrwzYB5mh0dHBzOi8vZ2lzdC5naXRodWJ1c2VyY29udGVudC5jb20vRW1lbHlhbmVua29LLzI3MWMwYWRhMWRlNDJiOTdjNDU1YWM5MzVjOTcyZjQyL3Jhdy9iN2IzMGMzZTk3MGUwNzdlMTFkMDg1Y2M2NzEzYmUDADAzMTU3YzdjYTA4L21ldGFkYXRhLmpzb24=",
-        )
-            .unwrap();
-
-        let stack: Vec<RcStackValue> = vec![
-            Rc::new(addr),
-            Rc::new(BigInt::from(103289)),
-            // Rc::new(BigInt::from(106029)),
-        ];
-
-        let builder = VmState::builder();
-
-        let mut vm_state = builder
-            .with_c7(vec![Rc::new(c7)])
-            .with_stack(stack)
-            .with_code(code.clone())
-            .with_gas(GasParams::getter())
-            .with_debug(TracingOutput::default())
-            .build()
-            .unwrap();
-        vm_state.cr.set(4, Rc::new(c4_data)).unwrap();
-        vm_state
-            .cr
-            .set(
-                3,
-                Rc::new(OrdCont::simple(
-                    code.clone(),
-                    crate::instr::codepage0().id(),
-                )),
+        let smc_info = SmcInfoBase::new()
+            .with_now(1732042729)
+            .with_block_lt(55364288000000)
+            .with_tx_lt(55396331000001)
+            .with_account_balance(CurrencyCollection::new(10000000000))
+            .with_account_addr(
+                "0:4f4f10cb9a30582792fb3c1e364de5a6fbe6fe04f4167f1f12f83468c767aeb3".parse()?,
             )
+            .require_ton_v4()
+            .with_code(code.clone());
+
+        let mut vm_state = VmState::builder()
+            .with_smc_info(smc_info)
+            .with_stack(tuple![
+                int 1406127106355u64,
+                int 0,
+                cell message_cell,
+                slice message.body,
+                int -1,
+            ])
+            .with_code(code)
+            .with_data(data)
+            .with_gas(GasParams::getter())
+            .with_debug(TracingOutput::default())
+            .build()?;
+
+        assert_eq!(vm_state.run(), -1);
+        Ok(())
+    }
+
+    #[test]
+    #[traced_test]
+    pub fn e_wallet_send_msg() -> anyhow::Result<()> {
+        let code = Boc::decode_base64("te6cckEBBgEA/AABFP8A9KQT9LzyyAsBAgEgAgMABNIwAubycdcBAcAA8nqDCNcY7UTQgwfXAdcLP8j4KM8WI88WyfkAA3HXAQHDAJqDB9cBURO68uBk3oBA1wGAINcBgCDXAVQWdfkQ8qj4I7vyeWa++COBBwiggQPoqFIgvLHydAIgghBM7mRsuuMPAcjL/8s/ye1UBAUAmDAC10zQ+kCDBtcBcdcBeNcB10z4AHCAEASqAhSxyMsFUAXPFlAD+gLLaSLQIc8xIddJoIQJuZgzcAHLAFjPFpcwcQHLABLM4skB+wAAPoIQFp4+EbqOEfgAApMg10qXeNcB1AL7AOjRkzLyPOI+zYS/")?;
+        let data = Boc::decode_base64(
+            "te6ccgEBAQEAKgAAUMiw1sYIywOsoSiX5hi1n13b0Qt+KVhFxHpNZ3ILXjV1AAABk0YeykY=",
+        )?;
+
+        let message_cell = Boc::decode_base64("te6ccgEBBAEA0gABRYgAxgNljqstzcrTTaJ1ydjhkp4u/ZwXwz8tG7nOeonPX44MAQHhmt2/xQjjwjfYraY7Tv53Ct8o9OAtI8nD7DFB19TrG7W8wYMxQKtbXuvGvaKFoB9D0lMZwnPpZ1fEBWxaXZgtg/IsNbGCMsDrKEol+YYtZ9d29ELfilYRcR6TWdyC141dQAAAZNGIEb+Zzz2EEzuZGyACAWWADGA2WOqy3NytNNonXJ2OGSni79nBfDPy0buc56ic9fjgAAAAAAAAAAAAAAAHc1lAADgDAAA=")?;
+        let message = message_cell.parse::<OwnedMessage>()?;
+
+        let smc_info = SmcInfoBase::new()
+            .with_now(1732048342)
+            .with_block_lt(55398352000001)
+            .with_tx_lt(55398317000004)
+            .with_account_balance(CurrencyCollection::new(10000000000))
+            .with_account_addr(
+                "0:6301b2c75596e6e569a6d13ae4ec70c94f177ece0be19f968ddce73d44e7afc7".parse()?,
+            )
+            .require_ton_v4()
+            .with_code(code.clone());
+
+        let mut vm_state = VmState::builder()
+            .with_smc_info(smc_info)
+            .with_stack(tuple![
+                int 4989195982u64,
+                int 0,
+                cell message_cell,
+                slice message.body,
+                int -1,
+            ])
+            .with_code(code)
+            .with_data(data)
+            .with_gas(GasParams::getter())
+            .with_debug(TracingOutput::default())
+            .build()
             .unwrap();
 
-        let result = !vm_state.run();
-        println!("code {result}");
+        assert_eq!(vm_state.run(), -1);
+        Ok(())
+    }
+
+    #[test]
+    #[traced_test]
+    pub fn jetton() -> anyhow::Result<()> {
+        let code = Boc::decode_base64("te6ccgECGgEABQ4AART/APSkE/S88sgLAQIBYgIDAgLLBAUCASAQEQHX0MtDTAwFxsI5EMIAg1yHTHwGCEBeNRRm6kTDhgEDXIfoAMO1E0PoA+kD6QNTU0/8B+GHRUEWhQTT4QchQBvoCUATPFljPFszMy//J7VTg+kD6QDH6ADH0AfoAMfoAATFw+DoC0x8BAdM/ARKBgAdojhkZYOA54tkgUGD+gvABPztRND6APpA+kDU1NP/Afhh0SaCEGQrfQe6jss1NVFhxwXy4EkE+kAh+kQwwADy4U36ANTRINDTHwGCEBeNRRm68uBIgEDXIfoA+kAx+kAx+gAg1wsAmtdLwAEBwAGw8rGRMOJUQxvgOSWCEHvdl9664wIlghAsdrlzuuMCNCQHCAkKAY4hkXKRceL4OSBuk4F4LpEg4iFulDGBfuCRAeJQI6gToHOBBK1w+DygAnD4NhKgAXD4NqBzgQUTghAJZgGAcPg3oLzysCVZfwsB5jUF+gD6QPgo+EEoEDQB2zxvIjD5AHB0yMsCygfL/8nQUAjHBfLgShKhRBRQNvhByFAG+gJQBM8WWM8WzMzL/8ntVPpA0SDXCwHAALOOIsiAEAHLBQHPFnD6AnABy2qCENUydtsByx8BAcs/yYBC+wCRW+IYAdI1XwM0AfpA0gABAdGVyCHPFsmRbeLIgBABywVQBM8WcPoCcAHLaoIQ0XNUAAHLH1AEAcs/I/pEMMAAjp34KPhBEDVBUNs8byIw+QBwdMjLAsoHy//J0BLPFpcxbBJwAcsB4vQAyYBQ+wAYBP6CEGUB81S6jiUwM1FCxwXy4EkC+kDRQAME+EHIUAb6AlAEzxZYzxbMzMv/ye1U4CSCEPuI4Rm6jiQxMwPRUTHHBfLgSYsCQDT4QchQBvoCUATPFljPFszMy//J7VTgJIIQy4YpArrjAjAjghAlCNZquuMCI4IQdDHyIbrjAhA2DA0ODwHAghA7msoAcPsC+Cj4QRA2QVDbPG8iMCD5AHB0yMsCygfL/8iAGAHLBQHPF1j6AgKYWHdQA8trzMyXMAFxWMtqzOLJgBH7AFAFoEMU+EHIUAb6AlAEzxZYzxbMzMv/ye1UGABONDZRRccF8uBJyFADzxbJEDQS+EHIUAb6AlAEzxZYzxbMzMv/ye1UACI2XwMCxwXy4EnU1NEB7VT7BABKM1BCxwXy4EkB0YsCiwJANPhByFAG+gJQBM8WWM8WzMzL/8ntVAAcXwaCENNyFYy63IQP8vACAUgSEwICcRYXAT+10V2omh9AH0gfSBqamn/gPww6IovgnwUfCCJbZ43kUBgCAWoUFQAuq1vtRND6APpA+kDU1NP/Afhh0RAkXwQALqpn7UTQ+gD6QPpA1NTT/wH4YdFfBfhBAVutvPaiaH0AfSB9IGpqaf+A/DDoii+CfBR8IIltnjeRGHyAODpkZYFlA+X/5OhAGACLrxb2omh9AH0gfSBqamn/gPww6L+Z6DbBeDhy69tRTZyXwoO38K5ReQKeK2EZw5RicZ5PRu2PdBPmLHgKOGRlg/oAZKGAQAH2hA9/cCb6RDGr+1MRSUYYBMjLA1AD+gIBzxYBzxbL/yCBAMrIyw8Bzxck+QAl12UlggIBNMjLFxLLD8sPy/+OKQakXAHLCXH5BABScAHL/3H5BACr+yiyUwS5kzQ0I5Ew4iDAICTAALEX5hAjXwMzMyJwA8sJySLIywESGQAU9AD0AMsAyQFvAg==")?;
+        let data = Boc::decode_base64(
+            "te6ccgEBBAEA3gACTmE+QBlNGKCvtRVlwuLLP8LwzhcDJNm1TPewFBFqmlIYet7ln0NupwECCEICDvGeG/QPK6SS/KrDhu7KWb9oJ6OFBwjZ/NmttoOrwzYB5mh0dHBzOi8vZ2lzdC5naXRodWJ1c2VyY29udGVudC5jb20vRW1lbHlhbmVua29LLzI3MWMwYWRhMWRlNDJiOTdjNDU1YWM5MzVjOTcyZjQyL3Jhdy9iN2IzMGMzZTk3MGUwNzdlMTFkMDg1Y2M2NzEzYmUDADAzMTU3YzdjYTA4L21ldGFkYXRhLmpzb24=",
+        )?;
+
+        let addr = "0:2a0c78148c73416b63250b990efdfbf9d5897bf3b33e2f5498a2fe0617174bb8"
+            .parse::<IntAddr>()?;
+
+        let smc_info = SmcInfoBase::new()
+            .with_now(1733142533)
+            .with_block_lt(50899537000013)
+            .with_tx_lt(50899537000013)
+            .with_account_balance(CurrencyCollection::new(1931553923))
+            .with_account_addr(addr.clone())
+            .require_ton_v4();
+
+        let mut vm_state = VmState::builder()
+            .with_smc_info(smc_info)
+            .with_stack(tuple![
+                slice CellBuilder::build_from(&addr)?,
+                int 103289,
+            ])
+            .with_code(code)
+            .with_data(data)
+            .with_gas(GasParams::getter())
+            .with_debug(TracingOutput::default())
+            .build()
+            .unwrap();
+
+        assert_eq!(vm_state.run(), -1);
+        Ok(())
     }
 
     #[test]
@@ -737,57 +664,28 @@ mod tests {
             _ => panic!(),
         };
 
-        let code_slice = OwnedCellSlice::from(code);
+        let smc_info = SmcInfoBase::new()
+            .with_now(1733142533)
+            .with_block_lt(50899537000013)
+            .with_tx_lt(50899537000013)
+            .with_account_balance(account.balance)
+            .with_account_addr(account.address.clone())
+            .require_ton_v4();
 
-        let balance_tuple: Tuple = vec![
-            Rc::new(BigInt::from(account.balance.tokens.into_inner())),
-            Stack::make_null(),
-        ];
-
-        let addr = account.address.as_std().unwrap();
-        let addr = OwnedCellSlice::from(CellBuilder::build_from(addr).unwrap());
-
-        let c7: Vec<RcStackValue> = vec![
-            Rc::new(BigInt::from(0x076ef1ea)),
-            Rc::new(BigInt::from(0)),                 // actions
-            Rc::new(BigInt::from(0)),                 // msgs_sent
-            Rc::new(BigInt::from(1733142533)),        // unix_time
-            Rc::new(BigInt::from(50899537000013u64)), // block_logical_time
-            Rc::new(BigInt::from(50899537000013u64)), // transaction_logical_time
-            Rc::new(BigInt::from(0)),                 // rand_seed
-            Rc::new(balance_tuple),
-            Rc::new(addr.clone()),
-            Stack::make_null(),
-            // Rc::new(code.clone()),
-        ];
-
-        let stack: Vec<RcStackValue> = vec![
-            Rc::new(BigInt::from(1307493522)),
-            Rc::new(BigInt::from(500000000)),
-            Rc::new(msg_cell),
-            Rc::new(new_slice),
-            Rc::new(BigInt::from(0)),
-        ];
-
-        let builder = VmState::builder();
-        let mut vm_state = builder
-            .with_c7(vec![Rc::new(c7)])
-            .with_stack(stack)
-            .with_code(code_slice.clone())
+        let mut vm_state = VmState::builder()
+            .with_smc_info(smc_info)
+            .with_stack(tuple![
+                int 1307493522,
+                int 500000000,
+                cell msg_cell,
+                slice new_slice,
+                int 0,
+            ])
+            .with_code(code)
+            .with_data(data)
             .with_gas(GasParams::getter())
             .with_debug(TracingOutput::default())
             .build()
-            .unwrap();
-        vm_state.cr.set(4, Rc::new(data)).unwrap();
-        vm_state
-            .cr
-            .set(
-                3,
-                Rc::new(OrdCont::simple(
-                    code_slice.clone(),
-                    crate::instr::codepage0().id(),
-                )),
-            )
             .unwrap();
 
         let result = !vm_state.run();

@@ -1408,7 +1408,7 @@ mod tests {
             [raw cont.clone()] => [int 1, int 2],
         );
 
-        let code = Boc::decode(&tvmasm! {
+        let code = Boc::decode(tvmasm! {
             r#"
             PUSHINT 1
             PUSHINT 2
@@ -1432,7 +1432,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn conditional_contops() -> anyhow::Result<()> {
-        let code = Boc::decode(&tvmasm! {
+        let code = Boc::decode(tvmasm! {
             r#"
             PUSHINT 1
             PUSHINT 2
@@ -1449,7 +1449,7 @@ mod tests {
 
         //--------
 
-        let code = Boc::decode(&tvmasm! {
+        let code = Boc::decode(tvmasm! {
             r#"
             PUSHINT 1
             PUSHINT 0
@@ -1472,7 +1472,7 @@ mod tests {
 
         //-------
 
-        let code = Boc::decode(&tvmasm! {
+        let code = Boc::decode(tvmasm! {
             r#"
             PUSHINT 2
             PUSHINT 0
@@ -1489,7 +1489,7 @@ mod tests {
 
         //--------
 
-        let code = Boc::decode(&tvmasm! {
+        let code = Boc::decode(tvmasm! {
             r#"
             PUSHINT 2
             PUSHINT 1
@@ -1506,7 +1506,7 @@ mod tests {
 
         //-------------
 
-        let code = Boc::decode(&tvmasm! {
+        let code = Boc::decode(tvmasm! {
             r#"
             PUSHINT 1
             PUSHINT 2
@@ -1540,7 +1540,7 @@ mod tests {
 
         //-------
 
-        let code1 = Boc::decode(&tvmasm! {
+        let code1 = Boc::decode(tvmasm! {
             r#"
             PUSHINT 1
             PUSHINT 2
@@ -1548,7 +1548,7 @@ mod tests {
         })?;
         let cont1 = Rc::new(OrdCont::simple(code1.into(), codepage0().id()));
 
-        let code2 = Boc::decode(&tvmasm! {
+        let code2 = Boc::decode(tvmasm! {
             r#"
             PUSHINT 3
             PUSHINT 4
@@ -1578,7 +1578,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn conditional_refcontops() -> anyhow::Result<()> {
-        let code = Boc::decode(&tvmasm! {
+        let code = Boc::decode(tvmasm! {
             r#"
             PUSHINT 1
             PUSHINT 2
@@ -1659,14 +1659,14 @@ mod tests {
     #[traced_test]
     fn loops() -> anyhow::Result<()> {
         // REPEAT
-        let code = Boc::decode(&tvmasm! {
+        let code = Boc::decode(tvmasm! {
             r#"
             PUSHINT 2
             "#
         })?;
         let cont = Rc::new(OrdCont::simple(code.into(), codepage0().id()));
 
-        let code1 = Boc::decode(&tvmasm! {
+        let code1 = Boc::decode(tvmasm! {
             r#"
             PUSHINT 2
             PUSHINT 1
@@ -1711,14 +1711,14 @@ mod tests {
         );
 
         // WHILE
-        let code0 = Boc::decode(&tvmasm! {
+        let code0 = Boc::decode(tvmasm! {
             r#"
             PUSHINT 2
             "#
         })?;
         let c0 = Rc::new(OrdCont::simple(code0.into(), codepage0().id()));
 
-        let code1 = Boc::decode(&tvmasm! {
+        let code1 = Boc::decode(tvmasm! {
             r#"
             PUSHINT 0
             "#
@@ -1740,7 +1740,7 @@ mod tests {
         // AGAIN
         // TODO: TEST MORE CASES
 
-        let code_c0 = Boc::decode(&tvmasm! {
+        let code_c0 = Boc::decode(tvmasm! {
             r#"
             PUSHINT 2
             RETALT
@@ -1765,7 +1765,7 @@ mod tests {
 
         // REPEATBRK
 
-        let code_c0 = Boc::decode(&tvmasm! {
+        let code_c0 = Boc::decode(tvmasm! {
             r#"
             PUSHINT 0
             DUMPSTK
@@ -1808,7 +1808,7 @@ mod tests {
             [int 5, int 10] => [int 0]
         );
 
-        let code_c0 = Boc::decode(&tvmasm! {
+        let code_c0 = Boc::decode(tvmasm! {
             r#"
             INC
             SWAP

@@ -80,6 +80,14 @@ macro_rules! tuple_impl {
         ] $($($tt)*)?)
     };
 
+    (@v [$($values:tt)*] cell $value:expr $(, $($tt:tt)* )?) => {
+        $crate::tuple_impl!(@v [
+            $($values)* ::std::rc::Rc::new(
+                $value
+            ) as $crate::RcStackValue,
+        ] $($($tt)*)?)
+    };
+
     (@v [$($values:tt)*] slice $value:expr $(, $($tt:tt)* )?) => {
         $crate::tuple_impl!(@v [
             $($values)* ::std::rc::Rc::new(
@@ -176,11 +184,14 @@ pub use self::dispatch::{
 pub use self::error::{VmError, VmException, VmResult};
 pub use self::gas::{GasConsumer, GasParams, LibraryProvider, NoLibraries};
 pub use self::instr::{codepage, codepage0};
+pub use self::smc_info::{
+    CustomSmcInfo, SmcInfo, SmcInfoBase, SmcInfoTonV4, SmcInfoTonV6, VmVersion,
+};
 pub use self::stack::{
     NaN, RcStackValue, Stack, StackValue, StackValueType, StaticStackValue, Tuple, TupleExt,
 };
 pub use self::state::{
-    BehaviourModifiers, CommitedState, SaveCr, VmState, VmStateBuilder, VmVersion,
+    BehaviourModifiers, CommitedState, InitSelectorParams, SaveCr, VmState, VmStateBuilder,
 };
 pub use self::util::OwnedCellSlice;
 
@@ -189,6 +200,7 @@ mod dispatch;
 mod error;
 mod gas;
 mod instr;
+mod smc_info;
 mod stack;
 mod state;
 mod util;
@@ -232,6 +244,8 @@ mod __private {
 
 #[cfg(test)]
 mod tests {
+    use std::rc::Rc;
+
     use everscale_types::prelude::*;
     use tracing_test::traced_test;
 
@@ -245,7 +259,10 @@ mod tests {
         let code = Boc::decode(code).unwrap();
         let mut vm = VmState::builder()
             .with_code(code)
-            .with_c7(c7_params)
+            .with_smc_info(CustomSmcInfo {
+                version: VmState::DEFAULT_VERSION,
+                c7: Rc::new(c7_params),
+            })
             .with_debug(TracingOutput::default())
             .with_stack(original_stack)
             .build()

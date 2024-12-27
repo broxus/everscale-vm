@@ -3,8 +3,9 @@ use std::rc::Rc;
 use everscale_vm_proc::vm_module;
 
 use crate::error::VmResult;
+use crate::smc_info::VmVersion;
 use crate::stack::Stack;
-use crate::state::{VmState, VmVersion};
+use crate::state::VmState;
 
 pub struct Stackops;
 

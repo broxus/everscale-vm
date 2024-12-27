@@ -307,8 +307,8 @@ impl AddrParts {
         }
 
         match self {
-            Self::None => vec![Rc::new(BigInt::ZERO)],
-            Self::Ext { addr } => vec![Rc::new(BigInt::from(1)), Rc::new(addr)],
+            Self::None => vec![Stack::make_zero()],
+            Self::Ext { addr } => vec![Stack::make_one(), Rc::new(addr)],
             Self::Std {
                 pfx,
                 workchain,

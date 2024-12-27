@@ -5,7 +5,6 @@ use bitflags::bitflags;
 use everscale_types::cell::*;
 use everscale_types::error::Error;
 use num_bigint::BigInt;
-use num_traits::Zero;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -17,6 +16,7 @@ use crate::dispatch::DispatchTable;
 use crate::error::{VmException, VmResult};
 use crate::gas::{GasConsumer, GasParams, LibraryProvider, NoLibraries};
 use crate::instr::{codepage, codepage0};
+use crate::smc_info::{SmcInfo, VmVersion};
 use crate::stack::{RcStackValue, Stack};
 use crate::util::OwnedCellSlice;
 
@@ -27,11 +27,10 @@ pub struct VmStateBuilder {
     pub data: Option<Cell>,
     pub stack: Vec<RcStackValue>,
     pub libraries: Option<Box<dyn LibraryProvider>>,
-    pub c7: Option<Vec<RcStackValue>>,
+    pub c7: Option<Rc<Vec<RcStackValue>>>,
     pub gas: GasParams,
-    pub same_c3: bool,
+    pub init_selector: InitSelectorParams,
     pub version: Option<VmVersion>,
-    pub without_push0: bool,
     pub modifiers: BehaviourModifiers,
     pub debug: Option<Box<dyn std::fmt::Write>>,
 }
@@ -42,14 +41,20 @@ impl VmStateBuilder {
     }
 
     pub fn build(mut self) -> Result<VmState> {
-        if self.same_c3 && !self.without_push0 {
-            vm_log_trace!("implicit PUSH 0 at start");
-            self.stack.push(Rc::new(BigInt::zero()));
-        }
-
         let quit0 = QUIT0.with(Rc::clone);
         let quit1 = QUIT1.with(Rc::clone);
         let cp = codepage0();
+
+        let c3 = match self.init_selector {
+            InitSelectorParams::None => Rc::new(QuitCont { exit_code: 11 }) as RcCont,
+            InitSelectorParams::UseCode { push0 } => {
+                if push0 {
+                    vm_log_trace!("implicit PUSH 0 at start");
+                    self.stack.push(Stack::make_zero());
+                }
+                Rc::new(OrdCont::simple(self.code.clone(), cp.id()))
+            }
+        };
 
         Ok(VmState {
             cr: ControlRegs {
@@ -57,17 +62,13 @@ impl VmStateBuilder {
                     Some(quit0.clone()),
                     Some(quit1.clone()),
                     Some(EXC_QUIT.with(Rc::clone)),
-                    Some(if self.same_c3 {
-                        Rc::new(OrdCont::simple(self.code.clone(), cp.id()))
-                    } else {
-                        Rc::new(QuitCont { exit_code: 11 })
-                    }),
+                    Some(c3),
                 ],
                 d: [
                     Some(self.data.unwrap_or_default()),
                     Some(Cell::empty_cell()),
                 ],
-                c7: Some(Rc::new(self.c7.unwrap_or_default())),
+                c7: Some(self.c7.unwrap_or_default()),
             },
             code: self.code,
             stack: Rc::new(Stack { items: self.stack }),
@@ -114,13 +115,8 @@ impl VmStateBuilder {
         self
     }
 
-    pub fn with_same_c3(mut self) -> Self {
-        self.same_c3 = true;
-        self
-    }
-
-    pub fn without_push0(mut self) -> Self {
-        self.without_push0 = true;
+    pub fn with_init_selector(mut self, push0: bool) -> Self {
+        self.init_selector = InitSelectorParams::UseCode { push0 };
         self
     }
 
@@ -129,8 +125,11 @@ impl VmStateBuilder {
         self
     }
 
-    pub fn with_c7(mut self, c7: Vec<RcStackValue>) -> Self {
-        self.c7 = Some(c7);
+    pub fn with_smc_info<T: SmcInfo>(mut self, info: T) -> Self {
+        if self.version.is_none() {
+            self.version = Some(info.version());
+        }
+        self.c7 = Some(info.build_c7());
         self
     }
 
@@ -143,6 +142,16 @@ impl VmStateBuilder {
         self.version = Some(version);
         self
     }
+}
+
+/// Function selector (C3) initialization params.
+#[derive(Default, Debug, Clone, Copy, Eq, PartialEq)]
+pub enum InitSelectorParams {
+    #[default]
+    None,
+    UseCode {
+        push0: bool,
+    },
 }
 
 /// Full execution state.
@@ -162,26 +171,9 @@ pub struct VmState {
 }
 
 impl VmState {
-    pub const DEFAULT_VERSION: VmVersion = VmVersion::Ton(9);
+    pub const DEFAULT_VERSION: VmVersion = VmVersion::LATEST_TON;
 
     pub const MAX_DATA_DEPTH: u16 = 512;
-
-    pub const ACTIONS_GLOBAL_IDX: usize = 1;
-    pub const MSGS_SENT_GLOBAL_IDX: usize = 2;
-    pub const UNIX_TIME_GLOBAL_IDX: usize = 3;
-    pub const BLOCK_LT_GLOBAL_IDX: usize = 4;
-    pub const TX_LT_GLOBAL_IDX: usize = 5;
-    pub const RANDSEED_GLOBAL_IDX: usize = 6;
-    pub const BALANCE_GLOBAL_IDX: usize = 7;
-    pub const MYADDR_GLOBAL_IDX: usize = 8;
-    pub const CONFIG_GLOBAL_IDX: usize = 9;
-    pub const MYCODE_GLOBAL_IDX: usize = 10;
-    pub const IN_MSG_VALUE_GLOBAL_IDX: usize = 11;
-    pub const STORAGE_FEE_GLOBAL_IDX: usize = 12;
-    pub const PREV_BLOCKS_GLOBAL_IDX: usize = 13;
-    pub const PARSED_CONFIG_GLOBAL_IDX: usize = 14;
-    pub const STORAGE_DEBT_GLOBAL_IDX: usize = 15;
-    pub const PRECOMPILED_GAS_GLOBAL_IDX: usize = 16;
 
     thread_local! {
         static EMPTY_STACK: Rc<Stack> = Rc::new(Default::default());
@@ -395,7 +387,7 @@ impl VmState {
 
     pub fn throw_exception(&mut self, n: i32) -> VmResult<i32> {
         self.stack = Rc::new(Stack {
-            items: vec![Rc::new(BigInt::zero()), Rc::new(BigInt::from(n))],
+            items: vec![Stack::make_zero(), Rc::new(BigInt::from(n))],
         });
         self.code = Default::default();
         self.gas.try_consume_exception_gas()?;
@@ -761,24 +753,6 @@ impl VmState {
 pub struct BehaviourModifiers {
     pub stop_on_accept: bool,
     pub chksig_always_succeed: bool,
-}
-
-/// Version of a VM context.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum VmVersion {
-    Everscale(u32),
-    Ton(u32),
-}
-
-impl VmVersion {
-    pub fn is_ton<R: std::ops::RangeBounds<u32>>(&self, range: R) -> bool {
-        matches!(self, Self::Ton(version) if range.contains(version))
-    }
-
-    pub fn require_ton<R: std::ops::RangeBounds<u32>>(&self, range: R) -> VmResult<()> {
-        vm_ensure!(self.is_ton(range), InvalidOpcode);
-        Ok(())
-    }
 }
 
 /// Execution effects.

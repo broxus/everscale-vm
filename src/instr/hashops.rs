@@ -363,7 +363,7 @@ mod tests {
     #[traced_test]
     fn hashext_sha256_vs_sha256u() {
         let target = 0x0123456789abcdef_u64.to_be_bytes();
-        let target_hash = build_int(sha2::Sha256::digest(&target));
+        let target_hash = build_int(sha2::Sha256::digest(target));
 
         assert_run_vm!(
             r#"
@@ -467,14 +467,14 @@ mod tests {
         let data = [0xda_u8; 40];
         let data_signature = keypair.sign_raw(&data);
 
-        let data_hash = sha2::Sha256::digest(&data);
+        let data_hash = sha2::Sha256::digest(data);
         let data_hash_signature = keypair.sign_raw(&data_hash);
 
         assert_run_vm!(
             "CHKSIGNS",
             [
-                raw build_slice(&data),
-                raw build_slice(&data_signature),
+                raw build_slice(data),
+                raw build_slice(data_signature),
                 raw build_int(keypair.public_key.as_bytes()),
             ] => [int -1]
         );
@@ -483,15 +483,15 @@ mod tests {
         assert_run_vm!(
             "ROT SHA256U ROTREV CHKSIGNU",
             [
-                raw build_slice(&data),
-                raw build_slice(&data_hash_signature),
+                raw build_slice(data),
+                raw build_slice(data_hash_signature),
                 raw build_int(keypair.public_key.as_bytes()),
             ] => [int -1]
         );
 
         let args = Rc::new(vec![
-            build_int(&data_hash),
-            build_slice(&data_hash_signature),
+            build_int(data_hash),
+            build_slice(data_hash_signature),
             build_int(keypair.public_key.as_bytes()),
         ]);
 
@@ -514,8 +514,8 @@ mod tests {
         assert_run_vm!(
             "CHKSIGNS",
             [
-                raw build_slice(&data),
-                raw build_slice(&data_hash_signature),
+                raw build_slice(data),
+                raw build_slice(data_hash_signature),
                 int 123,
             ] => [int 0]
         );
@@ -524,8 +524,8 @@ mod tests {
         assert_run_vm!(
             "CHKSIGNS",
             [
-                raw build_slice(&data),
-                raw build_slice(&data_hash_signature), // <--
+                raw build_slice(data),
+                raw build_slice(data_hash_signature), // <--
                 raw build_int(keypair.public_key.as_bytes()),
             ] => [int 0]
         );
@@ -533,7 +533,7 @@ mod tests {
             "CHKSIGNU",
             [
                 int 123,
-                raw build_slice(&data_hash_signature),
+                raw build_slice(data_hash_signature),
                 raw build_int(keypair.public_key.as_bytes()),
             ] => [int 0]
         );

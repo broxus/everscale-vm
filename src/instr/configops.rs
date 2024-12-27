@@ -13,6 +13,7 @@ use num_bigint::Sign;
 
 use crate::error::VmResult;
 use crate::gas::GasConsumer;
+use crate::smc_info::{SmcInfoBase, SmcInfoTonV4, SmcInfoTonV6};
 use crate::stack::{RcStackValue, Stack, TupleExt};
 use crate::util::{
     shift_ceil_price, GasLimitsPricesExt, MsgForwardPricesExt, OwnedCellSlice, StoragePricesExt,
@@ -35,7 +36,7 @@ impl ConfigOps {
         ok!(get_and_push_param(
             &mut st.cr,
             stack,
-            VmState::CONFIG_GLOBAL_IDX
+            SmcInfoBase::CONFIG_IDX
         ));
         ok!(stack.push_int(CONFIG_KEY_BITS));
         Ok(0)
@@ -50,7 +51,7 @@ impl ConfigOps {
         ok!(get_and_push_param(
             &mut st.cr,
             stack,
-            VmState::CONFIG_GLOBAL_IDX
+            SmcInfoBase::CONFIG_IDX
         ));
         let dict = ok!(stack.pop_cell_opt());
 
@@ -83,7 +84,7 @@ impl ConfigOps {
     fn exec_get_prev_blocks_info(st: &mut VmState, i: u32) -> VmResult<i32> {
         ok!(st.version.require_ton(4..));
         let t1 = ok!(st.cr.get_c7_params());
-        let t2 = ok!(t1.try_get_tuple_range(VmState::PREV_BLOCKS_GLOBAL_IDX, 0..=255));
+        let t2 = ok!(t1.try_get_tuple_range(SmcInfoTonV4::PREV_BLOCKS_IDX, 0..=255));
         let param = ok!(t2.try_get((i as usize) & 0b11));
         ok!(Rc::make_mut(&mut st.stack).push_raw(param.clone()));
         Ok(0)
@@ -100,7 +101,7 @@ impl ConfigOps {
                 .load_u32()?
         } else {
             let t1 = ok!(st.cr.get_c7_params());
-            let config_root = ok!(t1.try_get_ref::<Cell>(VmState::CONFIG_GLOBAL_IDX));
+            let config_root = ok!(t1.try_get_ref::<Cell>(SmcInfoBase::CONFIG_IDX));
 
             let mut builder = CellBuilder::new();
             builder.store_u32(19).unwrap(); // ConfigParam 19 contains global id
@@ -194,7 +195,7 @@ impl ConfigOps {
         ok!(get_and_push_param(
             &mut st.cr,
             stack,
-            VmState::PRECOMPILED_GAS_GLOBAL_IDX
+            SmcInfoTonV6::PRECOMPILED_GAS_IDX
         ));
         Ok(0)
     }
@@ -374,7 +375,7 @@ fn get_and_push_param(regs: &mut ControlRegs, stack: &mut Stack, index: usize) -
 }
 
 fn get_parsed_config(regs: &ControlRegs) -> VmResult<&[RcStackValue]> {
-    ok!(regs.get_c7_params()).try_get_tuple_range(VmState::PARSED_CONFIG_GLOBAL_IDX, 0..=255)
+    ok!(regs.get_c7_params()).try_get_tuple_range(SmcInfoTonV6::PARSED_CONFIG_IDX, 0..=255)
 }
 
 const CONFIG_KEY_BITS: u16 = 32;
