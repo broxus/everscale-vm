@@ -108,7 +108,7 @@ impl Dictops {
         Ok(0)
     }
 
-    #[op(code = "f40s @ f40a..f40f", fmt = s.display("GET"), args(s = DictOpArgs(args)))]
+    #[op(code = "f4ss @ f40a..f410", fmt = s.display("GET"), args(s = DictOpArgs(args)))]
     fn exec_dict_get(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
         let stack = Rc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
