@@ -711,11 +711,11 @@ impl Cellops {
         let mut slice = cs.apply_allow_special();
         let cell = slice.load_reference_cloned()?;
         let cell = st.gas.load_cell(cell, LoadMode::UseGas)?;
-        ok!(stack.push(OwnedCellSlice::new(cell)));
 
         let range = slice.range();
         Rc::make_mut(&mut cs).set_range(range);
         ok!(stack.push_raw(cs));
+        ok!(stack.push(OwnedCellSlice::new(cell)));
         Ok(0)
     }
 
