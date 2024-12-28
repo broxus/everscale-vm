@@ -8,7 +8,7 @@ use everscale_types::models::{GasLimitsPrices, MsgForwardPrices, StoragePrices};
 use everscale_types::num::Tokens;
 use everscale_types::prelude::*;
 use num_bigint::{BigInt, Sign};
-use num_traits::{One, ToPrimitive, Zero};
+use num_traits::{ToPrimitive, Zero};
 
 /// A wrapper around [`CellSliceParts`] extending its lifetime.
 #[derive(Default, Debug, Clone)]
@@ -287,7 +287,6 @@ pub fn bitsize(int: &BigInt, signed: bool) -> u16 {
     if signed {
         match int.sign() {
             Sign::NoSign => bits,
-            Sign::Minus if int.magnitude().is_one() => bits + 1,
             Sign::Plus => bits + 1,
             Sign::Minus => {
                 // Check if `int` magnitude is not a power of 2

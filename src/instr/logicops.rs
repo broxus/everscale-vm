@@ -337,6 +337,7 @@ mod tests {
         assert_run_vm!("BITSIZE", [int 0] => [int 0]);
         assert_run_vm!("UBITSIZE", [int 0] => [int 0]);
         assert_run_vm!("BITSIZE", [int 1] => [int 2]);
+        assert_run_vm!("BITSIZE", [int -1] => [int 1]);
         assert_run_vm!("UBITSIZE", [int 1] => [int 1]);
         assert_run_vm!("BITSIZE", [int -2] => [int 2]);
         assert_run_vm!("BITSIZE", [int 3] => [int 3]);

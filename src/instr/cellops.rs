@@ -1825,3 +1825,32 @@ fn exec_cell_level_op_common(stack: &mut Stack, level: u8, op: LevelOp) -> VmRes
     });
     Ok(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use tracing_test::traced_test;
+
+    #[test]
+    #[traced_test]
+    fn store_int() {
+        assert_run_vm!(
+            r#"
+            PUSHSLICE x{6_}
+            PUSHINT -1
+            OVER
+            PUSHINT 0
+            NEWC
+            PUSHSLICE x{6_} STSLICER
+            STI 1
+            PUSHSLICE x{1_} STSLICER
+            STSLICE
+            PUSHINT 12321070556741797692511081747621921145552344918445724
+            STUR 175
+            STI 1
+            ENDC
+            2DROP
+            "#,
+            [] => [],
+        );
+    }
+}
