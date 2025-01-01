@@ -36,7 +36,7 @@ impl Miscops {
         let mut storage = StorageStatExt::with_limit(limit);
 
         let ok = if is_slice {
-            let Some(slice) = value.as_slice() else {
+            let Some(slice) = value.as_cell_slice() else {
                 vm_bail!(InvalidType {
                     expected: StackValueType::Slice,
                     actual: value.ty()

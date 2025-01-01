@@ -151,7 +151,7 @@ impl ConfigOps {
         let cells = ok!(stack.pop_long_range(0, u64::MAX));
 
         let t2 = ok!(get_parsed_config(&st.cr));
-        match t2.first().and_then(|t| t.as_slice()) {
+        match t2.first().and_then(|t| t.as_cell_slice()) {
             // No StoragePrices is active, so the price is 0.
             None => ok!(stack.push_zero()),
             Some(cs) => {

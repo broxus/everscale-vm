@@ -48,7 +48,7 @@ impl Debugops {
         };
 
         if let Some(value) = st.stack.items.last() {
-            if let Some(slice) = value.as_slice() {
+            if let Some(slice) = value.as_cell_slice() {
                 // TODO: print as string, but why is it needed?
                 writeln!(
                     &mut *debug,

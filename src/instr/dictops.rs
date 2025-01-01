@@ -201,12 +201,12 @@ impl Dictops {
         let value = ok!(stack.pop());
         let value_cs;
         let value: &dyn Store = if b {
-            value_cs = ok!(value.try_as_builder()).as_full_slice();
+            value_cs = ok!(value.try_as_cell_builder()).as_full_slice();
             &value_cs as &dyn Store
         } else if s.is_ref() {
             ok!(value.try_as_cell()) as &dyn Store
         } else {
-            value_cs = ok!(value.try_as_slice()).apply()?;
+            value_cs = ok!(value.try_as_cell_slice()).apply()?;
             &value_cs as &dyn Store
         };
 
@@ -275,12 +275,12 @@ impl Dictops {
         let value = ok!(stack.pop());
         let value_cs;
         let value: &dyn Store = if b {
-            value_cs = ok!(value.try_as_builder()).as_full_slice();
+            value_cs = ok!(value.try_as_cell_builder()).as_full_slice();
             &value_cs as &dyn Store
         } else if s.is_ref() {
             ok!(value.try_as_cell()) as &dyn Store
         } else {
-            value_cs = ok!(value.try_as_slice()).apply()?;
+            value_cs = ok!(value.try_as_cell_slice()).apply()?;
             &value_cs as &dyn Store
         };
 

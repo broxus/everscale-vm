@@ -282,11 +282,11 @@ impl Stack {
     }
 
     pub fn pop_cs(&mut self) -> VmResult<Rc<OwnedCellSlice>> {
-        self.pop()?.into_slice()
+        self.pop()?.into_cell_slice()
     }
 
     pub fn pop_builder(&mut self) -> VmResult<Rc<CellBuilder>> {
-        self.pop()?.into_builder()
+        self.pop()?.into_cell_builder()
     }
 
     pub fn pop_cell(&mut self) -> VmResult<Rc<Cell>> {
@@ -453,33 +453,33 @@ pub trait StackValue: std::fmt::Debug {
         Err(invalid_type(self.ty(), StackValueType::Cell))
     }
 
-    fn as_slice(&self) -> Option<&OwnedCellSlice> {
+    fn as_cell_slice(&self) -> Option<&OwnedCellSlice> {
         None
     }
 
-    fn try_as_slice(&self) -> VmResult<&OwnedCellSlice> {
-        match self.as_slice() {
+    fn try_as_cell_slice(&self) -> VmResult<&OwnedCellSlice> {
+        match self.as_cell_slice() {
             Some(value) => Ok(value),
             None => Err(invalid_type(self.ty(), StackValueType::Slice)),
         }
     }
 
-    fn into_slice(self: Rc<Self>) -> VmResult<Rc<OwnedCellSlice>> {
+    fn into_cell_slice(self: Rc<Self>) -> VmResult<Rc<OwnedCellSlice>> {
         Err(invalid_type(self.ty(), StackValueType::Slice))
     }
 
-    fn as_builder(&self) -> Option<&CellBuilder> {
+    fn as_cell_builder(&self) -> Option<&CellBuilder> {
         None
     }
 
-    fn try_as_builder(&self) -> VmResult<&CellBuilder> {
-        match self.as_builder() {
+    fn try_as_cell_builder(&self) -> VmResult<&CellBuilder> {
+        match self.as_cell_builder() {
             Some(value) => Ok(value),
             None => Err(invalid_type(self.ty(), StackValueType::Builder)),
         }
     }
 
-    fn into_builder(self: Rc<Self>) -> VmResult<Rc<CellBuilder>> {
+    fn into_cell_builder(self: Rc<Self>) -> VmResult<Rc<CellBuilder>> {
         Err(invalid_type(self.ty(), StackValueType::Builder))
     }
 
@@ -895,11 +895,11 @@ impl StackValue for OwnedCellSlice {
         std::fmt::Display::fmt(self, f)
     }
 
-    fn as_slice(&self) -> Option<&OwnedCellSlice> {
+    fn as_cell_slice(&self) -> Option<&OwnedCellSlice> {
         Some(self)
     }
 
-    fn into_slice(self: Rc<Self>) -> VmResult<Rc<OwnedCellSlice>> {
+    fn into_cell_slice(self: Rc<Self>) -> VmResult<Rc<OwnedCellSlice>> {
         Ok(self)
     }
 }
@@ -912,11 +912,11 @@ impl StaticStackValue for OwnedCellSlice {
     }
 
     fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>> {
-        value.into_slice()
+        value.into_cell_slice()
     }
 
     fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
-        match value.as_slice() {
+        match value.as_cell_slice() {
             Some(value) => Ok(value),
             None => vm_bail!(InvalidType {
                 expected: StackValueType::Slice,
@@ -944,11 +944,11 @@ impl StackValue for CellBuilder {
         write!(f, "BC{{{}}}", self.display_data())
     }
 
-    fn as_builder(&self) -> Option<&CellBuilder> {
+    fn as_cell_builder(&self) -> Option<&CellBuilder> {
         Some(self)
     }
 
-    fn into_builder(self: Rc<Self>) -> VmResult<Rc<CellBuilder>> {
+    fn into_cell_builder(self: Rc<Self>) -> VmResult<Rc<CellBuilder>> {
         Ok(self)
     }
 }
@@ -961,11 +961,11 @@ impl StaticStackValue for CellBuilder {
     }
 
     fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>> {
-        value.into_builder()
+        value.into_cell_builder()
     }
 
     fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
-        match value.as_builder() {
+        match value.as_cell_builder() {
             Some(value) => Ok(value),
             None => vm_bail!(InvalidType {
                 expected: StackValueType::Builder,

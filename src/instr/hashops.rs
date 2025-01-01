@@ -311,9 +311,9 @@ impl<'a> HashInputReader<'a> {
         }
 
         let value = ok!(self.stack.fetch(index));
-        if let Some(slice) = value.as_slice() {
+        if let Some(slice) = value.as_cell_slice() {
             slice.apply().map_err(Into::into)
-        } else if let Some(builder) = value.as_builder() {
+        } else if let Some(builder) = value.as_cell_builder() {
             Ok(builder.as_data_slice())
         } else {
             vm_bail!(InvalidType {
