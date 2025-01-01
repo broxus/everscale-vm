@@ -6,6 +6,14 @@ edition = "2021"
 [workspace]
 members = ["proc"]
 
+[[bench]]
+name = "ever_wallet"
+harness = false
+
+[[bench]]
+name = "jetton"
+harness = false
+
 [dependencies]
 ahash = "0.8"
 anyhow = "1.0"
@@ -21,18 +29,16 @@ sha2 = "0.10.8"
 thiserror = "1.0"
 tracing = { version = "0.1", optional = true }
 
-everscale-types = { version = "0.1.2", default-features = false, features = [
-    "sync",
-    "models",
-] }
+everscale-types = { version = "0.1.2", default-features = false, features = ["sync", "models"] }
 
 everscale-vm-proc = { path = "./proc" }
 everscale-crypto = "0.2.1"
 
 [dev-dependencies]
+criterion = "0.5"
+hex = "0.4.3"
 tracing = "0.1"
 tracing-test = "0.2"
-hex = "0.4.3"
 
 everscale-types = { version = "0.1.2", default-features = false, features = [
     "sync",
