@@ -131,10 +131,13 @@ macro_rules! assert_run_vm {
         );
         $crate::assert_run_vm!(@check_exit_code exit_code $($exit_code)?);
 
-        let expected_stack = format!("{}", (&$crate::tuple![$($expected_stack)*] as &dyn $crate::stack::StackValue).display_list());
-        let vm_stack = format!("{}", (&vm.stack.items as &dyn $crate::stack::StackValue).display_list());
+        let expected_stack = $crate::tuple![$($expected_stack)*];
 
-        assert_eq!(vm_stack, expected_stack);
+        let expected = format!("{}", (&expected_stack as &dyn $crate::stack::StackValue).display_list());
+        let actual = format!("{}", (&vm.stack.items as &dyn $crate::stack::StackValue).display_list());
+        assert_eq!(actual, expected);
+
+        $crate::tests::compare_stack(&vm.stack.items, &expected_stack);
     }};
     (@check_exit_code $ident:ident) => {
         assert_eq!($ident, 0, "non-zero exit code")
@@ -161,10 +164,13 @@ macro_rules! assert_run_vm_with_c7 {
         );
         $crate::assert_run_vm!(@check_exit_code exit_code $($exit_code)?);
 
-        let expected_stack = format!("{}", (&$crate::tuple![$($expected_stack)*] as &dyn $crate::stack::StackValue).display_list());
-        let vm_stack = format!("{}", (&vm.stack.items as &dyn $crate::stack::StackValue).display_list());
+        let expected_stack = $crate::tuple![$($expected_stack)*];
 
-        assert_eq!(vm_stack, expected_stack);
+        let expected = format!("{}", (&expected_stack as &dyn $crate::stack::StackValue).display_list());
+        let actual = format!("{}", (&vm.stack.items as &dyn $crate::stack::StackValue).display_list());
+        assert_eq!(actual, expected);
+
+        $crate::tests::compare_stack(&vm.stack.items, &expected_stack);
     }};
     (@check_exit_code $ident:ident) => {
         assert_eq!($ident, 0, "non-zero exit code")
@@ -272,6 +278,25 @@ mod tests {
 
         let exit_code = !vm.run();
         (exit_code, vm)
+    }
+
+    #[track_caller]
+    pub fn compare_stack(actual: &Tuple, expected: &Tuple) {
+        let cx = &mut Cell::empty_context();
+
+        let actual_stack = {
+            let mut b = CellBuilder::new();
+            actual.store_as_stack_value(&mut b, cx).unwrap();
+            b.build_ext(cx).unwrap()
+        };
+
+        let expected_stack = {
+            let mut b = CellBuilder::new();
+            expected.store_as_stack_value(&mut b, cx).unwrap();
+            b.build_ext(cx).unwrap()
+        };
+
+        assert_eq!(actual_stack, expected_stack, "stack mismatch");
     }
 
     #[test]
