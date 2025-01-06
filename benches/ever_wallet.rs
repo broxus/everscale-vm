@@ -40,8 +40,7 @@ fn vm_benchmark(c: &mut Criterion) {
                 .with_code(code.clone())
                 .with_data(data.clone())
                 .with_gas(GasParams::getter())
-                .build()
-                .unwrap();
+                .build();
 
             let result = vm_state.run();
             _ = black_box(result);

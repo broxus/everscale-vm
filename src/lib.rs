@@ -271,8 +271,7 @@ mod tests {
             })
             .with_debug(TracingOutput::default())
             .with_stack(original_stack)
-            .build()
-            .unwrap();
+            .build();
 
         vm.gas.gas_remaining = 1000000000;
 
@@ -336,8 +335,7 @@ mod tests {
         let mut vm = VmState::builder()
             .with_code(code)
             .with_debug(TracingOutput::default())
-            .build()
-            .unwrap();
+            .build();
         let exit_code = !vm.run();
         println!("Exit code: {exit_code}");
     }

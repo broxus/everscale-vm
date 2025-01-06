@@ -566,7 +566,7 @@ mod tests {
             .with_data(data)
             .with_gas(GasParams::getter())
             .with_debug(TracingOutput::default())
-            .build()?;
+            .build();
 
         assert_eq!(vm_state.run(), -1);
         Ok(())
@@ -607,8 +607,7 @@ mod tests {
             .with_data(data)
             .with_gas(GasParams::getter())
             .with_debug(TracingOutput::default())
-            .build()
-            .unwrap();
+            .build();
 
         assert_eq!(vm_state.run(), -1);
         Ok(())
@@ -643,8 +642,7 @@ mod tests {
             .with_data(data)
             .with_gas(GasParams::getter())
             .with_debug(TracingOutput::default())
-            .build()
-            .unwrap();
+            .build();
 
         assert_eq!(vm_state.run(), -1);
         Ok(())
@@ -685,8 +683,7 @@ mod tests {
             .with_data(data)
             .with_gas(GasParams::getter())
             .with_debug(TracingOutput::default())
-            .build()
-            .unwrap();
+            .build();
 
         let result = !vm_state.run();
         println!("code {result}");

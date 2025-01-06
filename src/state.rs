@@ -40,7 +40,7 @@ impl VmStateBuilder {
         Self::default()
     }
 
-    pub fn build(mut self) -> Result<VmState> {
+    pub fn build(mut self) -> VmState {
         let quit0 = QUIT0.with(Rc::clone);
         let quit1 = QUIT1.with(Rc::clone);
         let cp = codepage0();
@@ -56,7 +56,7 @@ impl VmStateBuilder {
             }
         };
 
-        Ok(VmState {
+        VmState {
             cr: ControlRegs {
                 c: [
                     Some(quit0.clone()),
@@ -84,7 +84,7 @@ impl VmStateBuilder {
             debug: self.debug,
             modifiers: self.modifiers,
             version: self.version.unwrap_or(VmState::DEFAULT_VERSION),
-        })
+        }
     }
 
     pub fn with_libraries<T: LibraryProvider + 'static>(mut self, libraries: T) -> Self {
