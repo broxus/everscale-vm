@@ -7,8 +7,8 @@ use tracing::instrument;
 
 use crate::error::VmResult;
 use crate::stack::{
-    load_slice_as_stack_value, load_stack_value, store_slice_as_stack_value, RcStackValue, Stack,
-    StackValue, StackValueType, Tuple, TupleExt,
+    load_slice_as_stack_value, store_slice_as_stack_value, RcStackValue, Stack, StackValue,
+    StackValueType, Tuple, TupleExt,
 };
 use crate::state::VmState;
 use crate::util::{ensure_empty_slice, rc_ptr_eq, OwnedCellSlice, Uint4};
@@ -299,7 +299,7 @@ impl Load<'_> for ControlRegs {
         let mut result = ControlRegs::default();
         for entry in dict.iter() {
             let (key, ref mut slice) = ok!(entry);
-            let value = ok!(load_stack_value(slice));
+            let value = ok!(Stack::load_stack_value(slice));
             ok!(ensure_empty_slice(slice));
             if result.set(key.0, value).is_err() {
                 return Err(Error::InvalidData);

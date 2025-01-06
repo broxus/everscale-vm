@@ -7,7 +7,9 @@ use num_traits::{One, ToPrimitive, Zero};
 
 use crate::cont::{load_cont, DynCont, RcCont};
 use crate::error::{VmError, VmResult};
-use crate::util::{bitsize, ensure_empty_slice, store_int_to_builder, OwnedCellSlice};
+use crate::util::{
+    bitsize, ensure_empty_slice, load_int_from_slice, store_int_to_builder, OwnedCellSlice,
+};
 
 /// A stack of values.
 #[derive(Debug, Default, Clone)]
@@ -66,6 +68,87 @@ impl Stack {
         } else {
             Self::make_zero()
         }
+    }
+
+    /// Loads stack value from the cell. Returns an error if data was not fully used.
+    pub fn load_stack_value_from_cell(cell: &DynCell) -> Result<RcStackValue, Error> {
+        let slice = &mut ok!(cell.as_slice());
+        let res = ok!(Self::load_stack_value(slice));
+        ok!(ensure_empty_slice(slice));
+        Ok(res)
+    }
+
+    /// Loads stack value from the slice advancing its cursors.
+    pub fn load_stack_value(slice: &mut CellSlice) -> Result<RcStackValue, Error> {
+        let ty = ok!(slice.load_u8());
+        Ok(match ty {
+            // vm_stk_null#00 = VmStackValue;
+            0 => Stack::make_null(),
+            // vm_stk_tinyint#01 value:int64 = VmStackValue;
+            1 => {
+                let value = ok!(slice.load_u64()) as i64;
+                Rc::new(BigInt::from(value))
+            }
+            2 => {
+                let t = ok!(slice.get_u8(0));
+                if t == 0xff {
+                    // vm_stk_nan#02ff = VmStackValue;
+                    ok!(slice.skip_first(8, 0));
+                    Stack::make_nan()
+                } else if t / 2 == 0 {
+                    // vm_stk_int#0201_ value:int257 = VmStackValue;
+                    ok!(slice.skip_first(7, 0));
+                    Rc::new(ok!(load_int_from_slice(slice, 257, true)))
+                } else {
+                    return Err(Error::InvalidData);
+                }
+            }
+            // vm_stk_cell#03 cell:^Cell = VmStackValue;
+            3 => Rc::new(ok!(slice.load_reference_cloned())),
+            // vm_stk_slice#04 _:VmCellSlice = VmStackValue;
+            4 => Rc::new(ok!(load_slice_as_stack_value(slice))),
+            // vm_stk_builder#05 cell:^Cell = VmStackValue;
+            5 => {
+                let cell = ok!(slice.load_reference());
+                let mut builder = CellBuilder::new();
+                ok!(builder.store_slice(cell.as_slice_allow_pruned()));
+                Rc::new(builder)
+            }
+            // vm_stk_cont#06 cont:VmCont = VmStackValue;
+            6 => ok!(load_cont(slice)).into_stack_value(),
+            // vm_stk_tuple#07 len:(## 16) data:(VmTuple len) = VmStackValue;
+            7 => {
+                let len = ok!(slice.load_u16()) as usize;
+                let mut tuple = Vec::with_capacity(std::cmp::min(len, 128));
+
+                match len {
+                    0 => {}
+                    1 => {
+                        let value = ok!(slice.load_reference());
+                        tuple.push(ok!(Self::load_stack_value_from_cell(value)));
+                    }
+                    _ => {
+                        let mut head = ok!(slice.load_reference());
+                        let mut tail = ok!(slice.load_reference());
+                        tuple.push(ok!(Self::load_stack_value_from_cell(tail)));
+
+                        for _ in 0..len - 2 {
+                            let slice = &mut ok!(head.as_slice());
+                            head = ok!(slice.load_reference());
+                            tail = ok!(slice.load_reference());
+                            ok!(ensure_empty_slice(slice));
+                            tuple.push(ok!(Self::load_stack_value_from_cell(tail)));
+                        }
+
+                        tuple.push(ok!(Self::load_stack_value_from_cell(head)));
+                        tuple.reverse();
+                    }
+                }
+
+                Rc::new(tuple)
+            }
+            _ => return Err(Error::InvalidTag),
+        })
     }
 
     pub fn depth(&self) -> usize {
@@ -380,13 +463,13 @@ impl<'a> Load<'a> for Stack {
         };
 
         let mut rest = ok!(slice.load_reference());
-        result.items.push(ok!(load_stack_value(slice)));
+        result.items.push(ok!(Self::load_stack_value(slice)));
 
         if depth > 1 {
             for _ in 0..depth - 2 {
                 let slice = &mut ok!(rest.as_slice());
                 rest = ok!(slice.load_reference());
-                result.items.push(ok!(load_stack_value(slice)));
+                result.items.push(ok!(Self::load_stack_value(slice)));
                 ok!(ensure_empty_slice(slice));
             }
 
@@ -668,69 +751,6 @@ impl TupleExt for [RcStackValue] {
     }
 }
 
-pub(crate) fn load_stack_value(slice: &mut CellSlice) -> Result<RcStackValue, Error> {
-    let ty = ok!(slice.load_u8());
-    Ok(match ty {
-        0 => Stack::make_null(),
-        // NOTE: tinyint is skipped as unused
-        2 => {
-            let t = ok!(slice.load_u8());
-            if t == 0xff {
-                Stack::make_nan()
-            } else {
-                todo!()
-            }
-        }
-        3 => Rc::new(ok!(slice.load_reference_cloned())),
-        4 => Rc::new(ok!(load_slice_as_stack_value(slice))),
-        5 => {
-            let cell = ok!(slice.load_reference());
-            let mut builder = CellBuilder::new();
-            builder.set_exotic(cell.is_exotic());
-            ok!(builder.store_slice(cell.as_slice_allow_pruned()));
-            Rc::new(builder)
-        }
-        6 => ok!(load_cont(slice)).into_stack_value(),
-        7 => {
-            let len = ok!(slice.load_u16()) as usize;
-            let mut tuple = Vec::with_capacity(std::cmp::min(len, 128));
-
-            match tuple.len() {
-                0 => {}
-                1 => {
-                    tuple.push(ok!(load_stack_value_from_cell(ok!(slice.load_reference()))));
-                }
-                _ => {
-                    let mut head = ok!(slice.load_reference());
-                    let mut tail = ok!(slice.load_reference());
-                    tuple.push(ok!(load_stack_value_from_cell(tail)));
-
-                    for _ in 0..len - 2 {
-                        let slice = &mut ok!(head.as_slice());
-                        head = ok!(slice.load_reference());
-                        tail = ok!(slice.load_reference());
-                        ok!(ensure_empty_slice(slice));
-                        tuple.push(ok!(load_stack_value_from_cell(tail)));
-                    }
-
-                    tuple.push(ok!(load_stack_value_from_cell(head)));
-                    tuple.reverse();
-                }
-            }
-
-            Rc::new(tuple)
-        }
-        _ => return Err(Error::InvalidTag),
-    })
-}
-
-fn load_stack_value_from_cell(cell: &DynCell) -> Result<RcStackValue, Error> {
-    let slice = &mut ok!(cell.as_slice());
-    let res = ok!(load_stack_value(slice));
-    ok!(ensure_empty_slice(slice));
-    Ok(res)
-}
-
 impl StackValue for () {
     fn ty(&self) -> StackValueType {
         StackValueType::Null
@@ -741,6 +761,7 @@ impl StackValue for () {
         builder: &mut CellBuilder,
         _: &mut dyn CellContext,
     ) -> Result<(), Error> {
+        // vm_stk_null#00 = VmStackValue;
         builder.store_zeros(8)
     }
 
@@ -763,6 +784,7 @@ impl StackValue for NaN {
         builder: &mut CellBuilder,
         _: &mut dyn CellContext,
     ) -> Result<(), Error> {
+        // vm_stk_nan#02ff = VmStackValue;
         builder.store_u16(0x02ff)
     }
 
@@ -789,8 +811,16 @@ impl StackValue for BigInt {
         builder: &mut CellBuilder,
         _: &mut dyn CellContext,
     ) -> Result<(), Error> {
-        ok!(builder.store_uint(0x0200 >> 1, 15));
-        store_int_to_builder(self, 257, true, builder)
+        let bitsize = bitsize(self, true);
+        if bitsize <= 64 {
+            // vm_stk_tinyint#01 value:int64 = VmStackValue;
+            ok!(builder.store_u8(0x01));
+            store_int_to_builder(self, 64, true, builder)
+        } else {
+            // vm_stk_int#0201_ value:int257 = VmStackValue;
+            ok!(builder.store_uint(0x0200 >> 1, 15));
+            store_int_to_builder(self, 257, true, builder)
+        }
     }
 
     fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -838,6 +868,7 @@ impl StackValue for Cell {
         builder: &mut CellBuilder,
         _: &mut dyn CellContext,
     ) -> Result<(), Error> {
+        // vm_stk_cell#03 cell:^Cell = VmStackValue;
         ok!(builder.store_u8(0x03));
         builder.store_reference(self.clone())
     }
@@ -887,6 +918,7 @@ impl StackValue for OwnedCellSlice {
         builder: &mut CellBuilder,
         _: &mut dyn CellContext,
     ) -> Result<(), Error> {
+        // vm_stk_slice#04 _:VmCellSlice = VmStackValue;
         ok!(builder.store_u8(0x04));
         store_slice_as_stack_value(self, builder)
     }
@@ -936,8 +968,14 @@ impl StackValue for CellBuilder {
         builder: &mut CellBuilder,
         context: &mut dyn CellContext,
     ) -> Result<(), Error> {
+        let mut b = self.clone();
+        // NOTE: We cannot serialize builders with partially built
+        // exotic cells because it will fail.
+        b.set_exotic(false);
+
+        // vm_stk_builder#05 cell:^Cell = VmStackValue;
         ok!(builder.store_u8(0x05));
-        builder.store_reference(ok!(self.clone().build_ext(context)))
+        builder.store_reference(ok!(b.build_ext(context)))
     }
 
     fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -985,6 +1023,7 @@ impl StackValue for DynCont {
         builder: &mut CellBuilder,
         context: &mut dyn CellContext,
     ) -> Result<(), Error> {
+        // vm_stk_cont#06 cont:VmCont = VmStackValue;
         ok!(builder.store_u8(0x06));
         self.store_into(builder, context)
     }
@@ -1055,6 +1094,7 @@ impl StackValue for Tuple {
             tail = Some(ok!(builder.build_ext(context)));
         }
 
+        // vm_stk_tuple#07 len:(## 16) data:(VmTuple len) = VmStackValue;
         ok!(builder.store_u8(0x07));
         ok!(builder.store_u16(self.len() as _));
         if let Some(head) = head {
@@ -1112,6 +1152,11 @@ impl StaticStackValue for Tuple {
     }
 }
 
+/// ```text
+/// _ cell:^Cell
+///   st_bits:(## 10) end_bits:(## 10) { st_bits <= end_bits }
+///   st_ref:(#<= 4) end_ref:(#<= 4) { st_ref <= end_ref } = VmCellSlice;
+/// ```
 pub(crate) fn store_slice_as_stack_value(
     slice: &OwnedCellSlice,
     builder: &mut CellBuilder,
@@ -1126,11 +1171,16 @@ pub(crate) fn store_slice_as_stack_value(
     builder.store_uint(value, 26)
 }
 
+/// ```text
+/// _ cell:^Cell
+///   st_bits:(## 10) end_bits:(## 10) { st_bits <= end_bits }
+///   st_ref:(#<= 4) end_ref:(#<= 4) { st_ref <= end_ref } = VmCellSlice;
+/// ```
 pub(crate) fn load_slice_as_stack_value(slice: &mut CellSlice) -> Result<OwnedCellSlice, Error> {
     let cell = ok!(slice.load_reference_cloned());
     let range = ok!(slice.load_uint(26));
 
-    let bits_start = (range >> 16) as u16;
+    let bits_start = (range >> 16) as u16 & 0x3ff;
     let bits_end = (range >> 6) as u16 & 0x3ff;
     let refs_start = (range >> 3) as u8 & 0b111;
     let refs_end = range as u8 & 0b111;
@@ -1144,7 +1194,7 @@ pub(crate) fn load_slice_as_stack_value(slice: &mut CellSlice) -> Result<OwnedCe
     }
 
     let mut range = CellSliceRange::full(cell.as_ref());
-    let ok = range.skip_first(bits_start, refs_end).is_ok();
+    let ok = range.skip_first(bits_start, refs_start).is_ok();
     debug_assert!(ok);
 
     let bits = bits_end - bits_start;
@@ -1153,4 +1203,98 @@ pub(crate) fn load_slice_as_stack_value(slice: &mut CellSlice) -> Result<OwnedCe
     debug_assert!(ok);
 
     Ok(OwnedCellSlice::from((cell, range)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stack_store_load_works() {
+        #[track_caller]
+        fn check_value(value: RcStackValue) {
+            let mut b = CellBuilder::new();
+            value
+                .store_as_stack_value(&mut b, &mut Cell::empty_context())
+                .unwrap();
+            let parsed = Stack::load_stack_value(&mut b.as_full_slice()).unwrap();
+
+            let value = format!("{}", value.display_list());
+            let parsed = format!("{}", parsed.display_list());
+            println!("VALUE: {value}, PARSED: {parsed}");
+            assert_eq!(value, parsed);
+        }
+
+        // Null
+        check_value(Rc::new(()));
+
+        // Int
+        for negate in [false, true] {
+            for pow in 0..=256 {
+                let mut value: BigInt = (BigInt::from(1) << pow) - 1;
+                if negate {
+                    value = -value;
+                }
+                check_value(Rc::new(value));
+            }
+        }
+
+        // NaN
+        check_value(Rc::new(NaN));
+
+        // Cell
+        check_value(Rc::new(
+            CellBuilder::build_from((
+                0x123123u32,
+                HashBytes::wrap(&[0xff; 32]),
+                Cell::default(),
+                Cell::default(),
+            ))
+            .unwrap(),
+        ));
+
+        // CellSlice
+        check_value(Rc::new({
+            let cell = CellBuilder::build_from((
+                0x123123u32,
+                HashBytes::wrap(&[0xff; 32]),
+                Cell::default(),
+                Cell::default(),
+            ))
+            .unwrap();
+            let mut cs = OwnedCellSlice::from(cell);
+
+            {
+                let mut slice = cs.apply().unwrap();
+                slice.skip_first(16, 1).unwrap();
+                slice.skip_last(8, 0).unwrap();
+                cs.set_range(slice.range());
+            }
+
+            cs
+        }));
+
+        // CellBuilder
+        check_value(Rc::new({
+            let mut b = CellBuilder::new();
+            b.set_exotic(true);
+            b.store_u32(0x123123).unwrap();
+            b.store_u256(HashBytes::wrap(&[0xff; 32])).unwrap();
+            b.store_reference(Cell::default()).unwrap();
+            b
+        }));
+
+        // Tuple
+        check_value(Rc::new(tuple![]));
+        check_value(Rc::new(tuple![int 0, int 1, int 2]));
+        check_value(Rc::new(
+            tuple![int 0, int 1, int 2, [int 1, [int 2, [int 3, int 4]]]],
+        ));
+        check_value(Rc::new(tuple![
+            raw Rc::new(Cell::default()),
+            raw Rc::new(CellBuilder::new()),
+            null,
+            nan,
+        ]));
+    }
 }
