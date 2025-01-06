@@ -422,6 +422,15 @@ impl Stack {
     }
 }
 
+impl FromIterator<RcStackValue> for Stack {
+    #[inline]
+    fn from_iter<T: IntoIterator<Item = RcStackValue>>(iter: T) -> Self {
+        Self {
+            items: Vec::<RcStackValue>::from_iter(iter),
+        }
+    }
+}
+
 // TODO: impl store with limit
 impl Store for Stack {
     fn store_into(

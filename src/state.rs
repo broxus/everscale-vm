@@ -25,7 +25,7 @@ use crate::util::OwnedCellSlice;
 pub struct VmStateBuilder {
     pub code: OwnedCellSlice,
     pub data: Option<Cell>,
-    pub stack: Vec<RcStackValue>,
+    pub stack: Rc<Stack>,
     pub libraries: Option<Box<dyn LibraryProvider>>,
     pub c7: Option<Rc<Vec<RcStackValue>>>,
     pub gas: GasParams,
@@ -50,7 +50,7 @@ impl VmStateBuilder {
             InitSelectorParams::UseCode { push0 } => {
                 if push0 {
                     vm_log_trace!("implicit PUSH 0 at start");
-                    self.stack.push(Stack::make_zero());
+                    Rc::make_mut(&mut self.stack).items.push(Stack::make_zero());
                 }
                 Rc::new(OrdCont::simple(self.code.clone(), cp.id()))
             }
@@ -71,7 +71,7 @@ impl VmStateBuilder {
                 c7: Some(self.c7.unwrap_or_default()),
             },
             code: self.code,
-            stack: Rc::new(Stack { items: self.stack }),
+            stack: self.stack,
             commited_state: None,
             steps: 0,
             quit0,
@@ -121,7 +121,12 @@ impl VmStateBuilder {
     }
 
     pub fn with_stack<I: IntoIterator<Item = RcStackValue>>(mut self, values: I) -> Self {
-        self.stack = values.into_iter().collect();
+        self.stack = Rc::new(values.into_iter().collect());
+        self
+    }
+
+    pub fn with_raw_stack(mut self, stack: Rc<Stack>) -> Self {
+        self.stack = stack;
         self
     }
 
