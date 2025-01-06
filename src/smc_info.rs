@@ -130,6 +130,7 @@ impl SmcInfoBase {
             code: None,
             message_balance: CurrencyCollection::ZERO,
             storage_fees: Tokens::ZERO,
+            prev_blocks_info: None,
         }
     }
 
@@ -194,7 +195,8 @@ pub struct SmcInfoTonV4 {
     pub message_balance: CurrencyCollection,
     /// Storage fees collected on the storage phase.
     pub storage_fees: Tokens,
-    // TODO: Add prev_blocks_info
+    /// Previous blocks info (raw for now).
+    pub prev_blocks_info: Option<Rc<Tuple>>,
 }
 
 impl SmcInfoTonV4 {
@@ -220,6 +222,11 @@ impl SmcInfoTonV4 {
         self
     }
 
+    pub fn with_prev_blocks_info(mut self, prev_blocks_info: Rc<Tuple>) -> Self {
+        self.prev_blocks_info = Some(prev_blocks_info);
+        self
+    }
+
     pub fn require_ton_v6(self) -> SmcInfoTonV6 {
         SmcInfoTonV6 {
             base: self,
@@ -240,11 +247,13 @@ impl SmcInfoTonV4 {
         items.push(balance_as_tuple(&self.message_balance));
         // storage_fees:Integer
         items.push(Rc::new(BigInt::from(self.storage_fees.into_inner())));
-        // TODO: Use `prev_blocks_info`.
         // [ wc:Integer shard:Integer seqno:Integer root_hash:Integer file_hash:Integer] = BlockId;
         // [ last_mc_blocks:[BlockId...]
         //   prev_key_block:BlockId ] : PrevBlocksInfo
-        items.push(Stack::make_null());
+        match self.prev_blocks_info.clone() {
+            None => items.push(Stack::make_null()),
+            Some(info) => items.push(info),
+        }
     }
 }
 
