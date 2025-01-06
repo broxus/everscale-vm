@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::sync::Arc;
 
 use everscale_types::dict::DictKey;
 use everscale_types::error::Error;
@@ -37,6 +38,54 @@ pub trait SmcInfo {
     fn version(&self) -> VmVersion;
 
     fn build_c7(&self) -> Rc<Tuple>;
+}
+
+impl<T: SmcInfo + ?Sized> SmcInfo for &'_ T {
+    #[inline]
+    fn version(&self) -> VmVersion {
+        T::version(self)
+    }
+
+    #[inline]
+    fn build_c7(&self) -> Rc<Tuple> {
+        T::build_c7(self)
+    }
+}
+
+impl<T: SmcInfo + ?Sized> SmcInfo for Box<T> {
+    #[inline]
+    fn version(&self) -> VmVersion {
+        T::version(self)
+    }
+
+    #[inline]
+    fn build_c7(&self) -> Rc<Tuple> {
+        T::build_c7(self)
+    }
+}
+
+impl<T: SmcInfo + ?Sized> SmcInfo for Rc<T> {
+    #[inline]
+    fn version(&self) -> VmVersion {
+        T::version(self)
+    }
+
+    #[inline]
+    fn build_c7(&self) -> Rc<Tuple> {
+        T::build_c7(self)
+    }
+}
+
+impl<T: SmcInfo + ?Sized> SmcInfo for Arc<T> {
+    #[inline]
+    fn version(&self) -> VmVersion {
+        T::version(self)
+    }
+
+    #[inline]
+    fn build_c7(&self) -> Rc<Tuple> {
+        T::build_c7(self)
+    }
 }
 
 /// Common Smart Contract Info.
