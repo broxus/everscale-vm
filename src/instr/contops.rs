@@ -1831,4 +1831,37 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    #[ignore]
+    fn infinite_recursion() {
+        assert_run_vm!(
+            r#"
+            PUSHCONT {
+                DUP
+                EXECUTE
+            }
+            DUP
+            EXECUTE
+            "#,
+            [] => [],
+        );
+    }
+
+    #[test]
+    // #[traced_test]
+    fn safe_infinite_recursion2() {
+        assert_run_vm!(
+            r#"
+            PUSHCONT {
+                DUP
+                POPSAVE c0
+            }
+            DUP
+            EXECUTE
+            "#,
+            [] => [int 999997],
+            exit_code: -14,
+        );
+    }
 }
