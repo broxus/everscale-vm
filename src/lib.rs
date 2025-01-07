@@ -271,11 +271,15 @@ mod tests {
             })
             .with_debug(TracingOutput::default())
             .with_stack(original_stack)
+            .with_gas(GasParams {
+                max: u64::MAX,
+                limit: 1000000,
+                credit: 0,
+            })
             .build();
 
-        vm.gas.gas_remaining = 1000000000;
-
         let exit_code = !vm.run();
+
         (exit_code, vm)
     }
 
