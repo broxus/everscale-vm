@@ -1,8 +1,7 @@
-extern crate self as everscale_vm;
-
 #[cfg(test)]
 #[macro_use]
 extern crate everscale_asm_macros;
+extern crate self as everscale_vm;
 
 /// Prevents using `From::from` for plain error conversion.
 macro_rules! ok {
@@ -345,7 +344,7 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct TracingOutput {
+    pub struct TracingOutput {
         buffer: String,
     }
 
