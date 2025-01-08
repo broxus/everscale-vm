@@ -1,3 +1,4 @@
+use std::mem::ManuallyDrop;
 use std::rc::Rc;
 
 use everscale_types::error::Error;
@@ -6,18 +7,19 @@ use everscale_types::prelude::*;
 use tracing::instrument;
 
 use crate::error::VmResult;
+use crate::saferc::{SafeDelete, SafeRc, SafeRcMakeMut};
 use crate::stack::{
     load_slice_as_stack_value, store_slice_as_stack_value, RcStackValue, Stack, StackValue,
     StackValueType, Tuple, TupleExt,
 };
 use crate::state::VmState;
-use crate::util::{ensure_empty_slice, rc_ptr_eq, OwnedCellSlice, Uint4};
+use crate::util::{ensure_empty_slice, OwnedCellSlice, Uint4};
 
 /// Total state of VM.
 #[derive(Debug, Default, Clone)]
 pub struct ControlData {
     pub nargs: Option<u16>,
-    pub stack: Option<Rc<Stack>>,
+    pub stack: Option<SafeRc<Stack>>,
     pub save: ControlRegs,
     pub cp: Option<u16>,
 }
@@ -46,7 +48,7 @@ impl Store for ControlData {
             Some(_) => return Err(Error::IntOverflow),
         }
 
-        ok!(self.stack.store_into(builder, context));
+        ok!(self.stack.as_deref().store_into(builder, context));
         ok!(self.save.store_into(builder, context));
         ok!(self.cp.store_into(builder, context));
         Ok(())
@@ -62,7 +64,7 @@ impl Load<'_> for ControlData {
             },
             stack: match ok!(slice.load_bit()) {
                 false => None,
-                true => Some(ok!(Rc::<Stack>::load_from(slice))),
+                true => Some(ok!(SafeRc::<Stack>::load_from(slice))),
             },
             save: ok!(ControlRegs::load_from(slice)),
             cp: ok!(Load::load_from(slice)),
@@ -75,7 +77,7 @@ impl Load<'_> for ControlData {
 pub struct ControlRegs {
     pub c: [Option<RcCont>; 4],
     pub d: [Option<Cell>; 2],
-    pub c7: Option<Rc<Tuple>>,
+    pub c7: Option<SafeRc<Tuple>>,
 }
 
 impl ControlRegs {
@@ -116,12 +118,12 @@ impl ControlRegs {
     }
 
     // TODO: use `&dyn StackValue` for value?
-    pub fn set(&mut self, i: usize, value: Rc<dyn StackValue>) -> VmResult<()> {
+    pub fn set(&mut self, i: usize, value: RcStackValue) -> VmResult<()> {
         if i < Self::CONT_REG_COUNT {
             self.c[i] = Some(ok!(value.into_cont()));
         } else if Self::DATA_REG_RANGE.contains(&i) {
             let cell = ok!(value.into_cell());
-            self.d[i - Self::DATA_REG_OFFSET] = Some(Rc::unwrap_or_clone(cell));
+            self.d[i - Self::DATA_REG_OFFSET] = Some(SafeRc::unwrap_or_clone(cell));
         } else if i == 7 {
             self.c7 = Some(ok!(value.into_tuple()));
         } else {
@@ -158,19 +160,19 @@ impl ControlRegs {
         }
     }
 
-    pub fn set_c7(&mut self, tuple: Rc<Tuple>) {
+    pub fn set_c7(&mut self, tuple: SafeRc<Tuple>) {
         self.c7 = Some(tuple);
     }
 
-    pub fn get_as_stack_value(&self, i: usize) -> Option<Rc<dyn StackValue>> {
+    pub fn get_as_stack_value(&self, i: usize) -> Option<RcStackValue> {
         if i < Self::CONT_REG_COUNT {
-            self.c.get(i)?.clone().map(|cont| cont.into_stack_value())
+            self.c.get(i)?.clone().map(SafeRc::into_dyn_value)
         } else if Self::DATA_REG_RANGE.contains(&i) {
             self.d[i - Self::DATA_REG_OFFSET]
                 .clone()
-                .map(|cell| Rc::new(cell) as _)
+                .map(SafeRc::new_dyn_value)
         } else if i == 7 {
-            self.c7.clone().map(|tuple| tuple.clone() as _)
+            self.c7.clone().map(SafeRc::into_dyn_value)
         } else {
             None
         }
@@ -194,7 +196,7 @@ impl ControlRegs {
         }
     }
 
-    pub fn define(&mut self, i: usize, value: Rc<dyn StackValue>) -> VmResult<()> {
+    pub fn define(&mut self, i: usize, value: RcStackValue) -> VmResult<()> {
         if i < Self::CONT_REG_COUNT {
             let cont = ok!(value.into_cont());
             vm_ensure!(self.c[i].is_none(), ControlRegisterRedefined);
@@ -203,7 +205,7 @@ impl ControlRegs {
             let cell = ok!(value.into_cell());
             let d = &mut self.d[i - Self::DATA_REG_OFFSET];
             vm_ensure!(d.is_none(), ControlRegisterRedefined);
-            *d = Some(Rc::unwrap_or_clone(cell));
+            *d = Some(SafeRc::unwrap_or_clone(cell));
         } else if i == 7 {
             let tuple = ok!(value.into_tuple());
 
@@ -238,10 +240,13 @@ impl ControlRegs {
         }
     }
 
-    fn merge_stack_value<T: ?Sized>(lhs: &mut Option<Rc<T>>, rhs: &Option<Rc<T>>) {
+    fn merge_stack_value<T: SafeDelete + ?Sized>(
+        lhs: &mut Option<SafeRc<T>>,
+        rhs: &Option<SafeRc<T>>,
+    ) {
         if let Some(rhs) = rhs {
             if let Some(lhs) = lhs {
-                if rc_ptr_eq(lhs, rhs) {
+                if SafeRc::ptr_eq(lhs, rhs) {
                     return;
                 }
             }
@@ -310,12 +315,9 @@ impl Load<'_> for ControlRegs {
     }
 }
 
-/// Dynamic dispatch alias for [`Cont`].
-pub type DynCont = dyn Cont;
-
 /// Continuation interface.
-pub trait Cont: Store + dyn_clone::DynClone + std::fmt::Debug {
-    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue>;
+pub trait Cont: Store + SafeDelete + dyn_clone::DynClone + std::fmt::Debug {
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue>;
 
     fn as_stack_value(&self) -> &dyn StackValue;
 
@@ -331,6 +333,11 @@ pub trait Cont: Store + dyn_clone::DynClone + std::fmt::Debug {
 }
 
 impl<T: Cont + 'static> StackValue for T {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
     fn ty(&self) -> StackValueType {
         StackValueType::Cont
     }
@@ -348,25 +355,54 @@ impl<T: Cont + 'static> StackValue for T {
         write!(f, "Cont{{{:?}}}", self as *const _ as *const ())
     }
 
-    fn as_cont(&self) -> Option<&DynCont> {
+    fn as_cont(&self) -> Option<&dyn Cont> {
         Some(self)
     }
 
-    fn into_cont(self: Rc<Self>) -> VmResult<RcCont> {
+    fn rc_into_cont(self: Rc<Self>) -> VmResult<Rc<dyn Cont>> {
         Ok(self)
     }
 }
 
 /// Continuation.
-pub type RcCont = Rc<DynCont>;
+pub type RcCont = SafeRc<dyn Cont>;
 
-impl DynCont {
+impl dyn Cont {
     pub fn has_c0(&self) -> bool {
         if let Some(control) = self.get_control_data() {
             control.save.c[0].is_some()
         } else {
             false
         }
+    }
+}
+
+impl SafeRcMakeMut for dyn Cont {
+    #[inline]
+    fn rc_make_mut(rc: &mut Rc<Self>) -> &mut Self {
+        dyn_clone::rc_make_mut(rc)
+    }
+}
+
+impl<T: Cont + 'static> SafeRc<T> {
+    #[inline]
+    pub fn into_dyn_cont(self) -> RcCont {
+        let value = SafeRc::into_inner(self);
+        SafeRc(ManuallyDrop::new(value))
+    }
+}
+
+impl<T: Cont + 'static> From<T> for RcCont {
+    #[inline]
+    fn from(value: T) -> Self {
+        Self(ManuallyDrop::new(Rc::new(value)))
+    }
+}
+
+impl<T: Cont + 'static> From<Rc<T>> for RcCont {
+    #[inline]
+    fn from(value: Rc<T>) -> Self {
+        Self(ManuallyDrop::new(value))
     }
 }
 
@@ -388,23 +424,23 @@ pub(crate) fn load_cont(slice: &mut CellSlice) -> Result<RcCont, Error> {
     // Match bit count with tag ranges
     Ok(match n {
         // 00xxxx -> 0 (16)
-        0 => Rc::new(ok!(OrdCont::load_from(slice))),
+        0 => SafeRc::from(ok!(OrdCont::load_from(slice))),
         // 01xxxx -> 1 (16)
-        1 => Rc::new(ok!(ArgContExt::load_from(slice))),
+        1 => SafeRc::from(ok!(ArgContExt::load_from(slice))),
         // 1000xx -> 2 (4)
-        2 => Rc::new(ok!(QuitCont::load_from(slice))),
+        2 => SafeRc::from(ok!(QuitCont::load_from(slice))),
         // 1001xx -> 3 (4)
-        3 => Rc::new(ok!(ExcQuitCont::load_from(slice))),
+        3 => SafeRc::from(ok!(ExcQuitCont::load_from(slice))),
         // 10100x -> 4 (2)
-        4 => Rc::new(ok!(RepeatCont::load_from(slice))),
+        4 => SafeRc::from(ok!(RepeatCont::load_from(slice))),
         // 110000 -> 5 (1)
-        5 => Rc::new(ok!(UntilCont::load_from(slice))),
+        5 => SafeRc::from(ok!(UntilCont::load_from(slice))),
         // 110001 -> 6 (1)
-        6 => Rc::new(ok!(AgainCont::load_from(slice))),
+        6 => SafeRc::from(ok!(AgainCont::load_from(slice))),
         // 11001x -> 7 (2)
-        7 => Rc::new(ok!(WhileCont::load_from(slice))),
+        7 => SafeRc::from(ok!(WhileCont::load_from(slice))),
         // 1111xx -> 8 (4)
-        8 => Rc::new(ok!(PushIntCont::load_from(slice))),
+        8 => SafeRc::from(ok!(PushIntCont::load_from(slice))),
         // all other
         _ => return Err(Error::InvalidTag),
     })
@@ -421,7 +457,8 @@ impl QuitCont {
 }
 
 impl Cont for QuitCont {
-    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
         self
     }
 
@@ -435,6 +472,13 @@ impl Cont for QuitCont {
     )]
     fn jump(self: Rc<Self>, _: &mut VmState) -> VmResult<i32> {
         Ok(!self.exit_code)
+    }
+}
+
+impl SafeDelete for QuitCont {
+    #[inline]
+    fn rc_into_safe_delete(self: Rc<Self>) -> Rc<dyn SafeDelete> {
+        self
     }
 }
 
@@ -466,7 +510,8 @@ impl ExcQuitCont {
 }
 
 impl Cont for ExcQuitCont {
-    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
         self
     }
 
@@ -479,11 +524,18 @@ impl Cont for ExcQuitCont {
         instrument(level = "trace", name = "exc_quit_cont", skip_all)
     )]
     fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
-        let n = Rc::make_mut(&mut state.stack)
+        let n = SafeRc::make_mut(&mut state.stack)
             .pop_smallint_range(0, 0xffff)
             .unwrap_or_else(|e| e.as_exception() as u32);
         vm_log_trace!(n, "terminating vm in the default exception handler");
         Ok(!(n as i32))
+    }
+}
+
+impl SafeDelete for ExcQuitCont {
+    #[inline]
+    fn rc_into_safe_delete(self: Rc<Self>) -> Rc<dyn SafeDelete> {
+        self
     }
 }
 
@@ -508,7 +560,7 @@ impl Load<'_> for ExcQuitCont {
 #[derive(Debug, Clone)]
 pub struct PushIntCont {
     pub value: i32,
-    pub next: Rc<DynCont>,
+    pub next: RcCont,
 }
 
 impl PushIntCont {
@@ -516,7 +568,8 @@ impl PushIntCont {
 }
 
 impl Cont for PushIntCont {
-    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
         self
     }
 
@@ -534,11 +587,18 @@ impl Cont for PushIntCont {
         )
     )]
     fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
-        ok!(Rc::make_mut(&mut state.stack).push_int(self.value));
+        ok!(SafeRc::make_mut(&mut state.stack).push_int(self.value));
         state.jump(match Rc::try_unwrap(self) {
             Ok(this) => this.next,
             Err(this) => this.next.clone(),
         })
+    }
+}
+
+impl SafeDelete for PushIntCont {
+    #[inline]
+    fn rc_into_safe_delete(self: Rc<Self>) -> Rc<dyn SafeDelete> {
+        self
     }
 }
 
@@ -550,7 +610,7 @@ impl Store for PushIntCont {
     ) -> Result<(), Error> {
         ok!(builder.store_small_uint(Self::TAG, 4));
         ok!(builder.store_u32(self.value as u32));
-        builder.store_reference(ok!(CellBuilder::build_from_ext(&self.next, context)))
+        builder.store_reference(ok!(CellBuilder::build_from_ext(&*self.next, context)))
     }
 }
 
@@ -572,8 +632,8 @@ impl Load<'_> for PushIntCont {
 #[derive(Debug, Clone)]
 pub struct RepeatCont {
     pub count: u64,
-    pub body: Rc<DynCont>,
-    pub after: Rc<DynCont>,
+    pub body: RcCont,
+    pub after: RcCont,
 }
 
 impl RepeatCont {
@@ -582,7 +642,8 @@ impl RepeatCont {
 }
 
 impl Cont for RepeatCont {
-    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
         self
     }
 
@@ -611,9 +672,9 @@ impl Cont for RepeatCont {
         match Rc::get_mut(&mut self) {
             Some(this) => {
                 this.count -= 1;
-                state.set_c0(self)
+                state.set_c0(RcCont::from(self))
             }
-            None => state.set_c0(Rc::new(RepeatCont {
+            None => state.set_c0(SafeRc::from(RepeatCont {
                 count: self.count - 1,
                 body: self.body.clone(),
                 after: self.after.clone(),
@@ -621,6 +682,13 @@ impl Cont for RepeatCont {
         }
 
         state.jump(body)
+    }
+}
+
+impl SafeDelete for RepeatCont {
+    #[inline]
+    fn rc_into_safe_delete(self: Rc<Self>) -> Rc<dyn SafeDelete> {
+        self
     }
 }
 
@@ -635,8 +703,8 @@ impl Store for RepeatCont {
         }
         ok!(builder.store_small_uint(Self::TAG, 4));
         ok!(builder.store_u64(self.count));
-        ok!(builder.store_reference(ok!(CellBuilder::build_from_ext(&self.body, context))));
-        builder.store_reference(ok!(CellBuilder::build_from_ext(&self.after, context)))
+        ok!(builder.store_reference(ok!(CellBuilder::build_from_ext(&*self.body, context))));
+        builder.store_reference(ok!(CellBuilder::build_from_ext(&*self.after, context)))
     }
 }
 
@@ -660,7 +728,7 @@ impl Load<'_> for RepeatCont {
 /// be exited only by an exception, or a `RETALT` (or an explicit `JMPX`).
 #[derive(Debug, Clone)]
 pub struct AgainCont {
-    pub body: Rc<DynCont>,
+    pub body: RcCont,
 }
 
 impl AgainCont {
@@ -668,7 +736,8 @@ impl AgainCont {
 }
 
 impl Cont for AgainCont {
-    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
         self
     }
 
@@ -682,9 +751,16 @@ impl Cont for AgainCont {
     )]
     fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
         if !self.body.has_c0() {
-            state.set_c0(self.clone())
+            state.set_c0(SafeRc::from(self.clone()))
         }
         state.jump(self.body.clone())
+    }
+}
+
+impl SafeDelete for AgainCont {
+    #[inline]
+    fn rc_into_safe_delete(self: Rc<Self>) -> Rc<dyn SafeDelete> {
+        self
     }
 }
 
@@ -695,7 +771,7 @@ impl Store for AgainCont {
         context: &mut dyn CellContext,
     ) -> Result<(), Error> {
         ok!(builder.store_small_uint(Self::TAG, 6));
-        builder.store_reference(ok!(CellBuilder::build_from_ext(&self.body, context)))
+        builder.store_reference(ok!(CellBuilder::build_from_ext(&*self.body, context)))
     }
 }
 
@@ -714,8 +790,8 @@ impl Load<'_> for AgainCont {
 /// Continuation of a loop with postcondition.
 #[derive(Debug, Clone)]
 pub struct UntilCont {
-    pub body: Rc<DynCont>,
-    pub after: Rc<DynCont>,
+    pub body: RcCont,
+    pub after: RcCont,
 }
 
 impl UntilCont {
@@ -723,7 +799,8 @@ impl UntilCont {
 }
 
 impl Cont for UntilCont {
-    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
         self
     }
 
@@ -737,15 +814,22 @@ impl Cont for UntilCont {
     )]
     fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
         vm_log_trace!("until loop condition end");
-        let terminated = ok!(Rc::make_mut(&mut state.stack).pop_bool());
+        let terminated = ok!(SafeRc::make_mut(&mut state.stack).pop_bool());
         if terminated {
             vm_log_trace!("until loop terminated");
             return state.jump(self.after.clone());
         }
         if !self.body.has_c0() {
-            state.set_c0(self.clone());
+            state.set_c0(RcCont::from(self.clone()));
         }
         state.jump(self.body.clone())
+    }
+}
+
+impl SafeDelete for UntilCont {
+    #[inline]
+    fn rc_into_safe_delete(self: Rc<Self>) -> Rc<dyn SafeDelete> {
+        self
     }
 }
 
@@ -756,8 +840,8 @@ impl Store for UntilCont {
         context: &mut dyn CellContext,
     ) -> Result<(), Error> {
         ok!(builder.store_small_uint(Self::TAG, 6));
-        ok!(builder.store_reference(ok!(CellBuilder::build_from_ext(&self.body, context))));
-        builder.store_reference(ok!(CellBuilder::build_from_ext(&self.after, context)))
+        ok!(builder.store_reference(ok!(CellBuilder::build_from_ext(&*self.body, context))));
+        builder.store_reference(ok!(CellBuilder::build_from_ext(&*self.after, context)))
     }
 }
 
@@ -778,9 +862,9 @@ impl Load<'_> for UntilCont {
 #[derive(Debug, Clone)]
 pub struct WhileCont {
     pub check_cond: bool,
-    pub cond: Rc<DynCont>,
-    pub body: Rc<DynCont>,
-    pub after: Rc<DynCont>,
+    pub cond: RcCont,
+    pub body: RcCont,
+    pub after: RcCont,
 }
 
 impl WhileCont {
@@ -788,7 +872,8 @@ impl WhileCont {
 }
 
 impl Cont for WhileCont {
-    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
         self
     }
 
@@ -808,7 +893,7 @@ impl Cont for WhileCont {
     fn jump(mut self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
         let next = if self.check_cond {
             vm_log_trace!("while loop condition end");
-            if !ok!(Rc::make_mut(&mut state.stack).pop_bool()) {
+            if !ok!(SafeRc::make_mut(&mut state.stack).pop_bool()) {
                 vm_log_trace!("while loop terminated");
                 return state.jump(self.after.clone());
             }
@@ -822,9 +907,9 @@ impl Cont for WhileCont {
             match Rc::get_mut(&mut self) {
                 Some(this) => {
                     this.check_cond = !this.check_cond;
-                    state.set_c0(self);
+                    state.set_c0(RcCont::from(self));
                 }
-                None => state.set_c0(Rc::new(WhileCont {
+                None => state.set_c0(SafeRc::from(WhileCont {
                     check_cond: !self.check_cond,
                     cond: self.cond.clone(),
                     body: self.body.clone(),
@@ -837,6 +922,13 @@ impl Cont for WhileCont {
     }
 }
 
+impl SafeDelete for WhileCont {
+    #[inline]
+    fn rc_into_safe_delete(self: Rc<Self>) -> Rc<dyn SafeDelete> {
+        self
+    }
+}
+
 impl Store for WhileCont {
     fn store_into(
         &self,
@@ -845,9 +937,9 @@ impl Store for WhileCont {
     ) -> Result<(), Error> {
         let tag = (Self::TAG << 1) | !self.check_cond as u8;
         ok!(builder.store_small_uint(tag, 6));
-        ok!(builder.store_reference(ok!(CellBuilder::build_from_ext(&self.cond, context))));
-        ok!(builder.store_reference(ok!(CellBuilder::build_from_ext(&self.body, context))));
-        builder.store_reference(ok!(CellBuilder::build_from_ext(&self.after, context)))
+        ok!(builder.store_reference(ok!(CellBuilder::build_from_ext(&*self.cond, context))));
+        ok!(builder.store_reference(ok!(CellBuilder::build_from_ext(&*self.body, context))));
+        builder.store_reference(ok!(CellBuilder::build_from_ext(&*self.after, context)))
     }
 }
 
@@ -878,7 +970,8 @@ impl ArgContExt {
 }
 
 impl Cont for ArgContExt {
-    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
         self
     }
 
@@ -900,7 +993,7 @@ impl Cont for ArgContExt {
             Ok(this) => this.ext,
             Err(this) => this.ext.clone(),
         };
-        ext.jump(state)
+        SafeRc::into_inner(ext).jump(state)
     }
 
     fn get_control_data(&self) -> Option<&ControlData> {
@@ -909,6 +1002,13 @@ impl Cont for ArgContExt {
 
     fn get_control_data_mut(&mut self) -> Option<&mut ControlData> {
         Some(&mut self.data)
+    }
+}
+
+impl SafeDelete for ArgContExt {
+    #[inline]
+    fn rc_into_safe_delete(self: Rc<Self>) -> Rc<dyn SafeDelete> {
+        self
     }
 }
 
@@ -958,7 +1058,8 @@ impl OrdCont {
 }
 
 impl Cont for OrdCont {
-    fn into_stack_value(self: Rc<Self>) -> Rc<dyn StackValue> {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
         self
     }
 
@@ -985,6 +1086,13 @@ impl Cont for OrdCont {
 
     fn get_control_data_mut(&mut self) -> Option<&mut ControlData> {
         Some(&mut self.data)
+    }
+}
+
+impl SafeDelete for OrdCont {
+    #[inline]
+    fn rc_into_safe_delete(self: Rc<Self>) -> Rc<dyn SafeDelete> {
+        self
     }
 }
 

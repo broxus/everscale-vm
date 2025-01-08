@@ -8,6 +8,7 @@ use everscale_types::error::Error;
 use everscale_types::models::{LibDescr, SimpleLib};
 use everscale_types::prelude::*;
 
+use crate::saferc::SafeRc;
 use crate::stack::Stack;
 
 /// Initialization params for [`GasConsumer`].
@@ -191,7 +192,7 @@ impl GasConsumer {
         Ok(())
     }
 
-    pub fn try_consume_stack_gas(&mut self, stack: Option<&Rc<Stack>>) -> Result<(), Error> {
+    pub fn try_consume_stack_gas(&mut self, stack: Option<&SafeRc<Stack>>) -> Result<(), Error> {
         if let Some(stack) = stack {
             self.try_consume_stack_depth_gas(stack.depth() as u64)?;
         }

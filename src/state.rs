@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use anyhow::Result;
 use bitflags::bitflags;
 use everscale_types::cell::*;
@@ -16,6 +14,7 @@ use crate::dispatch::DispatchTable;
 use crate::error::{VmException, VmResult};
 use crate::gas::{GasConsumer, GasParams, LibraryProvider, NoLibraries};
 use crate::instr::{codepage, codepage0};
+use crate::saferc::SafeRc;
 use crate::smc_info::{SmcInfo, VmVersion};
 use crate::stack::{RcStackValue, Stack};
 use crate::util::OwnedCellSlice;
@@ -25,9 +24,9 @@ use crate::util::OwnedCellSlice;
 pub struct VmStateBuilder {
     pub code: OwnedCellSlice,
     pub data: Option<Cell>,
-    pub stack: Rc<Stack>,
+    pub stack: SafeRc<Stack>,
     pub libraries: Option<Box<dyn LibraryProvider>>,
-    pub c7: Option<Rc<Vec<RcStackValue>>>,
+    pub c7: Option<SafeRc<Vec<RcStackValue>>>,
     pub gas: GasParams,
     pub init_selector: InitSelectorParams,
     pub version: Option<VmVersion>,
@@ -41,27 +40,29 @@ impl VmStateBuilder {
     }
 
     pub fn build(mut self) -> VmState {
-        let quit0 = QUIT0.with(Rc::clone);
-        let quit1 = QUIT1.with(Rc::clone);
+        let quit0 = QUIT0.with(SafeRc::clone);
+        let quit1 = QUIT1.with(SafeRc::clone);
         let cp = codepage0();
 
         let c3 = match self.init_selector {
-            InitSelectorParams::None => Rc::new(QuitCont { exit_code: 11 }) as RcCont,
+            InitSelectorParams::None => RcCont::from(QuitCont { exit_code: 11 }),
             InitSelectorParams::UseCode { push0 } => {
                 if push0 {
                     vm_log_trace!("implicit PUSH 0 at start");
-                    Rc::make_mut(&mut self.stack).items.push(Stack::make_zero());
+                    SafeRc::make_mut(&mut self.stack)
+                        .items
+                        .push(Stack::make_zero());
                 }
-                Rc::new(OrdCont::simple(self.code.clone(), cp.id()))
+                SafeRc::from(OrdCont::simple(self.code.clone(), cp.id()))
             }
         };
 
         VmState {
             cr: ControlRegs {
                 c: [
-                    Some(quit0.clone()),
-                    Some(quit1.clone()),
-                    Some(EXC_QUIT.with(Rc::clone)),
+                    Some(quit0.clone().into_dyn_cont()),
+                    Some(quit1.clone().into_dyn_cont()),
+                    Some(EXC_QUIT.with(SafeRc::clone).into_dyn_cont()),
                     Some(c3),
                 ],
                 d: [
@@ -121,11 +122,11 @@ impl VmStateBuilder {
     }
 
     pub fn with_stack<I: IntoIterator<Item = RcStackValue>>(mut self, values: I) -> Self {
-        self.stack = Rc::new(values.into_iter().collect());
+        self.stack = SafeRc::new(values.into_iter().collect());
         self
     }
 
-    pub fn with_raw_stack(mut self, stack: Rc<Stack>) -> Self {
+    pub fn with_raw_stack(mut self, stack: SafeRc<Stack>) -> Self {
         self.stack = stack;
         self
     }
@@ -162,12 +163,12 @@ pub enum InitSelectorParams {
 /// Full execution state.
 pub struct VmState {
     pub code: OwnedCellSlice,
-    pub stack: Rc<Stack>,
+    pub stack: SafeRc<Stack>,
     pub cr: ControlRegs,
     pub commited_state: Option<CommitedState>,
     pub steps: u64,
-    pub quit0: Rc<QuitCont>,
-    pub quit1: Rc<QuitCont>,
+    pub quit0: SafeRc<QuitCont>,
+    pub quit1: SafeRc<QuitCont>,
     pub gas: GasConsumer,
     pub cp: &'static DispatchTable,
     pub debug: Option<Box<dyn std::fmt::Write>>,
@@ -181,7 +182,7 @@ impl VmState {
     pub const MAX_DATA_DEPTH: u16 = 512;
 
     thread_local! {
-        static EMPTY_STACK: Rc<Stack> = Rc::new(Default::default());
+        static EMPTY_STACK: SafeRc<Stack> = SafeRc::new(Default::default());
     }
 
     pub fn builder() -> VmStateBuilder {
@@ -209,7 +210,7 @@ impl VmState {
             self.gas.try_consume_implicit_jmpref_gas()?;
             let code = self.gas.load_cell(next_cell, LoadMode::Full)?.into();
 
-            let cont = Rc::new(OrdCont::simple(code, self.cp.id()));
+            let cont = SafeRc::from(OrdCont::simple(code, self.cp.id()));
             self.jump(cont)
         } else {
             vm_log_op!("implicit RET");
@@ -251,8 +252,8 @@ impl VmState {
         // Try commit on ~(0) and ~(-1) exit codes
         if res | 1 == -1 && !self.try_commit() {
             vm_log_trace!("automatic commit failed");
-            self.stack = Rc::new(Stack {
-                items: vec![Rc::new(BigInt::default())],
+            self.stack = SafeRc::new(Stack {
+                items: vec![Stack::make_zero()],
             });
             return VmException::CellOverflow.as_exit_code();
         }
@@ -286,13 +287,16 @@ impl VmState {
         }
     }
 
-    pub fn take_stack(&mut self) -> Rc<Stack> {
-        std::mem::replace(&mut self.stack, Self::EMPTY_STACK.with(Rc::clone))
+    pub fn take_stack(&mut self) -> SafeRc<Stack> {
+        std::mem::replace(&mut self.stack, Self::EMPTY_STACK.with(SafeRc::clone))
     }
 
-    pub fn ref_to_cont(&mut self, code: Cell) -> VmResult<Rc<OrdCont>> {
+    pub fn ref_to_cont(&mut self, code: Cell) -> VmResult<RcCont> {
         let code = self.gas.load_cell(code, LoadMode::Full)?;
-        Ok(Rc::new(OrdCont::simple(code.into(), self.cp.id())))
+        Ok(SafeRc::from(OrdCont::simple(
+            code.into(),
+            self.cp.id(),
+        )))
     }
 
     pub fn c1_envelope_if(&mut self, cond: bool, cont: RcCont, save: bool) -> RcCont {
@@ -313,9 +317,9 @@ impl VmState {
                 c.data.save.define_c0(&self.cr.c[0]);
                 c.data.save.define_c1(&self.cr.c[1]);
 
-                cont = Rc::new(c);
+                cont = SafeRc::from(c);
             } else {
-                let cont = dyn_clone::rc_make_mut(&mut cont);
+                let cont = SafeRc::make_mut(&mut cont);
                 if let Some(data) = cont.get_control_data_mut() {
                     data.save.define_c0(&self.cr.c[0]);
                     data.save.define_c1(&self.cr.c[1]);
@@ -336,9 +340,9 @@ impl VmState {
                     ext: c0.clone(),
                 };
                 c.data.save.define_c1(c1);
-                *c0 = Rc::new(c);
+                *c0 = SafeRc::from(c);
             } else {
-                let c0 = dyn_clone::rc_make_mut(c0);
+                let c0 = SafeRc::make_mut(c0);
                 if let Some(data) = c0.get_control_data_mut() {
                     data.save.define_c1(c1);
                 }
@@ -353,11 +357,13 @@ impl VmState {
         mode: SaveCr,
         stack_copy: Option<u16>,
         nargs: Option<u16>,
-    ) -> VmResult<Rc<OrdCont>> {
+    ) -> VmResult<RcCont> {
         let new_stack = match stack_copy {
             Some(0) => None,
             Some(n) if (n as usize) != self.stack.depth() => {
-                let stack = ok!(Rc::make_mut(&mut self.stack).split_top(n as _).map(Some));
+                let stack = ok!(SafeRc::make_mut(&mut self.stack)
+                    .split_top(n as _)
+                    .map(Some));
                 self.gas.try_consume_stack_gas(stack.as_ref())?;
                 stack
             }
@@ -378,21 +384,23 @@ impl VmState {
         }
 
         if mode.contains(SaveCr::C0) {
-            res.data.save.c[0] = std::mem::replace(&mut self.cr.c[0], Some(self.quit0.clone()));
+            res.data.save.c[0] =
+                std::mem::replace(&mut self.cr.c[0], Some(self.quit0.clone().into_dyn_cont()));
         }
         if mode.contains(SaveCr::C1) {
-            res.data.save.c[1] = std::mem::replace(&mut self.cr.c[1], Some(self.quit1.clone()));
+            res.data.save.c[1] =
+                std::mem::replace(&mut self.cr.c[1], Some(self.quit1.clone().into_dyn_cont()));
         }
         if mode.contains(SaveCr::C2) {
             res.data.save.c[2] = self.cr.c[2].take();
         }
 
-        Ok(Rc::new(res))
+        Ok(SafeRc::from(res))
     }
 
     pub fn throw_exception(&mut self, n: i32) -> VmResult<i32> {
-        self.stack = Rc::new(Stack {
-            items: vec![Stack::make_zero(), Rc::new(BigInt::from(n))],
+        self.stack = SafeRc::new(Stack {
+            items: vec![Stack::make_zero(), SafeRc::new_dyn_value(BigInt::from(n))],
         });
         self.code = Default::default();
         self.gas.try_consume_exception_gas()?;
@@ -403,8 +411,8 @@ impl VmState {
     }
 
     pub fn throw_exception_with_arg(&mut self, n: i32, arg: RcStackValue) -> VmResult<i32> {
-        self.stack = Rc::new(Stack {
-            items: vec![arg, Rc::new(BigInt::from(n))],
+        self.stack = SafeRc::new(Stack {
+            items: vec![arg, SafeRc::new_dyn_value(BigInt::from(n))],
         });
         self.code = Default::default();
         self.gas.try_consume_exception_gas()?;
@@ -417,8 +425,8 @@ impl VmState {
     pub fn throw_out_of_gas(&mut self) -> i32 {
         let consumed = self.gas.gas_consumed();
         vm_log_trace!(consumed, limit = self.gas.gas_limit, "out of gas");
-        self.stack = Rc::new(Stack {
-            items: vec![Rc::new(BigInt::from(consumed))],
+        self.stack = SafeRc::new(Stack {
+            items: vec![SafeRc::new_dyn_value(BigInt::from(consumed))],
         });
 
         // No negation for unhandled exceptions (to make their faking impossible).
@@ -441,10 +449,10 @@ impl VmState {
         // Create return continuation
         let mut ret = OrdCont::simple(std::mem::take(&mut self.code), self.cp.id());
         ret.data.save.c[0] = self.cr.c[0].take();
-        self.cr.c[0] = Some(Rc::new(ret));
+        self.cr.c[0] = Some(SafeRc::from(ret));
 
         // NOTE: cont.data.save.c[0] must not be set
-        cont.jump(self)
+        SafeRc::into_inner(cont).jump(self)
     }
 
     pub fn call_ext(
@@ -485,7 +493,7 @@ impl VmState {
                 _ => (None, 0),
             };
 
-            let new_stack = match Rc::get_mut(&mut cont) {
+            let new_stack = match SafeRc::get_mut(&mut cont) {
                 Some(cont) => cont
                     .get_control_data_mut()
                     .and_then(|control_data| control_data.stack.take()),
@@ -498,8 +506,8 @@ impl VmState {
                 Some(mut stack) if !stack.items.is_empty() => {
                     let copy = copy.unwrap_or(current_depth);
 
-                    let current_stack = Rc::make_mut(&mut self.stack);
-                    ok!(Rc::make_mut(&mut stack).move_from_stack(current_stack, copy));
+                    let current_stack = SafeRc::make_mut(&mut self.stack);
+                    ok!(SafeRc::make_mut(&mut stack).move_from_stack(current_stack, copy));
                     ok!(current_stack.pop_many(skip));
                     self.gas.try_consume_stack_gas(Some(&self.stack))?;
 
@@ -507,7 +515,8 @@ impl VmState {
                 }
                 _ => {
                     if let Some(copy) = copy {
-                        let stack = ok!(Rc::make_mut(&mut self.stack).split_top_ext(copy, skip));
+                        let stack =
+                            ok!(SafeRc::make_mut(&mut self.stack).split_top_ext(copy, skip));
                         self.gas.try_consume_stack_gas(Some(&stack))?;
                         stack
                     } else {
@@ -520,7 +529,7 @@ impl VmState {
         } else {
             // Simple case without continuation data
             let new_stack = if let Some(pass_args) = pass_args {
-                let stack = ok!(Rc::make_mut(&mut self.stack).split_top(pass_args as _));
+                let stack = ok!(SafeRc::make_mut(&mut self.stack).split_top(pass_args as _));
                 self.gas.try_consume_stack_gas(Some(&stack))?;
                 stack
             } else {
@@ -541,9 +550,9 @@ impl VmState {
             },
         };
         ret.data.save.c[0] = c0;
-        self.cr.c[0] = Some(Rc::new(ret));
+        self.cr.c[0] = Some(SafeRc::from(ret));
 
-        cont.jump(self)
+        SafeRc::into_inner(cont).jump(self)
     }
 
     pub fn jump(&mut self, cont: RcCont) -> VmResult<i32> {
@@ -559,7 +568,7 @@ impl VmState {
         // - `nargs` is not specified so it expects the full current stack
         //
         // So, we don't need to change anything to call it
-        cont.jump(self)
+        SafeRc::into_inner(cont).jump(self)
     }
 
     pub fn jump_ext(&mut self, mut cont: RcCont, pass_args: Option<u16>) -> VmResult<i32> {
@@ -610,7 +619,7 @@ impl VmState {
                 .unwrap_or(current_depth);
 
             // Try to reuse continuation stack to reduce copies
-            let cont_stack = match Rc::get_mut(&mut cont) {
+            let cont_stack = match SafeRc::get_mut(&mut cont) {
                 None => cont
                     .get_control_data()
                     .and_then(|control_data| control_data.stack.clone()),
@@ -623,15 +632,15 @@ impl VmState {
                 // If continuation has a non-empty stack, extend it from the current stack
                 Some(mut cont_stack) if !cont_stack.items.is_empty() => {
                     // TODO?: don't copy `self.stack` here
-                    ok!(Rc::make_mut(&mut cont_stack)
-                        .move_from_stack(Rc::make_mut(&mut self.stack), next_depth));
+                    ok!(SafeRc::make_mut(&mut cont_stack)
+                        .move_from_stack(SafeRc::make_mut(&mut self.stack), next_depth));
                     self.gas.try_consume_stack_gas(Some(&cont_stack))?;
 
                     self.stack = cont_stack;
                 }
                 // Ensure that the current stack has an exact number of items
                 _ if next_depth < current_depth => {
-                    ok!(Rc::make_mut(&mut self.stack).drop_bottom(current_depth - next_depth));
+                    ok!(SafeRc::make_mut(&mut self.stack).drop_bottom(current_depth - next_depth));
                     self.gas.try_consume_stack_depth_gas(next_depth as u64)?;
                 }
                 // Leave the current stack untouched
@@ -645,13 +654,13 @@ impl VmState {
 
             if depth_diff > 0 {
                 // Modify the current stack only when needed
-                ok!(Rc::make_mut(&mut self.stack).drop_bottom(depth_diff));
+                ok!(SafeRc::make_mut(&mut self.stack).drop_bottom(depth_diff));
                 self.gas.try_consume_stack_depth_gas(pass_args as u64)?;
             }
         }
 
         // Proceed to the continuation
-        cont.jump(self)
+        SafeRc::into_inner(cont).jump(self)
     }
 
     pub fn ret(&mut self) -> VmResult<i32> {
@@ -679,7 +688,7 @@ impl VmState {
             drop(body);
             after
         } else {
-            Rc::new(RepeatCont {
+            SafeRc::from(RepeatCont {
                 count: n as _,
                 body,
                 after,
@@ -689,7 +698,7 @@ impl VmState {
 
     pub fn until(&mut self, body: RcCont, after: RcCont) -> VmResult<i32> {
         if !body.has_c0() {
-            self.cr.c[0] = Some(Rc::new(UntilCont {
+            self.cr.c[0] = Some(SafeRc::from(UntilCont {
                 body: body.clone(),
                 after,
             }))
@@ -699,7 +708,7 @@ impl VmState {
 
     pub fn loop_while(&mut self, cond: RcCont, body: RcCont, after: RcCont) -> VmResult<i32> {
         if !cond.has_c0() {
-            self.cr.c[0] = Some(Rc::new(WhileCont {
+            self.cr.c[0] = Some(SafeRc::from(WhileCont {
                 check_cond: true,
                 cond: cond.clone(),
                 body,
@@ -710,7 +719,7 @@ impl VmState {
     }
 
     pub fn again(&mut self, body: RcCont) -> VmResult<i32> {
-        self.jump(Rc::new(AgainCont { body }))
+        self.jump(SafeRc::from(AgainCont { body }))
     }
 
     pub fn adjust_cr(&mut self, save: &ControlRegs) {
@@ -739,14 +748,18 @@ impl VmState {
     }
 
     fn take_c0(&mut self) -> VmResult<RcCont> {
-        let Some(cont) = std::mem::replace(&mut self.cr.c[0], Some(self.quit0.clone())) else {
+        let Some(cont) =
+            std::mem::replace(&mut self.cr.c[0], Some(self.quit0.clone().into_dyn_cont()))
+        else {
             vm_bail!(InvalidOpcode);
         };
         Ok(cont)
     }
 
     fn take_c1(&mut self) -> VmResult<RcCont> {
-        let Some(cont) = std::mem::replace(&mut self.cr.c[1], Some(self.quit1.clone())) else {
+        let Some(cont) =
+            std::mem::replace(&mut self.cr.c[1], Some(self.quit1.clone().into_dyn_cont()))
+        else {
             vm_bail!(InvalidOpcode);
         };
         Ok(cont)
@@ -783,7 +796,7 @@ bitflags! {
 }
 
 thread_local! {
-    static QUIT0: Rc<QuitCont> = Rc::new(QuitCont { exit_code: 0 });
-    static QUIT1: Rc<QuitCont> = Rc::new(QuitCont { exit_code: 1 });
-    static EXC_QUIT: Rc<ExcQuitCont> = Rc::new(ExcQuitCont);
+    static QUIT0: SafeRc<QuitCont> = SafeRc::new(QuitCont { exit_code: 0 });
+    static QUIT1: SafeRc<QuitCont> = SafeRc::new(QuitCont { exit_code: 1 });
+    static EXC_QUIT: SafeRc<ExcQuitCont> = SafeRc::new(ExcQuitCont);
 }

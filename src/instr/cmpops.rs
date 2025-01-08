@@ -1,11 +1,11 @@
 use std::cmp::Ordering;
-use std::rc::Rc;
 
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
 use num_traits::ToPrimitive;
 
 use crate::error::VmResult;
+use crate::saferc::SafeRc;
 use crate::state::VmState;
 
 pub struct CmpOps;
@@ -15,7 +15,7 @@ impl CmpOps {
     #[op(code = "b8", fmt = "SGN", args(quiet = false))]
     #[op(code = "b7b8", fmt = "QSGN", args(quiet = true))]
     fn exec_sgn(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let Some(x) = ok!(stack.pop_int_or_nan()) else {
             vm_ensure!(quiet, IntegerOverflow);
             ok!(stack.push_nan());
@@ -44,7 +44,7 @@ impl CmpOps {
     #[op(code = "b7be", fmt = "QGEQ", args(mode = 0x778, quiet = true))]
     #[op(code = "b7bf", fmt = "QCMP", args(mode = 0x987, quiet = true))]
     fn exec_cmp(st: &mut VmState, mode: i32, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
         let x = ok!(stack.pop_int_or_nan());
 
@@ -68,7 +68,7 @@ impl CmpOps {
     #[op(code = "b7c2yy", fmt = "QGTINT {y}", args(y = args as i8, mode = 0x788, quiet = true))]
     #[op(code = "b7c3yy", fmt = "QNEQINT {y}", args(y = args as i8, mode = 0x787, quiet = true))]
     fn exec_cmp_int(st: &mut VmState, y: i8, mode: i32, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(x) => {
                 ok!(stack.push_int(check_cmp(as_truncated_i64(&x).cmp(&(y as i64)), mode)));
@@ -82,7 +82,7 @@ impl CmpOps {
 
     #[op(code = "c4", fmt = "ISNAN")]
     fn exec_is_nan(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let x = ok!(stack.pop_int_or_nan());
         ok!(stack.push_bool(x.is_none()));
         Ok(0)
@@ -90,7 +90,7 @@ impl CmpOps {
 
     #[op(code = "c5", fmt = "CHKNAN")]
     fn exec_chk_nan(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let int = ok!(stack.pop_int());
         ok!(stack.push_raw(int));
         Ok(0)

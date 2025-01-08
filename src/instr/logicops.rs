@@ -1,10 +1,9 @@
-use std::rc::Rc;
-
 use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
 use num_traits::{One, Zero};
 
 use crate::error::VmResult;
+use crate::saferc::SafeRc;
 use crate::state::VmState;
 use crate::util::{bitsize, in_bitsize_range};
 
@@ -15,10 +14,10 @@ impl LogicOps {
     #[op(code = "aayy", fmt = "LSHIFT {y}", args(y = (args & 0xff) + 1, quiet = false))]
     #[op(code = "b7aayy", fmt = "QLSHIFT {y}", args(y = (args & 0xff) + 1, quiet = true))]
     fn exec_lshift_tinyint8(st: &mut VmState, y: u32, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
-                *Rc::make_mut(&mut x) <<= y;
+                *SafeRc::make_mut(&mut x) <<= y;
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -30,10 +29,10 @@ impl LogicOps {
     #[op(code = "abyy", fmt = "RSHIFT {y}", args(y = (args & 0xff) + 1, quiet = false))]
     #[op(code = "b7abyy", fmt = "QRSHIFT {y}", args(y = (args & 0xff) + 1, quiet = true))]
     fn exec_rshift_tinyint8(st: &mut VmState, y: u32, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
-                *Rc::make_mut(&mut x) >>= y;
+                *SafeRc::make_mut(&mut x) >>= y;
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -45,11 +44,11 @@ impl LogicOps {
     #[op(code = "ac", fmt = "LSHIFT", args(quiet = false))]
     #[op(code = "b7ac", fmt = "QLSHIFT", args(quiet = true))]
     fn exec_lshift(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_smallint_range(0, 1023));
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
-                *Rc::make_mut(&mut x) <<= y;
+                *SafeRc::make_mut(&mut x) <<= y;
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -61,11 +60,11 @@ impl LogicOps {
     #[op(code = "ad", fmt = "RSHIFT", args(quiet = false))]
     #[op(code = "b7ad", fmt = "QRSHIFT", args(quiet = true))]
     fn exec_rshift(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_smallint_range(0, 1023));
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
-                *Rc::make_mut(&mut x) >>= y;
+                *SafeRc::make_mut(&mut x) >>= y;
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -77,21 +76,21 @@ impl LogicOps {
     #[op(code = "ae", fmt = "POW2", args(quiet = false))]
     #[op(code = "b7ae", fmt = "QPOW2", args(quiet = true))]
     fn exec_pow2(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_smallint_range(0, 1023));
-        ok!(stack.push_raw_int(Rc::new(BigInt::from(1) << y), quiet));
+        ok!(stack.push_raw_int(SafeRc::new(BigInt::from(1) << y), quiet));
         Ok(0)
     }
 
     #[op(code = "b0", fmt = "AND", args(quiet = false))]
     #[op(code = "b7b0", fmt = "QAND", args(quiet = true))]
     fn exec_and(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
         let x = ok!(stack.pop_int_or_nan());
         match (x, y) {
             (Some(mut x), Some(y)) => {
-                *Rc::make_mut(&mut x) &= y.as_ref();
+                *SafeRc::make_mut(&mut x) &= y.as_ref();
                 ok!(stack.push_raw_int(x, quiet));
             }
             (Some(x), None) | (None, Some(x)) if x.is_zero() => {
@@ -108,12 +107,12 @@ impl LogicOps {
     #[op(code = "b1", fmt = "OR", args(quiet = false))]
     #[op(code = "b7b1", fmt = "QOR", args(quiet = true))]
     fn exec_or(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
         let x = ok!(stack.pop_int_or_nan());
         match (x, y) {
             (Some(mut x), Some(y)) => {
-                *Rc::make_mut(&mut x) |= y.as_ref();
+                *SafeRc::make_mut(&mut x) |= y.as_ref();
                 ok!(stack.push_raw_int(x, quiet));
             }
             (Some(x), None) | (None, Some(x))
@@ -132,12 +131,12 @@ impl LogicOps {
     #[op(code = "b2", fmt = "XOR", args(quiet = false))]
     #[op(code = "b7b2", fmt = "QXOR", args(quiet = true))]
     fn exec_xor(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
         let x = ok!(stack.pop_int_or_nan());
         match (x, y) {
             (Some(mut x), Some(y)) => {
-                *Rc::make_mut(&mut x) ^= y.as_ref();
+                *SafeRc::make_mut(&mut x) ^= y.as_ref();
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -149,11 +148,11 @@ impl LogicOps {
     #[op(code = "b3", fmt = "NOT", args(quiet = false))]
     #[op(code = "b7b3", fmt = "QNOT", args(quiet = true))]
     fn exec_not(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
                 {
-                    let x = Rc::make_mut(&mut x);
+                    let x = SafeRc::make_mut(&mut x);
                     *x = !std::mem::take(x);
                 }
                 ok!(stack.push_raw_int(x, quiet));
@@ -169,7 +168,7 @@ impl LogicOps {
     #[op(code = "b5yy", fmt = "UFITS {y}", args(y = (args & 0xff) + 1, s = false, quiet = false))]
     #[op(code = "b7b5yy", fmt = "QUFITS {y}", args(y = (args & 0xff) + 1, s = false, quiet = true))]
     fn exec_fits_tinyint8(st: &mut VmState, y: u32, s: bool, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(x) if in_bitsize_range(&x, s) && bitsize(&x, s) as u32 <= y => {
                 ok!(stack.push_raw(x));
@@ -185,7 +184,7 @@ impl LogicOps {
     #[op(code = "b601", fmt = "UFITSX", args(s = false, quiet = false))]
     #[op(code = "b7b601", fmt = "QUFITSX", args(s = false, quiet = true))]
     fn exec_fits(st: &mut VmState, s: bool, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_smallint_range(0, 1023));
         match ok!(stack.pop_int_or_nan()) {
             Some(x) if in_bitsize_range(&x, s) && bitsize(&x, s) as u32 <= y => {
@@ -202,7 +201,7 @@ impl LogicOps {
     #[op(code = "b603", fmt = "UBITSIZE", args(s = false, quiet = false))]
     #[op(code = "b7b603", fmt = "QUBITSIZE", args(s = false, quiet = true))]
     fn exec_bitsize(st: &mut VmState, s: bool, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(x) => {
                 if !in_bitsize_range(&x, s) {

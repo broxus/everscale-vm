@@ -1,3 +1,4 @@
+use std::mem::ManuallyDrop;
 use std::rc::Rc;
 
 use everscale_types::error::Error;
@@ -5,8 +6,9 @@ use everscale_types::prelude::*;
 use num_bigint::BigInt;
 use num_traits::{One, ToPrimitive, Zero};
 
-use crate::cont::{load_cont, DynCont, RcCont};
+use crate::cont::{load_cont, Cont, RcCont};
 use crate::error::{VmError, VmResult};
+use crate::saferc::{SafeDelete, SafeRc, SafeRcMakeMut};
 use crate::util::{
     bitsize, ensure_empty_slice, load_int_from_slice, store_int_to_builder, OwnedCellSlice,
 };
@@ -22,44 +24,44 @@ impl Stack {
 
     pub fn make_null() -> RcStackValue {
         thread_local! {
-            static NULL: RcStackValue = Rc::new(());
+            static NULL: RcStackValue = SafeRc::new_dyn_value(());
         }
-        NULL.with(Rc::clone)
+        NULL.with(SafeRc::clone)
     }
 
     pub fn make_nan() -> RcStackValue {
         thread_local! {
-            static NAN: RcStackValue = Rc::new(NaN);
+            static NAN: RcStackValue = SafeRc::new_dyn_value(NaN);
         }
-        NAN.with(Rc::clone)
+        NAN.with(SafeRc::clone)
     }
 
     pub fn make_empty_tuple() -> RcStackValue {
         thread_local! {
-            static EMPTY_TUPLE: RcStackValue = Rc::new(Vec::new());
+            static EMPTY_TUPLE: RcStackValue = SafeRc::new_dyn_value(Vec::new());
         }
-        EMPTY_TUPLE.with(Rc::clone)
+        EMPTY_TUPLE.with(SafeRc::clone)
     }
 
     pub fn make_zero() -> RcStackValue {
         thread_local! {
-            static ONE: RcStackValue = Rc::new(BigInt::zero());
+            static ONE: RcStackValue = SafeRc::new_dyn_value(BigInt::zero());
         }
-        ONE.with(Rc::clone)
+        ONE.with(SafeRc::clone)
     }
 
     pub fn make_minus_one() -> RcStackValue {
         thread_local! {
-            static MINUS_ONE: RcStackValue = Rc::new(-BigInt::one());
+            static MINUS_ONE: RcStackValue = SafeRc::new_dyn_value(-BigInt::one());
         }
-        MINUS_ONE.with(Rc::clone)
+        MINUS_ONE.with(SafeRc::clone)
     }
 
     pub fn make_one() -> RcStackValue {
         thread_local! {
-            static ONE: RcStackValue = Rc::new(BigInt::one());
+            static ONE: RcStackValue = SafeRc::new_dyn_value(BigInt::one());
         }
-        ONE.with(Rc::clone)
+        ONE.with(SafeRc::clone)
     }
 
     pub fn make_bool(value: bool) -> RcStackValue {
@@ -87,7 +89,7 @@ impl Stack {
             // vm_stk_tinyint#01 value:int64 = VmStackValue;
             1 => {
                 let value = ok!(slice.load_u64()) as i64;
-                Rc::new(BigInt::from(value))
+                SafeRc::new_dyn_value(BigInt::from(value))
             }
             2 => {
                 let t = ok!(slice.get_u8(0));
@@ -98,24 +100,24 @@ impl Stack {
                 } else if t / 2 == 0 {
                     // vm_stk_int#0201_ value:int257 = VmStackValue;
                     ok!(slice.skip_first(7, 0));
-                    Rc::new(ok!(load_int_from_slice(slice, 257, true)))
+                    SafeRc::new_dyn_value(ok!(load_int_from_slice(slice, 257, true)))
                 } else {
                     return Err(Error::InvalidData);
                 }
             }
             // vm_stk_cell#03 cell:^Cell = VmStackValue;
-            3 => Rc::new(ok!(slice.load_reference_cloned())),
+            3 => SafeRc::new_dyn_value(ok!(slice.load_reference_cloned())),
             // vm_stk_slice#04 _:VmCellSlice = VmStackValue;
-            4 => Rc::new(ok!(load_slice_as_stack_value(slice))),
+            4 => SafeRc::new_dyn_value(ok!(load_slice_as_stack_value(slice))),
             // vm_stk_builder#05 cell:^Cell = VmStackValue;
             5 => {
                 let cell = ok!(slice.load_reference());
                 let mut builder = CellBuilder::new();
                 ok!(builder.store_slice(cell.as_slice_allow_pruned()));
-                Rc::new(builder)
+                SafeRc::new_dyn_value(builder)
             }
             // vm_stk_cont#06 cont:VmCont = VmStackValue;
-            6 => ok!(load_cont(slice)).into_stack_value(),
+            6 => ok!(load_cont(slice)).into_dyn_value(),
             // vm_stk_tuple#07 len:(## 16) data:(VmTuple len) = VmStackValue;
             7 => {
                 let len = ok!(slice.load_u16()) as usize;
@@ -145,7 +147,7 @@ impl Stack {
                     }
                 }
 
-                Rc::new(tuple)
+                SafeRc::new_dyn_value(tuple)
             }
             _ => return Err(Error::InvalidTag),
         })
@@ -161,16 +163,16 @@ impl Stack {
     }
 
     pub fn push<T: StackValue + 'static>(&mut self, item: T) -> VmResult<()> {
-        self.push_raw(Rc::new(item))
+        self.push_raw(SafeRc::new_dyn_value(item))
     }
 
-    pub fn push_raw(&mut self, item: Rc<dyn StackValue>) -> VmResult<()> {
+    pub fn push_raw<T: StackValue + ?Sized + 'static>(&mut self, item: SafeRc<T>) -> VmResult<()> {
         vm_ensure!(
             self.depth() < Self::MAX_DEPTH,
             StackUnderflow(Self::MAX_DEPTH)
         );
 
-        self.items.push(item);
+        self.items.push(item.into_dyn_value());
         Ok(())
     }
 
@@ -181,7 +183,10 @@ impl Stack {
         }
     }
 
-    pub fn push_opt_raw(&mut self, item: Option<Rc<dyn StackValue>>) -> VmResult<()> {
+    pub fn push_opt_raw<T: StackValue + ?Sized + 'static>(
+        &mut self,
+        item: Option<SafeRc<T>>,
+    ) -> VmResult<()> {
         match item {
             None => self.push_null(),
             Some(item) => self.push_raw(item),
@@ -217,7 +222,7 @@ impl Stack {
         self.push(value.into())
     }
 
-    pub fn push_raw_int(&mut self, value: Rc<BigInt>, quiet: bool) -> VmResult<()> {
+    pub fn push_raw_int(&mut self, value: SafeRc<BigInt>, quiet: bool) -> VmResult<()> {
         if bitsize(&value, true) <= 257 {
             self.push_raw(value)
         } else if quiet {
@@ -235,27 +240,27 @@ impl Stack {
         Ok(())
     }
 
-    pub fn split_top(&mut self, n: usize) -> VmResult<Rc<Self>> {
+    pub fn split_top(&mut self, n: usize) -> VmResult<SafeRc<Self>> {
         let Some(new_depth) = self.depth().checked_sub(n) else {
             vm_bail!(StackUnderflow(n));
         };
-        Ok(Rc::new(Self {
+        Ok(SafeRc::new(Self {
             items: self.items.drain(new_depth..).collect(),
         }))
     }
 
-    pub fn split_top_ext(&mut self, n: usize, drop: usize) -> VmResult<Rc<Self>> {
+    pub fn split_top_ext(&mut self, n: usize, drop: usize) -> VmResult<SafeRc<Self>> {
         let Some(new_depth) = self.depth().checked_sub(n + drop) else {
             vm_bail!(StackUnderflow(n + drop));
         };
-        let res = Rc::new(Self {
+        let res = SafeRc::new(Self {
             items: self.items.drain(new_depth + drop..).collect(),
         });
         self.items.truncate(new_depth);
         Ok(res)
     }
 
-    pub fn pop(&mut self) -> VmResult<Rc<dyn StackValue>> {
+    pub fn pop(&mut self) -> VmResult<RcStackValue> {
         let Some(item) = self.items.pop() else {
             vm_bail!(StackUnderflow(0));
         };
@@ -266,11 +271,11 @@ impl Stack {
         Ok(!ok!(self.pop_int()).is_zero())
     }
 
-    pub fn pop_int(&mut self) -> VmResult<Rc<BigInt>> {
+    pub fn pop_int(&mut self) -> VmResult<SafeRc<BigInt>> {
         ok!(self.pop()).into_int()
     }
 
-    pub fn pop_int_or_nan(&mut self) -> VmResult<Option<Rc<BigInt>>> {
+    pub fn pop_int_or_nan(&mut self) -> VmResult<Option<SafeRc<BigInt>>> {
         let value = ok!(self.pop());
         if value.ty() == StackValueType::Int && value.as_int().is_none() {
             Ok(None)
@@ -321,11 +326,11 @@ impl Stack {
         })
     }
 
-    pub fn pop_tuple(&mut self) -> VmResult<Rc<Tuple>> {
+    pub fn pop_tuple(&mut self) -> VmResult<SafeRc<Tuple>> {
         self.pop()?.into_tuple()
     }
 
-    pub fn pop_tuple_range(&mut self, min_len: u32, max_len: u32) -> VmResult<Rc<Tuple>> {
+    pub fn pop_tuple_range(&mut self, min_len: u32, max_len: u32) -> VmResult<SafeRc<Tuple>> {
         let tuple = self.pop()?.into_tuple()?;
         vm_ensure!(
             (min_len as usize..=max_len as usize).contains(&tuple.len()),
@@ -341,7 +346,7 @@ impl Stack {
         &mut self,
         min_len: u32,
         max_len: u32,
-    ) -> VmResult<Option<Rc<Tuple>>> {
+    ) -> VmResult<Option<SafeRc<Tuple>>> {
         let tuple = {
             let value = self.pop()?;
             if value.is_null() {
@@ -364,19 +369,19 @@ impl Stack {
         self.pop()?.into_cont()
     }
 
-    pub fn pop_cs(&mut self) -> VmResult<Rc<OwnedCellSlice>> {
+    pub fn pop_cs(&mut self) -> VmResult<SafeRc<OwnedCellSlice>> {
         self.pop()?.into_cell_slice()
     }
 
-    pub fn pop_builder(&mut self) -> VmResult<Rc<CellBuilder>> {
+    pub fn pop_builder(&mut self) -> VmResult<SafeRc<CellBuilder>> {
         self.pop()?.into_cell_builder()
     }
 
-    pub fn pop_cell(&mut self) -> VmResult<Rc<Cell>> {
+    pub fn pop_cell(&mut self) -> VmResult<SafeRc<Cell>> {
         self.pop()?.into_cell()
     }
 
-    pub fn pop_cell_opt(&mut self) -> VmResult<Option<Rc<Cell>>> {
+    pub fn pop_cell_opt(&mut self) -> VmResult<Option<SafeRc<Cell>>> {
         let sv = self.pop()?;
         if sv.is_null() {
             Ok(None)
@@ -415,10 +420,24 @@ impl Stack {
         Ok(())
     }
 
-    pub fn fetch(&self, idx: usize) -> VmResult<&Rc<dyn StackValue>> {
+    pub fn fetch(&self, idx: usize) -> VmResult<&RcStackValue> {
         let depth = self.depth();
         vm_ensure!(idx < depth, StackUnderflow(idx));
         Ok(&self.items[depth - idx - 1])
+    }
+}
+
+impl SafeDelete for Stack {
+    #[inline]
+    fn rc_into_safe_delete(self: Rc<Self>) -> Rc<dyn SafeDelete> {
+        self
+    }
+}
+
+impl SafeRcMakeMut for Stack {
+    #[inline]
+    fn rc_make_mut(rc: &mut Rc<Self>) -> &mut Self {
+        Rc::make_mut(rc)
     }
 }
 
@@ -491,6 +510,11 @@ impl<'a> Load<'a> for Stack {
     }
 }
 
+// === StackValue trait ===
+
+/// [`Stack`] item.
+pub type RcStackValue = SafeRc<dyn StackValue>;
+
 /// A value type of [`StackValue`].
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum StackValueType {
@@ -504,7 +528,9 @@ pub enum StackValueType {
 }
 
 /// Interface of a [`Stack`] item.
-pub trait StackValue: std::fmt::Debug {
+pub trait StackValue: SafeDelete + std::fmt::Debug {
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue>;
+
     fn ty(&self) -> StackValueType;
 
     fn store_as_stack_value(
@@ -526,7 +552,7 @@ pub trait StackValue: std::fmt::Debug {
         }
     }
 
-    fn into_int(self: Rc<Self>) -> VmResult<Rc<BigInt>> {
+    fn rc_into_int(self: Rc<Self>) -> VmResult<Rc<BigInt>> {
         Err(invalid_type(self.ty(), StackValueType::Int))
     }
 
@@ -541,7 +567,7 @@ pub trait StackValue: std::fmt::Debug {
         }
     }
 
-    fn into_cell(self: Rc<Self>) -> VmResult<Rc<Cell>> {
+    fn rc_into_cell(self: Rc<Self>) -> VmResult<Rc<Cell>> {
         Err(invalid_type(self.ty(), StackValueType::Cell))
     }
 
@@ -556,7 +582,7 @@ pub trait StackValue: std::fmt::Debug {
         }
     }
 
-    fn into_cell_slice(self: Rc<Self>) -> VmResult<Rc<OwnedCellSlice>> {
+    fn rc_into_cell_slice(self: Rc<Self>) -> VmResult<Rc<OwnedCellSlice>> {
         Err(invalid_type(self.ty(), StackValueType::Slice))
     }
 
@@ -571,22 +597,22 @@ pub trait StackValue: std::fmt::Debug {
         }
     }
 
-    fn into_cell_builder(self: Rc<Self>) -> VmResult<Rc<CellBuilder>> {
+    fn rc_into_cell_builder(self: Rc<Self>) -> VmResult<Rc<CellBuilder>> {
         Err(invalid_type(self.ty(), StackValueType::Builder))
     }
 
-    fn as_cont(&self) -> Option<&DynCont> {
+    fn as_cont(&self) -> Option<&dyn Cont> {
         None
     }
 
-    fn try_as_cont(&self) -> VmResult<&DynCont> {
+    fn try_as_cont(&self) -> VmResult<&dyn Cont> {
         match self.as_cont() {
             Some(value) => Ok(value),
             None => Err(invalid_type(self.ty(), StackValueType::Cont)),
         }
     }
 
-    fn into_cont(self: Rc<Self>) -> VmResult<RcCont> {
+    fn rc_into_cont(self: Rc<Self>) -> VmResult<Rc<dyn Cont>> {
         Err(invalid_type(self.ty(), StackValueType::Cont))
     }
 
@@ -601,7 +627,7 @@ pub trait StackValue: std::fmt::Debug {
         }
     }
 
-    fn into_tuple(self: Rc<Self>) -> VmResult<Rc<Tuple>> {
+    fn rc_into_tuple(self: Rc<Self>) -> VmResult<Rc<Tuple>> {
         Err(invalid_type(self.ty(), StackValueType::Tuple))
     }
 }
@@ -698,11 +724,11 @@ impl dyn StackValue + '_ {
 }
 
 /// Static-dispatch type extension for [`StackValue`].
-pub trait StaticStackValue {
+pub trait StaticStackValue: StackValue {
     type DynRef<'a>;
 
     fn known_ty() -> StackValueType;
-    fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>>;
+    fn from_dyn(value: Rc<dyn StackValue>) -> VmResult<Rc<Self>>;
     fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>>;
 }
 
@@ -710,8 +736,410 @@ fn invalid_type(actual: StackValueType, expected: StackValueType) -> Box<VmError
     Box::new(VmError::InvalidType { expected, actual })
 }
 
-/// [`Stack`] item.
-pub type RcStackValue = Rc<dyn StackValue>;
+// === Null ===
+
+impl StackValue for () {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
+    fn ty(&self) -> StackValueType {
+        StackValueType::Null
+    }
+
+    fn store_as_stack_value(
+        &self,
+        builder: &mut CellBuilder,
+        _: &mut dyn CellContext,
+    ) -> Result<(), Error> {
+        // vm_stk_null#00 = VmStackValue;
+        builder.store_zeros(8)
+    }
+
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("(null)")
+    }
+}
+
+impl SafeRcMakeMut for () {
+    #[inline]
+    fn rc_make_mut(rc: &mut Rc<Self>) -> &mut Self {
+        Rc::make_mut(rc)
+    }
+}
+
+// === Int (NaN) ===
+
+/// Invalid integer stack value.
+#[derive(Debug, Clone, Copy)]
+pub struct NaN;
+
+impl StackValue for NaN {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
+    fn ty(&self) -> StackValueType {
+        StackValueType::Int
+    }
+
+    fn store_as_stack_value(
+        &self,
+        builder: &mut CellBuilder,
+        _: &mut dyn CellContext,
+    ) -> Result<(), Error> {
+        // vm_stk_nan#02ff = VmStackValue;
+        builder.store_u16(0x02ff)
+    }
+
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NaN")
+    }
+
+    fn try_as_int(&self) -> VmResult<&BigInt> {
+        vm_bail!(IntegerOverflow);
+    }
+
+    fn rc_into_int(self: Rc<Self>) -> VmResult<Rc<BigInt>> {
+        vm_bail!(IntegerOverflow);
+    }
+}
+
+impl SafeRcMakeMut for NaN {
+    #[inline]
+    fn rc_make_mut(rc: &mut Rc<Self>) -> &mut Self {
+        Rc::make_mut(rc)
+    }
+}
+
+// === Int ===
+
+impl StackValue for BigInt {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
+    fn ty(&self) -> StackValueType {
+        StackValueType::Int
+    }
+
+    fn store_as_stack_value(
+        &self,
+        builder: &mut CellBuilder,
+        _: &mut dyn CellContext,
+    ) -> Result<(), Error> {
+        let bitsize = bitsize(self, true);
+        if bitsize <= 64 {
+            // vm_stk_tinyint#01 value:int64 = VmStackValue;
+            ok!(builder.store_u8(0x01));
+            store_int_to_builder(self, 64, true, builder)
+        } else {
+            // vm_stk_int#0201_ value:int257 = VmStackValue;
+            ok!(builder.store_uint(0x0200 >> 1, 15));
+            store_int_to_builder(self, 257, true, builder)
+        }
+    }
+
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+
+    fn as_int(&self) -> Option<&BigInt> {
+        Some(self)
+    }
+
+    fn rc_into_int(self: Rc<Self>) -> VmResult<Rc<BigInt>> {
+        Ok(self)
+    }
+}
+
+impl StaticStackValue for BigInt {
+    type DynRef<'a> = &'a BigInt;
+
+    fn known_ty() -> StackValueType {
+        StackValueType::Int
+    }
+
+    fn from_dyn(value: Rc<dyn StackValue>) -> VmResult<Rc<Self>> {
+        value.rc_into_int()
+    }
+
+    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
+        match value.as_int() {
+            Some(value) => Ok(value),
+            None => vm_bail!(InvalidType {
+                expected: StackValueType::Int,
+                actual: value.ty(),
+            }),
+        }
+    }
+}
+
+impl SafeRcMakeMut for BigInt {
+    #[inline]
+    fn rc_make_mut(rc: &mut Rc<Self>) -> &mut Self {
+        Rc::make_mut(rc)
+    }
+}
+
+// === Cell ===
+
+impl StackValue for Cell {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
+    fn ty(&self) -> StackValueType {
+        StackValueType::Cell
+    }
+
+    fn store_as_stack_value(
+        &self,
+        builder: &mut CellBuilder,
+        _: &mut dyn CellContext,
+    ) -> Result<(), Error> {
+        // vm_stk_cell#03 cell:^Cell = VmStackValue;
+        ok!(builder.store_u8(0x03));
+        builder.store_reference(self.clone())
+    }
+
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "C{{{}}}", self.repr_hash())
+    }
+
+    fn as_cell(&self) -> Option<&Cell> {
+        Some(self)
+    }
+
+    fn rc_into_cell(self: Rc<Self>) -> VmResult<Rc<Cell>> {
+        Ok(self)
+    }
+}
+
+impl StaticStackValue for Cell {
+    type DynRef<'a> = &'a Cell;
+
+    fn known_ty() -> StackValueType {
+        StackValueType::Cell
+    }
+
+    fn from_dyn(value: Rc<dyn StackValue>) -> VmResult<Rc<Self>> {
+        value.rc_into_cell()
+    }
+
+    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
+        match value.as_cell() {
+            Some(value) => Ok(value),
+            None => vm_bail!(InvalidType {
+                expected: StackValueType::Cell,
+                actual: value.ty(),
+            }),
+        }
+    }
+}
+
+impl SafeRcMakeMut for Cell {
+    #[inline]
+    fn rc_make_mut(rc: &mut Rc<Self>) -> &mut Self {
+        Rc::make_mut(rc)
+    }
+}
+
+// === CellSlice ===
+
+impl StackValue for OwnedCellSlice {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
+    fn ty(&self) -> StackValueType {
+        StackValueType::Slice
+    }
+
+    fn store_as_stack_value(
+        &self,
+        builder: &mut CellBuilder,
+        _: &mut dyn CellContext,
+    ) -> Result<(), Error> {
+        // vm_stk_slice#04 _:VmCellSlice = VmStackValue;
+        ok!(builder.store_u8(0x04));
+        store_slice_as_stack_value(self, builder)
+    }
+
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+
+    fn as_cell_slice(&self) -> Option<&OwnedCellSlice> {
+        Some(self)
+    }
+
+    fn rc_into_cell_slice(self: Rc<Self>) -> VmResult<Rc<OwnedCellSlice>> {
+        Ok(self)
+    }
+}
+
+impl StaticStackValue for OwnedCellSlice {
+    type DynRef<'a> = &'a OwnedCellSlice;
+
+    fn known_ty() -> StackValueType {
+        StackValueType::Slice
+    }
+
+    fn from_dyn(value: Rc<dyn StackValue>) -> VmResult<Rc<Self>> {
+        value.rc_into_cell_slice()
+    }
+
+    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
+        match value.as_cell_slice() {
+            Some(value) => Ok(value),
+            None => vm_bail!(InvalidType {
+                expected: StackValueType::Slice,
+                actual: value.ty(),
+            }),
+        }
+    }
+}
+
+impl SafeRcMakeMut for OwnedCellSlice {
+    #[inline]
+    fn rc_make_mut(rc: &mut Rc<Self>) -> &mut Self {
+        Rc::make_mut(rc)
+    }
+}
+
+// === CellBuilder ===
+
+impl StackValue for CellBuilder {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
+    fn ty(&self) -> StackValueType {
+        StackValueType::Builder
+    }
+
+    fn store_as_stack_value(
+        &self,
+        builder: &mut CellBuilder,
+        context: &mut dyn CellContext,
+    ) -> Result<(), Error> {
+        let mut b = self.clone();
+        // NOTE: We cannot serialize builders with partially built
+        // exotic cells because it will fail.
+        b.set_exotic(false);
+
+        // vm_stk_builder#05 cell:^Cell = VmStackValue;
+        ok!(builder.store_u8(0x05));
+        builder.store_reference(ok!(b.build_ext(context)))
+    }
+
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "BC{{{}}}", self.display_data())
+    }
+
+    fn as_cell_builder(&self) -> Option<&CellBuilder> {
+        Some(self)
+    }
+
+    fn rc_into_cell_builder(self: Rc<Self>) -> VmResult<Rc<CellBuilder>> {
+        Ok(self)
+    }
+}
+
+impl StaticStackValue for CellBuilder {
+    type DynRef<'a> = &'a CellBuilder;
+
+    fn known_ty() -> StackValueType {
+        StackValueType::Builder
+    }
+
+    fn from_dyn(value: Rc<dyn StackValue>) -> VmResult<Rc<Self>> {
+        value.rc_into_cell_builder()
+    }
+
+    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
+        match value.as_cell_builder() {
+            Some(value) => Ok(value),
+            None => vm_bail!(InvalidType {
+                expected: StackValueType::Builder,
+                actual: value.ty(),
+            }),
+        }
+    }
+}
+
+impl SafeRcMakeMut for CellBuilder {
+    #[inline]
+    fn rc_make_mut(rc: &mut Rc<Self>) -> &mut Self {
+        Rc::make_mut(rc)
+    }
+}
+
+// === Continuation ===
+
+impl StackValue for dyn Cont {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
+        Cont::rc_into_dyn(self)
+    }
+
+    fn ty(&self) -> StackValueType {
+        StackValueType::Cont
+    }
+
+    fn store_as_stack_value(
+        &self,
+        builder: &mut CellBuilder,
+        context: &mut dyn CellContext,
+    ) -> Result<(), Error> {
+        // vm_stk_cont#06 cont:VmCont = VmStackValue;
+        ok!(builder.store_u8(0x06));
+        self.store_into(builder, context)
+    }
+
+    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Cont{{{:?}}}", self as *const _ as *const ())
+    }
+
+    fn as_cont(&self) -> Option<&dyn Cont> {
+        Some(self)
+    }
+
+    fn rc_into_cont(self: Rc<Self>) -> VmResult<Rc<dyn Cont>> {
+        Ok(self)
+    }
+}
+
+impl StaticStackValue for dyn Cont {
+    type DynRef<'a> = &'a dyn Cont;
+
+    fn known_ty() -> StackValueType {
+        StackValueType::Cont
+    }
+
+    fn from_dyn(value: Rc<dyn StackValue>) -> VmResult<Rc<Self>> {
+        value.rc_into_cont()
+    }
+
+    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
+        match value.as_cont() {
+            Some(value) => Ok(value),
+            None => vm_bail!(InvalidType {
+                expected: StackValueType::Cont,
+                actual: value.ty(),
+            }),
+        }
+    }
+}
+
+// === Tuple ===
 
 /// Multiple [`RcStackValue`]s.
 pub type Tuple = Vec<RcStackValue>;
@@ -720,9 +1148,9 @@ pub type Tuple = Vec<RcStackValue>;
 pub trait TupleExt {
     fn try_get(&self, index: usize) -> VmResult<&RcStackValue>;
 
-    fn try_get_owned<V: StaticStackValue>(&self, index: usize) -> VmResult<Rc<V>> {
+    fn try_get_owned<V: StaticStackValue>(&self, index: usize) -> VmResult<SafeRc<V>> {
         let value = ok!(self.try_get(index));
-        V::from_dyn(value.clone())
+        V::from_dyn(Rc::clone(&*value.0)).map(SafeRc::from)
     }
 
     fn try_get_ref<V: StaticStackValue>(&self, index: usize) -> VmResult<V::DynRef<'_>> {
@@ -760,319 +1188,12 @@ impl TupleExt for [RcStackValue] {
     }
 }
 
-impl StackValue for () {
-    fn ty(&self) -> StackValueType {
-        StackValueType::Null
-    }
-
-    fn store_as_stack_value(
-        &self,
-        builder: &mut CellBuilder,
-        _: &mut dyn CellContext,
-    ) -> Result<(), Error> {
-        // vm_stk_null#00 = VmStackValue;
-        builder.store_zeros(8)
-    }
-
-    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("(null)")
-    }
-}
-
-/// Invalid integer stack value.
-#[derive(Debug, Clone, Copy)]
-pub struct NaN;
-
-impl StackValue for NaN {
-    fn ty(&self) -> StackValueType {
-        StackValueType::Int
-    }
-
-    fn store_as_stack_value(
-        &self,
-        builder: &mut CellBuilder,
-        _: &mut dyn CellContext,
-    ) -> Result<(), Error> {
-        // vm_stk_nan#02ff = VmStackValue;
-        builder.store_u16(0x02ff)
-    }
-
-    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("NaN")
-    }
-
-    fn try_as_int(&self) -> VmResult<&BigInt> {
-        vm_bail!(IntegerOverflow);
-    }
-
-    fn into_int(self: Rc<Self>) -> VmResult<Rc<BigInt>> {
-        vm_bail!(IntegerOverflow);
-    }
-}
-
-impl StackValue for BigInt {
-    fn ty(&self) -> StackValueType {
-        StackValueType::Int
-    }
-
-    fn store_as_stack_value(
-        &self,
-        builder: &mut CellBuilder,
-        _: &mut dyn CellContext,
-    ) -> Result<(), Error> {
-        let bitsize = bitsize(self, true);
-        if bitsize <= 64 {
-            // vm_stk_tinyint#01 value:int64 = VmStackValue;
-            ok!(builder.store_u8(0x01));
-            store_int_to_builder(self, 64, true, builder)
-        } else {
-            // vm_stk_int#0201_ value:int257 = VmStackValue;
-            ok!(builder.store_uint(0x0200 >> 1, 15));
-            store_int_to_builder(self, 257, true, builder)
-        }
-    }
-
-    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(self, f)
-    }
-
-    fn as_int(&self) -> Option<&BigInt> {
-        Some(self)
-    }
-
-    fn into_int(self: Rc<Self>) -> VmResult<Rc<BigInt>> {
-        Ok(self)
-    }
-}
-
-impl StaticStackValue for BigInt {
-    type DynRef<'a> = &'a BigInt;
-
-    fn known_ty() -> StackValueType {
-        StackValueType::Int
-    }
-
-    fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>> {
-        value.into_int()
-    }
-
-    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
-        match value.as_int() {
-            Some(value) => Ok(value),
-            None => vm_bail!(InvalidType {
-                expected: StackValueType::Int,
-                actual: value.ty(),
-            }),
-        }
-    }
-}
-
-impl StackValue for Cell {
-    fn ty(&self) -> StackValueType {
-        StackValueType::Cell
-    }
-
-    fn store_as_stack_value(
-        &self,
-        builder: &mut CellBuilder,
-        _: &mut dyn CellContext,
-    ) -> Result<(), Error> {
-        // vm_stk_cell#03 cell:^Cell = VmStackValue;
-        ok!(builder.store_u8(0x03));
-        builder.store_reference(self.clone())
-    }
-
-    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "C{{{}}}", self.repr_hash())
-    }
-
-    fn as_cell(&self) -> Option<&Cell> {
-        Some(self)
-    }
-
-    fn into_cell(self: Rc<Self>) -> VmResult<Rc<Cell>> {
-        Ok(self)
-    }
-}
-
-impl StaticStackValue for Cell {
-    type DynRef<'a> = &'a Cell;
-
-    fn known_ty() -> StackValueType {
-        StackValueType::Cell
-    }
-
-    fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>> {
-        value.into_cell()
-    }
-
-    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
-        match value.as_cell() {
-            Some(value) => Ok(value),
-            None => vm_bail!(InvalidType {
-                expected: StackValueType::Cell,
-                actual: value.ty(),
-            }),
-        }
-    }
-}
-
-impl StackValue for OwnedCellSlice {
-    fn ty(&self) -> StackValueType {
-        StackValueType::Slice
-    }
-
-    fn store_as_stack_value(
-        &self,
-        builder: &mut CellBuilder,
-        _: &mut dyn CellContext,
-    ) -> Result<(), Error> {
-        // vm_stk_slice#04 _:VmCellSlice = VmStackValue;
-        ok!(builder.store_u8(0x04));
-        store_slice_as_stack_value(self, builder)
-    }
-
-    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(self, f)
-    }
-
-    fn as_cell_slice(&self) -> Option<&OwnedCellSlice> {
-        Some(self)
-    }
-
-    fn into_cell_slice(self: Rc<Self>) -> VmResult<Rc<OwnedCellSlice>> {
-        Ok(self)
-    }
-}
-
-impl StaticStackValue for OwnedCellSlice {
-    type DynRef<'a> = &'a OwnedCellSlice;
-
-    fn known_ty() -> StackValueType {
-        StackValueType::Slice
-    }
-
-    fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>> {
-        value.into_cell_slice()
-    }
-
-    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
-        match value.as_cell_slice() {
-            Some(value) => Ok(value),
-            None => vm_bail!(InvalidType {
-                expected: StackValueType::Slice,
-                actual: value.ty(),
-            }),
-        }
-    }
-}
-
-impl StackValue for CellBuilder {
-    fn ty(&self) -> StackValueType {
-        StackValueType::Builder
-    }
-
-    fn store_as_stack_value(
-        &self,
-        builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
-    ) -> Result<(), Error> {
-        let mut b = self.clone();
-        // NOTE: We cannot serialize builders with partially built
-        // exotic cells because it will fail.
-        b.set_exotic(false);
-
-        // vm_stk_builder#05 cell:^Cell = VmStackValue;
-        ok!(builder.store_u8(0x05));
-        builder.store_reference(ok!(b.build_ext(context)))
-    }
-
-    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "BC{{{}}}", self.display_data())
-    }
-
-    fn as_cell_builder(&self) -> Option<&CellBuilder> {
-        Some(self)
-    }
-
-    fn into_cell_builder(self: Rc<Self>) -> VmResult<Rc<CellBuilder>> {
-        Ok(self)
-    }
-}
-
-impl StaticStackValue for CellBuilder {
-    type DynRef<'a> = &'a CellBuilder;
-
-    fn known_ty() -> StackValueType {
-        StackValueType::Builder
-    }
-
-    fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>> {
-        value.into_cell_builder()
-    }
-
-    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
-        match value.as_cell_builder() {
-            Some(value) => Ok(value),
-            None => vm_bail!(InvalidType {
-                expected: StackValueType::Builder,
-                actual: value.ty(),
-            }),
-        }
-    }
-}
-
-impl StackValue for DynCont {
-    fn ty(&self) -> StackValueType {
-        StackValueType::Cont
-    }
-
-    fn store_as_stack_value(
-        &self,
-        builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
-    ) -> Result<(), Error> {
-        // vm_stk_cont#06 cont:VmCont = VmStackValue;
-        ok!(builder.store_u8(0x06));
-        self.store_into(builder, context)
-    }
-
-    fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Cont{{{:?}}}", self as *const _ as *const ())
-    }
-
-    fn as_cont(&self) -> Option<&DynCont> {
-        Some(self)
-    }
-
-    fn into_cont(self: Rc<Self>) -> VmResult<RcCont> {
-        Ok(self)
-    }
-}
-
-impl StaticStackValue for DynCont {
-    type DynRef<'a> = &'a DynCont;
-
-    fn known_ty() -> StackValueType {
-        StackValueType::Cont
-    }
-
-    fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>> {
-        value.into_cont()
-    }
-
-    fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
-        match value.as_cont() {
-            Some(value) => Ok(value),
-            None => vm_bail!(InvalidType {
-                expected: StackValueType::Cont,
-                actual: value.ty(),
-            }),
-        }
-    }
-}
-
 impl StackValue for Tuple {
+    #[inline]
+    fn rc_into_dyn(self: Rc<Self>) -> Rc<dyn StackValue> {
+        self
+    }
+
     fn ty(&self) -> StackValueType {
         StackValueType::Tuple
     }
@@ -1134,7 +1255,7 @@ impl StackValue for Tuple {
         Some(self)
     }
 
-    fn into_tuple(self: Rc<Self>) -> VmResult<Rc<Tuple>> {
+    fn rc_into_tuple(self: Rc<Self>) -> VmResult<Rc<Tuple>> {
         Ok(self)
     }
 }
@@ -1146,8 +1267,8 @@ impl StaticStackValue for Tuple {
         StackValueType::Tuple
     }
 
-    fn from_dyn(value: RcStackValue) -> VmResult<Rc<Self>> {
-        value.into_tuple()
+    fn from_dyn(value: Rc<dyn StackValue>) -> VmResult<Rc<Self>> {
+        value.rc_into_tuple()
     }
 
     fn from_dyn_ref(value: &dyn StackValue) -> VmResult<Self::DynRef<'_>> {
@@ -1160,6 +1281,15 @@ impl StaticStackValue for Tuple {
         }
     }
 }
+
+impl SafeRcMakeMut for Tuple {
+    #[inline]
+    fn rc_make_mut(rc: &mut Rc<Self>) -> &mut Self {
+        Rc::make_mut(rc)
+    }
+}
+
+// === Store/Load ===
 
 /// ```text
 /// _ cell:^Cell
@@ -1214,6 +1344,86 @@ pub(crate) fn load_slice_as_stack_value(slice: &mut CellSlice) -> Result<OwnedCe
     Ok(OwnedCellSlice::from((cell, range)))
 }
 
+// === SafeRc ===
+
+impl RcStackValue {
+    #[inline]
+    pub fn new_dyn_value<T: StackValue + 'static>(value: T) -> Self {
+        Self(ManuallyDrop::new(Rc::new(value)))
+    }
+
+    #[inline]
+    pub fn into_int(self) -> VmResult<SafeRc<BigInt>> {
+        Self::into_inner(self).rc_into_int().map(SafeRc::from)
+    }
+
+    #[inline]
+    pub fn into_cell(self) -> VmResult<SafeRc<Cell>> {
+        Self::into_inner(self).rc_into_cell().map(SafeRc::from)
+    }
+
+    #[inline]
+    pub fn into_cell_slice(self) -> VmResult<SafeRc<OwnedCellSlice>> {
+        Self::into_inner(self)
+            .rc_into_cell_slice()
+            .map(SafeRc::from)
+    }
+
+    #[inline]
+    pub fn into_cell_builder(self) -> VmResult<SafeRc<CellBuilder>> {
+        Self::into_inner(self)
+            .rc_into_cell_builder()
+            .map(SafeRc::from)
+    }
+
+    #[inline]
+    pub fn into_cont(self) -> VmResult<SafeRc<dyn Cont>> {
+        Self::into_inner(self).rc_into_cont().map(SafeRc::from)
+    }
+
+    #[inline]
+    pub fn into_tuple(self) -> VmResult<SafeRc<Tuple>> {
+        Self::into_inner(self).rc_into_tuple().map(SafeRc::from)
+    }
+}
+
+impl<T: StackValue + ?Sized> SafeRc<T> {
+    #[inline]
+    pub fn into_dyn_value(self) -> RcStackValue {
+        let value = SafeRc::into_inner(self);
+        SafeRc(ManuallyDrop::new(value.rc_into_dyn()))
+    }
+}
+
+impl<T: StackValue + 'static> From<T> for RcStackValue {
+    #[inline]
+    fn from(value: T) -> Self {
+        Self(ManuallyDrop::new(Rc::new(value)))
+    }
+}
+
+impl<T: StackValue + 'static> From<Rc<T>> for RcStackValue {
+    #[inline]
+    fn from(value: Rc<T>) -> Self {
+        Self(ManuallyDrop::new(value))
+    }
+}
+
+macro_rules! impl_safe_delete {
+    ($($ty:ty),*$(,)?) => {
+        $(impl SafeDelete for $ty {
+            #[inline]
+            fn rc_into_safe_delete(self: Rc<Self>) -> Rc<dyn SafeDelete> {
+                self
+            }
+        })*
+    };
+}
+
+impl_safe_delete! {
+    (), NaN, BigInt, Cell, OwnedCellSlice, CellBuilder, Tuple
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1235,7 +1445,7 @@ mod tests {
         }
 
         // Null
-        check_value(Rc::new(()));
+        check_value(SafeRc::new_dyn_value(()));
 
         // Int
         for negate in [false, true] {
@@ -1244,15 +1454,15 @@ mod tests {
                 if negate {
                     value = -value;
                 }
-                check_value(Rc::new(value));
+                check_value(SafeRc::new_dyn_value(value));
             }
         }
 
         // NaN
-        check_value(Rc::new(NaN));
+        check_value(SafeRc::new_dyn_value(NaN));
 
         // Cell
-        check_value(Rc::new(
+        check_value(SafeRc::new_dyn_value(
             CellBuilder::build_from((
                 0x123123u32,
                 HashBytes::wrap(&[0xff; 32]),
@@ -1263,7 +1473,7 @@ mod tests {
         ));
 
         // CellSlice
-        check_value(Rc::new({
+        check_value(SafeRc::new_dyn_value({
             let cell = CellBuilder::build_from((
                 0x123123u32,
                 HashBytes::wrap(&[0xff; 32]),
@@ -1284,7 +1494,7 @@ mod tests {
         }));
 
         // CellBuilder
-        check_value(Rc::new({
+        check_value(SafeRc::new_dyn_value({
             let mut b = CellBuilder::new();
             b.set_exotic(true);
             b.store_u32(0x123123).unwrap();
@@ -1294,14 +1504,14 @@ mod tests {
         }));
 
         // Tuple
-        check_value(Rc::new(tuple![]));
-        check_value(Rc::new(tuple![int 0, int 1, int 2]));
-        check_value(Rc::new(
+        check_value(SafeRc::new_dyn_value(tuple![]));
+        check_value(SafeRc::new_dyn_value(tuple![int 0, int 1, int 2]));
+        check_value(SafeRc::new_dyn_value(
             tuple![int 0, int 1, int 2, [int 1, [int 2, [int 3, int 4]]]],
         ));
-        check_value(Rc::new(tuple![
-            raw Rc::new(Cell::default()),
-            raw Rc::new(CellBuilder::new()),
+        check_value(SafeRc::new_dyn_value(tuple![
+            raw SafeRc::new_dyn_value(Cell::default()),
+            raw SafeRc::new_dyn_value(CellBuilder::new()),
             null,
             nan,
         ]));

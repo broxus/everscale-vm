@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use everscale_types::cell::{self, CellTreeStats, LoadMode, StorageStat};
 use everscale_types::dict;
 use everscale_types::models::{
@@ -17,6 +15,7 @@ use num_traits::ToPrimitive;
 use crate::cont::ControlRegs;
 use crate::error::VmResult;
 use crate::gas::GasConsumer;
+use crate::saferc::SafeRc;
 use crate::smc_info::{SmcInfoBase, SmcInfoTonV4, SmcInfoTonV6, VmVersion};
 use crate::stack::{Stack, Tuple, TupleExt};
 use crate::state::VmState;
@@ -28,20 +27,20 @@ pub struct MessageOps;
 impl MessageOps {
     #[op(code = "fb00", fmt = "SENDRAWMSG")]
     fn exec_send_message_raw(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mode = ok!(stack.pop_smallint_range(0, 255)) as u8;
         let cell = ok!(stack.pop_cell());
 
         add_action(&mut st.cr, &mut st.gas, OutAction::SendMsg {
             mode: SendMsgFlags::from_bits_retain(mode),
-            out_msg: Lazy::from_raw(Rc::unwrap_or_clone(cell)),
+            out_msg: Lazy::from_raw(SafeRc::unwrap_or_clone(cell)),
         })
     }
 
     #[op(code = "fb02", fmt = "RAWRESERVE", args(x = false))]
     #[op(code = "fb03", fmt = "RAWRESERVEX", args(x = true))]
     fn exec_reserve_raw(st: &mut VmState, x: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mode = ok!(stack.pop_smallint_range(
             0,
             if st.version.is_ton(4..) {
@@ -57,36 +56,36 @@ impl MessageOps {
             mode: ReserveCurrencyFlags::from_bits_retain(mode as u8),
             value: CurrencyCollection {
                 tokens,
-                other: ExtraCurrencyCollection::from_raw(other.map(Rc::unwrap_or_clone)),
+                other: ExtraCurrencyCollection::from_raw(other.map(SafeRc::unwrap_or_clone)),
             },
         })
     }
 
     #[op(code = "fb04", fmt = "SETCODE")]
     fn exec_set_code(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let code = ok!(stack.pop_cell());
 
         add_action(&mut st.cr, &mut st.gas, OutAction::SetCode {
-            new_code: Rc::unwrap_or_clone(code),
+            new_code: SafeRc::unwrap_or_clone(code),
         })
     }
 
     #[op(code = "fb06", fmt = "SETLIBCODE")]
     fn exec_set_lib_code(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mode = ok!(pop_change_library_mode(st.version, stack));
         let code = ok!(stack.pop_cell());
 
         add_action(&mut st.cr, &mut st.gas, OutAction::ChangeLibrary {
             mode,
-            lib: LibRef::Cell(Rc::unwrap_or_clone(code)),
+            lib: LibRef::Cell(SafeRc::unwrap_or_clone(code)),
         })
     }
 
     #[op(code = "fb07", fmt = "CHANGELIB")]
     fn exec_change_lib(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mode = ok!(pop_change_library_mode(st.version, stack));
         let hash = {
             let int = ok!(stack.pop_int());
@@ -116,7 +115,7 @@ impl MessageOps {
         ok!(st.version.require_ton(4..));
 
         // Get args from the stack.
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let (mode, send) = ok!(pop_send_msg_mode_ext(stack));
         let raw_msg_cell = ok!(stack.pop_cell());
         let msg_cell = st
@@ -329,7 +328,7 @@ impl MessageOps {
             drop(msg_cell);
             add_action(&mut st.cr, &mut st.gas, OutAction::SendMsg {
                 mode,
-                out_msg: Lazy::from_raw(Rc::unwrap_or_clone(raw_msg_cell)),
+                out_msg: Lazy::from_raw(SafeRc::unwrap_or_clone(raw_msg_cell)),
             })
         } else {
             Ok(0)

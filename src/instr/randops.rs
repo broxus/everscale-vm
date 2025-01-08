@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use everscale_types::cell::HashBytes;
 use everscale_vm::stack::Stack;
 use everscale_vm_proc::vm_module;
@@ -9,6 +7,7 @@ use sha2::Digest;
 use crate::cont::ControlRegs;
 use crate::error::VmResult;
 use crate::gas::GasConsumer;
+use crate::saferc::SafeRc;
 use crate::smc_info::SmcInfoBase;
 use crate::stack::StackValueType;
 use crate::state::VmState;
@@ -19,7 +18,7 @@ pub struct RandOps;
 impl RandOps {
     #[op(code = "f810", fmt = "RANDU256")]
     fn exec_randu256(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let random_bytes = ok!(generate_random_u256(&mut st.cr, &mut st.gas));
         let random = BigInt::from_bytes_be(Sign::Plus, random_bytes.as_ref());
         ok!(stack.push_int(random));
@@ -28,13 +27,13 @@ impl RandOps {
 
     #[op(code = "f811", fmt = "RAND")]
     fn exec_rand_int(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut int = ok!(stack.pop_int());
         let random_bytes = ok!(generate_random_u256(&mut st.cr, &mut st.gas));
         let random = BigInt::from_bytes_be(Sign::Plus, random_bytes.as_ref());
 
         {
-            let int = Rc::make_mut(&mut int);
+            let int = SafeRc::make_mut(&mut int);
             *int *= random;
             *int >>= 256;
         }
@@ -46,7 +45,7 @@ impl RandOps {
     #[op(code = "f814", fmt = "SETRAND", args(mix = false))]
     #[op(code = "f815", fmt = "ADDRAND", args(mix = true))]
     fn exec_set_rand(st: &mut VmState, mix: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
 
         let mut int = ok!(stack.pop_int());
         if int.sign() == Sign::Minus || int.bits() > 256 {
@@ -96,7 +95,7 @@ impl RandOps {
             drop(bytes);
 
             let new_seed = sha2::Sha256::digest(buffer);
-            int = Rc::new(BigInt::from_bytes_be(Sign::Plus, &new_seed));
+            int = SafeRc::new(BigInt::from_bytes_be(Sign::Plus, &new_seed));
         }
 
         // NOTE: Make sure that we have a unique instance of the `c7` tuple
@@ -105,14 +104,14 @@ impl RandOps {
 
         // NOTE: Make sure that the `t1v` instance is unique
         //       (at least make sure that this situation is possible).
-        Rc::make_mut(&mut c7)[0] = Stack::make_null();
+        SafeRc::make_mut(&mut c7)[0] = Stack::make_null();
 
         let mut t1v = t1v.into_tuple().expect("t1 was checked as tuple");
-        Rc::make_mut(&mut t1v)[SmcInfoBase::RANDSEED_IDX] = int;
+        SafeRc::make_mut(&mut t1v)[SmcInfoBase::RANDSEED_IDX] = int.into_dyn_value();
         let t1_len = t1v.len();
 
         // NOTE: Restore c7 and control registers state.
-        Rc::make_mut(&mut c7)[0] = t1v;
+        SafeRc::make_mut(&mut c7)[0] = t1v.into_dyn_value();
         let c7_len = c7.len();
         st.cr.c7 = Some(c7);
 
@@ -156,7 +155,7 @@ fn generate_random_u256(regs: &mut ControlRegs, gas: &mut GasConsumer) -> VmResu
         }),
     };
 
-    let new_seedv = Rc::new(BigInt::from_bytes_be(Sign::Plus, &hash[..32]));
+    let new_seedv = SafeRc::new_dyn_value(BigInt::from_bytes_be(Sign::Plus, &hash[..32]));
     let res = HashBytes::from_slice(&hash[32..]);
 
     // NOTE: Make sure that we have a unique instance of the `c7` tuple
@@ -165,14 +164,14 @@ fn generate_random_u256(regs: &mut ControlRegs, gas: &mut GasConsumer) -> VmResu
 
     // NOTE: Make sure that the `t1v` instance is unique
     //       (at least make sure that this situation is possible).
-    Rc::make_mut(&mut c7)[0] = Stack::make_null();
+    SafeRc::make_mut(&mut c7)[0] = Stack::make_null();
 
     let mut t1v = t1v.into_tuple().expect("t1 was checked as tuple");
-    Rc::make_mut(&mut t1v)[SmcInfoBase::RANDSEED_IDX] = new_seedv;
+    SafeRc::make_mut(&mut t1v)[SmcInfoBase::RANDSEED_IDX] = new_seedv;
     let t1_len = t1v.len();
 
     // NOTE: Restore c7 and control registers state.
-    Rc::make_mut(&mut c7)[0] = t1v;
+    SafeRc::make_mut(&mut c7)[0] = t1v.into_dyn_value();
     let c7_len = c7.len();
     regs.c7 = Some(c7);
 

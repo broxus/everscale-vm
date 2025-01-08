@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use everscale_types::cell::LoadMode;
 use everscale_types::error::Error;
 use everscale_types::num::SplitDepth;
@@ -11,6 +9,7 @@ use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
 
 use crate::gas::GasConsumer;
+use crate::saferc::SafeRc;
 use crate::stack::{RcStackValue, Stack, StackValue, Tuple};
 use crate::util::{bitsize, load_int_from_slice, store_int_to_builder_unchecked};
 
@@ -23,7 +22,7 @@ impl CurrencyOps {
     #[op(code = "fa04", fmt = "LDVARUINT32", args(len_bits = 5, signed = false))]
     #[op(code = "fa05", fmt = "LDVARINT32", args(len_bits = 5, signed = true))]
     fn exec_load_var_integer(st: &mut VmState, len_bits: u16, signed: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut csr = ok!(stack.pop_cs());
 
         let int;
@@ -32,7 +31,7 @@ impl CurrencyOps {
             int = load_varint(&mut cs, len_bits, signed)?;
             cs.range()
         };
-        Rc::make_mut(&mut csr).set_range(cs_range);
+        SafeRc::make_mut(&mut csr).set_range(cs_range);
 
         ok!(stack.push_int(int));
         ok!(stack.push_raw(csr));
@@ -44,11 +43,11 @@ impl CurrencyOps {
     #[op(code = "fa06", fmt = "STVARUINT32", args(len_bits = 5, signed = false))]
     #[op(code = "fa07", fmt = "STVARINT32", args(len_bits = 5, signed = true))]
     fn exec_store_var_integer(st: &mut VmState, len_bits: u16, signed: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let int = ok!(stack.pop_int());
         let mut builder = ok!(stack.pop_builder());
 
-        store_varint(&int, len_bits, signed, Rc::make_mut(&mut builder))?;
+        store_varint(&int, len_bits, signed, SafeRc::make_mut(&mut builder))?;
 
         ok!(stack.push_raw(builder));
         Ok(0)
@@ -57,7 +56,7 @@ impl CurrencyOps {
     #[op(code = "fa40", fmt = "LDMSGADDR", args(quiet = false))]
     #[op(code = "fa41", fmt = "LDMSGADDRQ", args(quiet = true))]
     fn exec_load_message_addr(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut csr = ok!(stack.pop_cs());
 
         let mut cs = csr.apply()?;
@@ -68,7 +67,7 @@ impl CurrencyOps {
                 let addr_cs = OwnedCellSlice::from((csr.cell().clone(), addr.range()));
 
                 let range = cs.range();
-                Rc::make_mut(&mut csr).set_range(range);
+                SafeRc::make_mut(&mut csr).set_range(range);
 
                 ok!(stack.push(addr_cs));
                 ok!(stack.push_raw(csr));
@@ -88,7 +87,7 @@ impl CurrencyOps {
     #[op(code = "fa42", fmt = "PARSEMSGADDR", args(quiet = false))]
     #[op(code = "fa43", fmt = "PARSEMSGADDRQ", args(quiet = true))]
     fn exec_parse_message_addr(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let csr = ok!(stack.pop_cs());
 
         let mut range = csr.range();
@@ -119,7 +118,7 @@ impl CurrencyOps {
             }
         };
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let csr = ok!(stack.pop_cs());
 
         let mut range = csr.range();
@@ -144,12 +143,12 @@ impl CurrencyOps {
 
         let addr = if var {
             match rewrite_addr_var(addr, pfx, &mut st.gas) {
-                Ok(addr) => Rc::new(addr) as RcStackValue,
+                Ok(addr) => SafeRc::new_dyn_value(addr),
                 Err(e) => return handle_error(stack, e),
             }
         } else {
             match rewrite_addr_std(addr, pfx) {
-                Ok(addr) => Rc::new(addr) as RcStackValue,
+                Ok(addr) => SafeRc::new_dyn_value(addr),
                 Err(e) => return handle_error(stack, e),
             }
         };
@@ -302,32 +301,32 @@ impl AddrParts {
         fn opt_to_value<T: StackValue + 'static>(value: Option<T>) -> RcStackValue {
             match value {
                 None => Stack::make_null(),
-                Some(value) => Rc::new(value),
+                Some(value) => SafeRc::new_dyn_value(value),
             }
         }
 
         match self {
             Self::None => vec![Stack::make_zero()],
-            Self::Ext { addr } => vec![Stack::make_one(), Rc::new(addr)],
+            Self::Ext { addr } => vec![Stack::make_one(), SafeRc::new_dyn_value(addr)],
             Self::Std {
                 pfx,
                 workchain,
                 addr,
             } => vec![
-                Rc::new(BigInt::from(2)),
+                SafeRc::new_dyn_value(BigInt::from(2)),
                 opt_to_value(pfx),
-                Rc::new(BigInt::from(workchain)),
-                Rc::new(addr),
+                SafeRc::new_dyn_value(BigInt::from(workchain)),
+                SafeRc::new_dyn_value(addr),
             ],
             Self::Var {
                 pfx,
                 workchain,
                 addr,
             } => vec![
-                Rc::new(BigInt::from(3)),
+                SafeRc::new_dyn_value(BigInt::from(3)),
                 opt_to_value(pfx),
-                Rc::new(BigInt::from(workchain)),
-                Rc::new(addr),
+                SafeRc::new_dyn_value(BigInt::from(workchain)),
+                SafeRc::new_dyn_value(addr),
             ],
         }
     }
@@ -413,7 +412,7 @@ mod test {
         let mut builder = CellBuilder::new();
         store_varint(&int, 4, true, &mut builder)?;
         let mut slice = OwnedCellSlice::from(builder.build()?);
-        let value = Rc::new(slice.clone()) as RcStackValue;
+        let value = SafeRc::new_dyn_value(slice.clone());
 
         let mut cs = slice.apply()?;
         cs.skip_first(12, 0)?;
@@ -432,7 +431,7 @@ mod test {
         let mut builder = CellBuilder::new();
         store_varint(&int, 5, true, &mut builder)?;
         let mut slice = OwnedCellSlice::from(builder.build()?);
-        let value = Rc::new(slice.clone()) as RcStackValue;
+        let value = SafeRc::new_dyn_value(slice.clone());
 
         let mut cs = slice.apply()?;
         cs.skip_first(13, 0)?;
@@ -449,13 +448,13 @@ mod test {
         let addr = "0:6301b2c75596e6e569a6d13ae4ec70c94f177ece0be19f968ddce73d44e7afc7"
             .parse::<StdAddr>()?;
         let mut addr = OwnedCellSlice::from(CellBuilder::build_from(addr)?);
-        let value = Rc::new(addr.clone()) as RcStackValue;
+        let value = SafeRc::new_dyn_value(addr.clone());
 
         let mut cs = addr.apply().unwrap();
         cs.skip_first(11, 0).unwrap();
         addr.set_range(cs.range());
 
-        let tuple = Rc::new(tuple![
+        let tuple = SafeRc::new_dyn_value(tuple![
             int 2,
             null,
             int 0,

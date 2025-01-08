@@ -1,5 +1,4 @@
 use std::cmp::Ordering;
-use std::rc::Rc;
 
 use anyhow::Result;
 use everscale_vm_proc::vm_module;
@@ -9,6 +8,7 @@ use num_traits::Zero;
 
 use crate::dispatch::Opcodes;
 use crate::error::VmResult;
+use crate::saferc::SafeRc;
 use crate::state::VmState;
 use crate::util::load_int_from_slice;
 
@@ -28,7 +28,7 @@ impl Arithops {
     #[op(code = "80xx", fmt = "PUSHINT {x}", args(x = args as i8 as i32))]
     #[op(code = "81xxxx", fmt = "PUSHINT {x}", args(x = args as i16 as i32))]
     fn exec_push_tinyint4(st: &mut VmState, x: i32) -> VmResult<i32> {
-        ok!(Rc::make_mut(&mut st.stack).push_int(x));
+        ok!(SafeRc::make_mut(&mut st.stack).push_int(x));
         Ok(0)
     }
 
@@ -47,26 +47,26 @@ impl Arithops {
 
         vm_log_op!("PUSHINT {int}");
 
-        ok!(Rc::make_mut(&mut st.stack).push_int(int));
+        ok!(SafeRc::make_mut(&mut st.stack).push_int(int));
         Ok(0)
     }
 
     #[op(code = "83xx @ ..83ff", fmt = "PUSHPOW2 {x}", args(x = (args & 0xff) + 1))]
     pub fn exec_push_pow2(st: &mut VmState, x: u32) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         ok!(stack.push_int(BigInt::from(1) << x));
         Ok(0)
     }
 
     #[op(code = "83ff", fmt = "PUSHNAN")]
     fn exec_push_nan(st: &mut VmState) -> VmResult<i32> {
-        ok!(Rc::make_mut(&mut st.stack).push_nan());
+        ok!(SafeRc::make_mut(&mut st.stack).push_nan());
         Ok(0)
     }
 
     #[op(code = "84xx", fmt = "PUSHPOW2DEC {x}", args(x = (args & 0xff) + 1))]
     fn exec_push_pow2dec(st: &mut VmState, x: u32) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut value = BigInt::from(1) << x;
         value -= 1;
         ok!(stack.push_int(value));
@@ -75,7 +75,7 @@ impl Arithops {
 
     #[op(code = "85xx", fmt = "PUSHNEGPOW2 {x}", args(x = (args & 0xff) + 1))]
     fn exec_push_negpow2(st: &mut VmState, x: u32) -> VmResult<i32> {
-        ok!(Rc::make_mut(&mut st.stack).push_int(-(BigInt::from(1) << x)));
+        ok!(SafeRc::make_mut(&mut st.stack).push_int(-(BigInt::from(1) << x)));
         Ok(0)
     }
 
@@ -83,12 +83,12 @@ impl Arithops {
     #[op(code = "a0", fmt = "ADD", args(quiet = false))]
     #[op(code = "b7a0", fmt = "QADD", args(quiet = true))]
     fn exec_add(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
         let x = ok!(stack.pop_int_or_nan());
         match (x, y) {
             (Some(mut x), Some(y)) => {
-                *Rc::make_mut(&mut x) += y.as_ref();
+                *SafeRc::make_mut(&mut x) += y.as_ref();
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -100,12 +100,12 @@ impl Arithops {
     #[op(code = "a1", fmt = "SUB", args(quiet = false))]
     #[op(code = "b7a1", fmt = "QSUB", args(quiet = true))]
     fn exec_sub(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
         let x = ok!(stack.pop_int_or_nan());
         match (x, y) {
             (Some(mut x), Some(y)) => {
-                *Rc::make_mut(&mut x) -= y.as_ref();
+                *SafeRc::make_mut(&mut x) -= y.as_ref();
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -117,12 +117,12 @@ impl Arithops {
     #[op(code = "a2", fmt = "SUBR", args(quiet = false))]
     #[op(code = "b7a2", fmt = "QSUBR", args(quiet = true))]
     fn exec_subr(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
         let x = ok!(stack.pop_int_or_nan());
         match (x, y) {
             (Some(x), Some(mut y)) => {
-                *Rc::make_mut(&mut y) -= x.as_ref();
+                *SafeRc::make_mut(&mut y) -= x.as_ref();
                 ok!(stack.push_raw_int(y, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -134,11 +134,11 @@ impl Arithops {
     #[op(code = "a3", fmt = "NEGATE", args(quiet = false))]
     #[op(code = "b7a3", fmt = "QNEGATE", args(quiet = true))]
     fn exec_negate(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
                 {
-                    let x = Rc::make_mut(&mut x);
+                    let x = SafeRc::make_mut(&mut x);
                     *x = -std::mem::take(x);
                 }
                 ok!(stack.push_raw_int(x, quiet));
@@ -152,10 +152,10 @@ impl Arithops {
     #[op(code = "a4", fmt = "INC", args(quiet = false))]
     #[op(code = "b7a4", fmt = "QINC", args(quiet = true))]
     fn exec_inc(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
-                *Rc::make_mut(&mut x) += 1;
+                *SafeRc::make_mut(&mut x) += 1;
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -167,10 +167,10 @@ impl Arithops {
     #[op(code = "a5", fmt = "DEC", args(quiet = false))]
     #[op(code = "b7a5", fmt = "QDEC", args(quiet = true))]
     fn exec_dec(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
-                *Rc::make_mut(&mut x) -= 1;
+                *SafeRc::make_mut(&mut x) -= 1;
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -182,10 +182,10 @@ impl Arithops {
     #[op(code = "a6yy", fmt = "ADDINT {y}", args(y = args as i8, quiet = false))]
     #[op(code = "b7a6yy", fmt = "QADDINT {y}", args(y = args as i8, quiet = true))]
     fn exec_addint(st: &mut VmState, y: i8, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
-                *Rc::make_mut(&mut x) += y;
+                *SafeRc::make_mut(&mut x) += y;
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -197,10 +197,10 @@ impl Arithops {
     #[op(code = "a7yy", fmt = "MULINT {y}", args(y = args as i8, quiet = false))]
     #[op(code = "b7a7yy", fmt = "QMULINT {y}", args(y = args as i8, quiet = true))]
     fn exec_mulint(st: &mut VmState, y: i8, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
-                *Rc::make_mut(&mut x) *= y;
+                *SafeRc::make_mut(&mut x) *= y;
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -212,12 +212,12 @@ impl Arithops {
     #[op(code = "a8", fmt = "MUL", args(quiet = false))]
     #[op(code = "b7a8", fmt = "QMUL", args(quiet = true))]
     fn exec_mul(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let y = ok!(stack.pop_int_or_nan());
         let x = ok!(stack.pop_int_or_nan());
         match (x, y) {
             (Some(mut x), Some(y)) => {
-                *Rc::make_mut(&mut x) *= y.as_ref();
+                *SafeRc::make_mut(&mut x) *= y.as_ref();
                 ok!(stack.push_raw_int(x, quiet));
             }
             _ if quiet => ok!(stack.push_nan()),
@@ -249,7 +249,7 @@ impl Arithops {
             _ => vm_bail!(InvalidOpcode),
         };
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
 
         let y = ok!(stack.pop_int_or_nan());
         let w = if add {
@@ -272,7 +272,7 @@ impl Arithops {
                 Operation::Divmod => {
                     if add {
                         match w {
-                            Some(w) => *Rc::make_mut(&mut x) += w.as_ref(),
+                            Some(w) => *SafeRc::make_mut(&mut x) += w.as_ref(),
                             None if quiet => {
                                 ok!(stack.push_nan());
                                 ok!(stack.push_nan());
@@ -329,7 +329,7 @@ impl Arithops {
             _ => vm_bail!(InvalidOpcode),
         };
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let y = match y {
             Some(y) => y,
             None => ok!(stack.pop_smallint_range(0, 256)),
@@ -357,7 +357,7 @@ impl Arithops {
                 Operation::RShiftMod => {
                     if add {
                         match w {
-                            Some(w) => *Rc::make_mut(&mut x) += w.as_ref(),
+                            Some(w) => *SafeRc::make_mut(&mut x) += w.as_ref(),
                             None if quiet => {
                                 ok!(stack.push_nan());
                                 ok!(stack.push_nan());
@@ -369,7 +369,7 @@ impl Arithops {
 
                     let (q, r) = int_rshiftmod(&x, y, round_mode);
                     ok!(stack.push_raw_int(update_or_new_rc(x, q), quiet));
-                    ok!(stack.push_raw_int(Rc::new(r), quiet));
+                    ok!(stack.push_raw_int(SafeRc::new(r), quiet));
                 }
             },
             _ if quiet => {
@@ -407,7 +407,7 @@ impl Arithops {
             _ => vm_bail!(InvalidOpcode),
         };
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
 
         let z = ok!(stack.pop_int_or_nan());
         let w = if add {
@@ -420,7 +420,7 @@ impl Arithops {
 
         match (x, y, z) {
             (Some(mut x), Some(y), Some(z)) if !z.is_zero() => {
-                *Rc::make_mut(&mut x) *= y.as_ref();
+                *SafeRc::make_mut(&mut x) *= y.as_ref();
 
                 match operation {
                     Operation::MulDiv => {
@@ -434,7 +434,7 @@ impl Arithops {
                     Operation::MulDivMod => {
                         if add {
                             match w {
-                                Some(w) => *Rc::make_mut(&mut x) += w.as_ref(),
+                                Some(w) => *SafeRc::make_mut(&mut x) += w.as_ref(),
                                 None if quiet => {
                                     ok!(stack.push_nan());
                                     ok!(stack.push_nan());
@@ -492,7 +492,7 @@ impl Arithops {
             _ => vm_bail!(InvalidOpcode),
         };
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let z = match z {
             Some(z) => z,
             None => ok!(stack.pop_smallint_range(0, 256)),
@@ -511,7 +511,7 @@ impl Arithops {
         let x = ok!(stack.pop_int_or_nan());
         match (x, y) {
             (Some(mut x), Some(y)) => {
-                *Rc::make_mut(&mut x) *= y.as_ref();
+                *SafeRc::make_mut(&mut x) *= y.as_ref();
 
                 match operation {
                     Operation::MulRShift => {
@@ -525,7 +525,7 @@ impl Arithops {
                     Operation::MulRShiftMod => {
                         if add {
                             match w {
-                                Some(w) => *Rc::make_mut(&mut x) += w.as_ref(),
+                                Some(w) => *SafeRc::make_mut(&mut x) += w.as_ref(),
                                 None if quiet => {
                                     ok!(stack.push_nan());
                                     ok!(stack.push_nan());
@@ -537,7 +537,7 @@ impl Arithops {
 
                         let (q, r) = int_rshiftmod(&x, z, round_mode);
                         ok!(stack.push_raw_int(update_or_new_rc(x, q), quiet));
-                        ok!(stack.push_raw_int(Rc::new(r), quiet));
+                        ok!(stack.push_raw_int(SafeRc::new(r), quiet));
                     }
                 }
             }
@@ -584,7 +584,7 @@ impl Arithops {
             _ => vm_bail!(InvalidOpcode),
         };
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let z = match z {
             Some(z) => z,
             None => ok!(stack.pop_smallint_range(0, 256)),
@@ -600,7 +600,7 @@ impl Arithops {
 
         match (x, y) {
             (Some(mut x), Some(y)) if !y.is_zero() => {
-                *Rc::make_mut(&mut x) <<= z;
+                *SafeRc::make_mut(&mut x) <<= z;
 
                 match operation {
                     Operation::Div => {
@@ -614,7 +614,7 @@ impl Arithops {
                     Operation::Divmod => {
                         if add {
                             match w {
-                                Some(w) => *Rc::make_mut(&mut x) += w.as_ref(),
+                                Some(w) => *SafeRc::make_mut(&mut x) += w.as_ref(),
                                 None if quiet => {
                                     ok!(stack.push_nan());
                                     ok!(stack.push_nan());
@@ -650,7 +650,7 @@ impl Arithops {
     #[op(code = "b7b609", fmt = "QMAX", args(mn = false, mx = true, q = true))]
     #[op(code = "b7b60a", fmt = "QMINMAX", args(mn = true, mx = true, q = true))]
     fn exec_minmax(st: &mut VmState, mn: bool, mx: bool, q: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let x = ok!(stack.pop_int_or_nan());
         let y = ok!(stack.pop_int_or_nan());
         match (x, y) {
@@ -681,11 +681,11 @@ impl Arithops {
     #[op(code = "b60b", fmt = "ABS", args(quiet = false))]
     #[op(code = "b7b60b", fmt = "QABS", args(quiet = true))]
     fn exec_abs(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         match ok!(stack.pop_int_or_nan()) {
             Some(mut x) => {
                 if x.sign() == Sign::Minus {
-                    let x = Rc::make_mut(&mut x);
+                    let x = SafeRc::make_mut(&mut x);
                     *x = -std::mem::take(x);
                 }
                 ok!(stack.push_raw_int(x, quiet));
@@ -939,9 +939,9 @@ fn ceil_rounding_required(r: &BigInt, y: &BigInt) -> bool {
     !r.is_zero() && r.sign() == y.sign()
 }
 
-fn update_or_new_rc(mut rc: Rc<BigInt>, value: BigInt) -> Rc<BigInt> {
-    match Rc::get_mut(&mut rc) {
-        None => Rc::new(value),
+fn update_or_new_rc(mut rc: SafeRc<BigInt>, value: BigInt) -> SafeRc<BigInt> {
+    match SafeRc::get_mut(&mut rc) {
+        None => SafeRc::new(value),
         Some(x) => {
             *x = value;
             rc
