@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use everscale_types::cell::RefsIter;
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
@@ -8,8 +6,8 @@ use everscale_vm_proc::vm_module;
 use num_traits::{Signed, ToPrimitive};
 
 use crate::error::VmResult;
-use crate::stack::RcStackValue;
-use crate::VmState;
+use crate::saferc::SafeRc;
+use crate::state::VmState;
 
 pub struct Miscops;
 
@@ -20,16 +18,16 @@ impl Miscops {
     #[op(code = "f942", fmt = "SDATASIZEQ", args(is_slice = true, q = true))]
     #[op(code = "f943", fmt = "SDATASIZE", args(is_slice = true, q = false))]
     pub fn exec_compute_data_size(st: &mut VmState, is_slice: bool, q: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let bound = ok!(stack.pop_int_or_nan());
 
-        let value: RcStackValue = if is_slice {
-            ok!(stack.pop_cs())
+        let value = if is_slice {
+            ok!(stack.pop_cs()).into_dyn_value()
         } else {
-            ok!(stack.pop_cell())
+            ok!(stack.pop_cell()).into_dyn_value()
         };
         let bound = match bound {
-            Some(bound) if !bound.is_negative() => Rc::unwrap_or_clone(bound),
+            Some(bound) if !bound.is_negative() => SafeRc::unwrap_or_clone(bound),
             _ => vm_bail!(IntegerOverflow),
         };
         let limit = bound.to_u64().unwrap_or(u64::MAX);

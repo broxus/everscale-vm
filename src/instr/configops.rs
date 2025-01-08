@@ -1,5 +1,4 @@
 use std::fmt::Formatter;
-use std::rc::Rc;
 
 use everscale_types::cell::{CellTreeStats, LoadMode};
 use everscale_types::dict;
@@ -13,6 +12,7 @@ use num_bigint::Sign;
 
 use crate::error::VmResult;
 use crate::gas::GasConsumer;
+use crate::saferc::SafeRc;
 use crate::smc_info::{SmcInfoBase, SmcInfoTonV4, SmcInfoTonV6};
 use crate::stack::{RcStackValue, Stack, TupleExt};
 use crate::util::{
@@ -25,14 +25,14 @@ pub struct ConfigOps;
 impl ConfigOps {
     #[op(code = "f82s", fmt = DisplayConfigOpsArgs(s))]
     fn exec_get_param(st: &mut VmState, s: u32) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         ok!(get_and_push_param(&mut st.cr, stack, s as usize));
         Ok(0)
     }
 
     #[op(code = "f830", fmt = "CONFIGDICT")]
     fn exec_get_config_dict(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         ok!(get_and_push_param(
             &mut st.cr,
             stack,
@@ -45,7 +45,7 @@ impl ConfigOps {
     #[op(code = "f832", fmt = "CONFIGPARAM", args(opt = false))]
     #[op(code = "f833", fmt = "CONFIGOPTPARAM", args(opt = true))]
     fn exec_get_config_param(st: &mut VmState, opt: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let idx = ok!(stack.pop_int());
 
         ok!(get_and_push_param(
@@ -70,7 +70,7 @@ impl ConfigOps {
         } else {
             match param {
                 Some(cell) => {
-                    ok!(stack.push_raw(Rc::new(cell)));
+                    ok!(stack.push_raw(SafeRc::new(cell)));
                     ok!(stack.push_bool(true));
                 }
                 None => ok!(stack.push_bool(false)),
@@ -86,7 +86,7 @@ impl ConfigOps {
         let t1 = ok!(st.cr.get_c7_params());
         let t2 = ok!(t1.try_get_tuple_range(SmcInfoTonV4::PREV_BLOCKS_IDX, 0..=255));
         let param = ok!(t2.try_get((i as usize) & 0b11));
-        ok!(Rc::make_mut(&mut st.stack).push_raw(param.clone()));
+        ok!(SafeRc::make_mut(&mut st.stack).push_raw(param.clone()));
         Ok(0)
     }
 
@@ -119,7 +119,7 @@ impl ConfigOps {
                 .parse::<u32>()?
         };
 
-        ok!(Rc::make_mut(&mut st.stack).push_int(global_id));
+        ok!(SafeRc::make_mut(&mut st.stack).push_int(global_id));
         Ok(0)
     }
 
@@ -127,7 +127,7 @@ impl ConfigOps {
     fn exec_get_gas_fee(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(6..));
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let is_masterchain = ok!(stack.pop_bool());
         let gas = ok!(stack.pop_long_range(0, u64::MAX));
 
@@ -144,7 +144,7 @@ impl ConfigOps {
     fn exec_get_storage_fee(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(6..));
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let is_masterchain = ok!(stack.pop_bool());
         let delta = ok!(stack.pop_long_range(0, u64::MAX));
         let bits = ok!(stack.pop_long_range(0, u64::MAX));
@@ -170,7 +170,7 @@ impl ConfigOps {
     fn exec_get_forward_fee(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(6..));
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let is_masterchain = ok!(stack.pop_bool());
         let bits = ok!(stack.pop_long_range(0, u64::MAX));
         let cells = ok!(stack.pop_long_range(0, u64::MAX));
@@ -191,7 +191,7 @@ impl ConfigOps {
     fn exec_get_precompiled_gas(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(6..));
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         ok!(get_and_push_param(
             &mut st.cr,
             stack,
@@ -204,7 +204,7 @@ impl ConfigOps {
     fn exec_get_original_fwd_fee(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(6..));
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let is_masterchain = ok!(stack.pop_bool());
         let mut fwd_fee = ok!(stack.pop_int());
         vm_ensure!(fwd_fee.sign() != Sign::Minus, IntegerOutOfRange {
@@ -218,7 +218,7 @@ impl ConfigOps {
         let config = MsgForwardPrices::load_from(&mut cs.apply()?)?;
 
         {
-            let t = Rc::make_mut(&mut fwd_fee);
+            let t = SafeRc::make_mut(&mut fwd_fee);
             *t <<= 16;
 
             // NOTE: `q` is always non-zero because `first_frac` is `u16` and we substract
@@ -234,7 +234,7 @@ impl ConfigOps {
     fn exec_get_gas_fee_simple(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(6..));
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let is_masterchain = ok!(stack.pop_bool());
         let gas = ok!(stack.pop_long_range(0, u64::MAX));
 
@@ -251,7 +251,7 @@ impl ConfigOps {
     fn exec_get_forward_fee_simple(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(6..));
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let is_masterchain = ok!(stack.pop_bool());
         let bits = ok!(stack.pop_long_range(0, u64::MAX));
         let cells = ok!(stack.pop_long_range(0, u64::MAX));
@@ -270,27 +270,27 @@ impl ConfigOps {
 
     #[op(code = "f840", fmt = "GETGLOBVAR")]
     fn exec_get_global_var(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let args = ok!(stack.pop_smallint_range(0, 254));
         get_global_common(&mut st.cr, stack, args as usize)
     }
 
     #[op(code = "f8ii @ f841..f860", fmt = "GETGLOB {i}", args(i = args & 31))]
     fn exec_get_global(st: &mut VmState, i: u32) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         get_global_common(&mut st.cr, stack, i as usize)
     }
 
     #[op(code = "f860", fmt = "SETGLOBVAR")]
     fn exec_set_global_var(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let args = ok!(stack.pop_smallint_range(0, 254));
         set_global_common(&mut st.cr, stack, &mut st.gas, args as usize)
     }
 
     #[op(code = "f8ii @ f861..f880", fmt = "SETGLOB {i}", args(i = args & 31))]
     fn exec_set_global(st: &mut VmState, i: u32) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         set_global_common(&mut st.cr, stack, &mut st.gas, i as usize)
     }
 }
@@ -349,13 +349,13 @@ fn set_global_common(
             let mut c7 = vec![Stack::make_null(); index + 1];
             c7[index] = value;
             tuple_len_to_pay = c7.len();
-            regs.c7 = Some(Rc::new(c7));
+            regs.c7 = Some(SafeRc::new(c7));
         }
         // Do nothing if we are inserting `null` to an index out of the tuple range.
         Some(c7) if index >= c7.len() && value.is_null() => tuple_len_to_pay = 0,
         // Replace an existing value.
         Some(c7) => {
-            let c7 = Rc::make_mut(c7);
+            let c7 = SafeRc::make_mut(c7);
             if index >= c7.len() {
                 c7.resize(index + 1, Stack::make_null());
             }

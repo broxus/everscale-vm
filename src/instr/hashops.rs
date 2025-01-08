@@ -1,5 +1,4 @@
 use std::ops::Range;
-use std::rc::Rc;
 
 use everscale_crypto::ed25519;
 use everscale_types::cell::{CellBuilder, CellSlice};
@@ -11,6 +10,7 @@ use sha2::Digest;
 
 use crate::error::VmResult;
 use crate::gas::GasConsumer;
+use crate::saferc::SafeRc;
 use crate::stack::StackValueType;
 use crate::state::VmState;
 
@@ -21,7 +21,7 @@ impl Hashops {
     #[op(code = "f900", fmt = "HASHCU", args(src = HashSource::Cell))]
     #[op(code = "f901", fmt = "HASHSU", args(src = HashSource::Slice))]
     fn exec_compute_hash(st: &mut VmState, src: HashSource) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
 
         let hash = match src {
             HashSource::Cell => *ok!(stack.pop_cell()).repr_hash(),
@@ -39,7 +39,7 @@ impl Hashops {
 
     #[op(code = "f902", fmt = "SHA256U")]
     fn exec_compute_sha256(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let cs = ok!(stack.pop_cs());
         let mut cs = cs.apply()?;
         let data_bits = cs.size_bits();
@@ -57,7 +57,7 @@ impl Hashops {
     fn exec_hash_ext(st: &mut VmState, p: bool, r: bool, mut i: u32) -> VmResult<i32> {
         ok!(st.version.require_ton(4..));
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         if i == 255 {
             i = ok!(stack.pop_smallint_range(0, 254));
         }
@@ -71,7 +71,7 @@ impl Hashops {
         if p {
             // Append to a builder.
             let mut cb = ok!(stack.pop_builder());
-            Rc::make_mut(&mut cb).store_raw(&hash, hash.len() as u16 * 8)?;
+            SafeRc::make_mut(&mut cb).store_raw(&hash, hash.len() as u16 * 8)?;
             ok!(stack.push_raw(cb));
         } else if hash.len() <= 32 {
             // Convert to a single int.
@@ -82,9 +82,9 @@ impl Hashops {
             let mut tuple = Tuple::with_capacity(hash.len().div_ceil(32));
             for chunk in hash.chunks(32) {
                 let int = BigInt::from_bytes_be(Sign::Plus, chunk);
-                tuple.push(Rc::new(int));
+                tuple.push(SafeRc::new_dyn_value(int));
             }
-            ok!(stack.push_raw(Rc::new(tuple)));
+            ok!(stack.push_raw(SafeRc::new(tuple)));
         }
 
         Ok(0)
@@ -93,7 +93,7 @@ impl Hashops {
     #[op(code = "f910", fmt = "CHKSIGNU", args(from_slice = false))]
     #[op(code = "f911", fmt = "CHKSIGNS", args(from_slice = true))]
     fn exec_ed25519_check_signature(st: &mut VmState, from_slice: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let key_int = ok!(stack.pop_int());
         let signature_cs = ok!(stack.pop_cs());
 
@@ -348,14 +348,13 @@ enum HashSource {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
-
     use everscale_crypto::ed25519;
     use everscale_types::cell::{CellBuilder, HashBytes};
     use num_bigint::{BigInt, Sign};
     use sha2::Digest;
     use tracing_test::traced_test;
 
+    use crate::saferc::SafeRc;
     use crate::stack::RcStackValue;
     use crate::util::OwnedCellSlice;
 
@@ -489,7 +488,7 @@ mod tests {
             ] => [int -1]
         );
 
-        let args = Rc::new(vec![
+        let args = SafeRc::new(vec![
             build_int(data_hash),
             build_slice(data_hash_signature),
             build_int(keypair.public_key.as_bytes()),
@@ -544,10 +543,10 @@ mod tests {
     fn build_slice<T: AsRef<[u8]>>(data: T) -> RcStackValue {
         let data = data.as_ref();
         let b = CellBuilder::from_raw_data(data, data.len() as u16 * 8).unwrap();
-        Rc::new(OwnedCellSlice::from(b.build().unwrap()))
+        SafeRc::new_dyn_value(OwnedCellSlice::from(b.build().unwrap()))
     }
 
     fn build_int<T: AsRef<[u8]>>(data: T) -> RcStackValue {
-        Rc::new(BigInt::from_bytes_be(Sign::Plus, data.as_ref()))
+        SafeRc::new_dyn_value(BigInt::from_bytes_be(Sign::Plus, data.as_ref()))
     }
 }

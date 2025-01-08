@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use everscale_types::cell::{CellBuilder, CellSlice, CellSliceParts, Load, Size};
 use everscale_types::dict::{self, DictBound, SetMode};
 use everscale_types::error::Error;
@@ -11,6 +9,7 @@ use num_bigint::Sign;
 
 use crate::dispatch::Opcodes;
 use crate::error::VmResult;
+use crate::saferc::SafeRc;
 use crate::stack::RcStackValue;
 use crate::state::VmState;
 use crate::util::{
@@ -29,19 +28,20 @@ impl Dictops {
 
     #[op(code = "f400", fmt = "STDICT")]
     fn exec_stdict(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
 
         let mut builder = ok!(stack.pop_builder());
         let cell = ok!(stack.pop_cell_opt());
 
-        cell.store_into(Rc::make_mut(&mut builder), &mut Cell::empty_context())?;
+        cell.as_deref()
+            .store_into(SafeRc::make_mut(&mut builder), &mut Cell::empty_context())?;
         ok!(stack.push_raw(builder));
         Ok(0)
     }
 
     #[op(code = "f401", fmt = "SKIPDICT")]
     fn exec_skip_dict(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut csr = ok!(stack.pop_cs());
         {
             let mut cs = csr.apply()?;
@@ -49,7 +49,7 @@ impl Dictops {
                 cs.skip_first(0, 1)?;
             }
             let range = cs.range();
-            Rc::make_mut(&mut csr).set_range(range);
+            SafeRc::make_mut(&mut csr).set_range(range);
         }
         ok!(stack.push_raw(csr));
         Ok(0)
@@ -58,7 +58,7 @@ impl Dictops {
     #[op(code = "f402", fmt = "LDDICTS", args(preload = false))]
     #[op(code = "f403", fmt = "PLDDICTS", args(preload = true))]
     fn exec_load_dict_slice(st: &mut VmState, preload: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut csr = ok!(stack.pop_cs());
 
         let mut cs = csr.apply()?;
@@ -67,7 +67,7 @@ impl Dictops {
         ok!(stack.push(OwnedCellSlice::from((csr.cell().clone(), dict_cs.range()))));
         if !preload {
             let range = cs.range();
-            Rc::make_mut(&mut csr).set_range(range);
+            SafeRc::make_mut(&mut csr).set_range(range);
             ok!(stack.push_raw(csr));
         }
         Ok(0)
@@ -78,7 +78,7 @@ impl Dictops {
     #[op(code = "f406", fmt = "LDDICTQ", args(preload = false, quiet = true))]
     #[op(code = "f407", fmt = "PLDDICTQ", args(preload = true, quiet = true))]
     fn exec_load_dict(st: &mut VmState, preload: bool, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut csr = ok!(stack.pop_cs());
 
         let mut cs = csr.apply()?;
@@ -99,7 +99,7 @@ impl Dictops {
         ok!(stack.push_opt(dict));
         if !preload {
             let range = cs.range();
-            Rc::make_mut(&mut csr).set_range(range);
+            SafeRc::make_mut(&mut csr).set_range(range);
             ok!(stack.push_raw(csr));
         }
         if quiet {
@@ -110,7 +110,7 @@ impl Dictops {
 
     #[op(code = "f4ss @ f40a..f410", fmt = s.display("GET"), args(s = DictOpArgs(args)))]
     fn exec_dict_get(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let dict = ok!(stack.pop_cell_opt());
 
@@ -138,7 +138,7 @@ impl Dictops {
             ok!(value.map(to_value_ref).transpose())
         } else {
             dict::dict_get_owned(dict.as_deref(), n, key, &mut st.gas)?
-                .map(|parts| Rc::new(OwnedCellSlice::from(parts)) as RcStackValue)
+                .map(|parts| SafeRc::new_dyn_value(OwnedCellSlice::from(parts)))
         };
 
         match value {
@@ -182,7 +182,7 @@ impl Dictops {
         args(s = DictOpArgs(args << 1), b = true, mode = SetMode::Add)
     )]
     fn exec_dict_set(st: &mut VmState, s: DictOpArgs, b: bool, mode: SetMode) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let dict = ok!(stack.pop_cell_opt());
 
@@ -254,7 +254,7 @@ impl Dictops {
         args(s = DictOpArgs(args << 1), b = true, mode = SetMode::Add)
     )]
     fn exec_dict_setget(st: &mut VmState, s: DictOpArgs, b: bool, mode: SetMode) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let dict = ok!(stack.pop_cell_opt());
 
@@ -303,7 +303,7 @@ impl Dictops {
 
     #[op(code = "f4ss @ f459..f45c", fmt = s.display("DEL"), args(s = ShortDictOpArgs(args)))]
     fn exec_dict_delete(st: &mut VmState, s: ShortDictOpArgs) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let dict = ok!(stack.pop_cell_opt());
 
@@ -314,7 +314,7 @@ impl Dictops {
 
             let signed = s.is_signed();
             if !in_bitsize_range(&int, signed) || bitsize(&int, signed) > n {
-                ok!(stack.push_opt_raw(dict.map(|cell| cell as RcStackValue)));
+                ok!(stack.push_opt_raw(dict));
                 ok!(stack.push_bool(false));
                 return Ok(0);
             }
@@ -336,7 +336,7 @@ impl Dictops {
 
     #[op(code = "f4ss @ f462..f468", fmt = s.display("DELGET"), args(s = DictOpArgs(args)))]
     fn exec_dict_deleteget(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let dict = ok!(stack.pop_cell_opt());
 
@@ -347,7 +347,7 @@ impl Dictops {
 
             let signed = s.is_signed();
             if !in_bitsize_range(&int, signed) || bitsize(&int, signed) > n {
-                ok!(stack.push_opt_raw(dict.map(|cell| cell as RcStackValue)));
+                ok!(stack.push_opt_raw(dict));
                 ok!(stack.push_bool(false));
                 return Ok(0);
             }
@@ -379,7 +379,7 @@ impl Dictops {
 
     #[op(code = "f4ss @ f469..f46c", fmt = s.display("GETOPTREF"), args(s = ShortDictOpArgs(args)))]
     fn exec_dict_get_optref(st: &mut VmState, s: ShortDictOpArgs) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let dict = ok!(stack.pop_cell_opt());
 
@@ -410,7 +410,7 @@ impl Dictops {
 
     #[op(code = "f4ss @ f46d..f470", fmt = s.display("SETGETOPTREF"), args(s = ShortDictOpArgs(args)))]
     fn exec_dict_setget_optref(st: &mut VmState, s: ShortDictOpArgs) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let dict = ok!(stack.pop_cell_opt());
 
@@ -431,8 +431,10 @@ impl Dictops {
         let ctx = &mut st.gas;
         let mut dict = dict.as_deref().cloned();
         let prev = match value {
-            Some(cell) => dict::dict_insert_owned(&mut dict, &mut key, n, &cell, SetMode::Set, ctx)
-                .map(|(_, prev)| prev)?,
+            Some(cell) => {
+                dict::dict_insert_owned(&mut dict, &mut key, n, &*cell, SetMode::Set, ctx)
+                    .map(|(_, prev)| prev)?
+            }
             None => dict::dict_remove_owned(&mut dict, &mut key, n, false, ctx)?,
         };
         let prev = ok!(prev.map(|p| extract_value_ref(p, true)).transpose());
@@ -444,7 +446,7 @@ impl Dictops {
 
     #[op(code = "f4ss @ f474..f480", fmt = s, args(s = DictGetNearArgs(args)))]
     fn exec_dict_get_near(st: &mut VmState, s: DictGetNearArgs) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
 
         let max_key_bits = if s.is_int() {
             256 + s.is_signed() as u32
@@ -512,7 +514,7 @@ impl Dictops {
     #[op(code = "f4ss @ f492..f498", fmt = s.display("REMMIN"), args(s = DictOpArgs(args)))]
     #[op(code = "f4ss @ f49a..f4a0", fmt = s.display("REMMAX"), args(s = DictOpArgs(args)))]
     fn exec_dict_get_min(st: &mut VmState, s: DictOpArgs) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
 
         let max_key_bits = if s.is_int() {
             256 + s.is_signed() as u32
@@ -572,7 +574,7 @@ impl Dictops {
     #[op(code = "f4a$00ss", fmt = s, args(s = DictExecArgs(args)))]
     #[op(code = "f4b$11ss", fmt = s, args(s = DictExecArgs(args)))]
     fn exec_dict_get_exec(st: &mut VmState, s: DictExecArgs) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let n = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let dict = ok!(stack.pop_cell_opt());
         let idx = ok!(stack.pop_int());
@@ -591,7 +593,7 @@ impl Dictops {
                 break 'scope;
             };
 
-            let cont = Rc::new(OrdCont::simple(value.into(), st.cp.id()));
+            let cont = SafeRc::from(OrdCont::simple(value.into(), st.cp.id()));
             return if s.is_exec() {
                 st.call(cont)
             } else {
@@ -611,7 +613,7 @@ impl Dictops {
         let ok = st.code.range_mut().skip_first(bits - 11, 0).is_ok();
         debug_assert!(ok);
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut code = st.code.apply()?;
 
         let slice = code.load_prefix(1, 1)?;
@@ -897,14 +899,14 @@ fn extract_value_ref(value: CellSliceParts, is_ref: bool) -> VmResult<RcStackVal
     if is_ref {
         to_value_ref(value.apply()?)
     } else {
-        Ok(Rc::new(value) as RcStackValue)
+        Ok(SafeRc::new_dyn_value(value))
     }
 }
 
 fn to_value_ref(mut cs: CellSlice<'_>) -> VmResult<RcStackValue> {
     vm_ensure!(cs.size() == Size { bits: 0, refs: 1 }, DictError);
     let cell = cs.load_reference_cloned()?;
-    Ok(Rc::new(cell))
+    Ok(SafeRc::new_dyn_value(cell))
 }
 
 #[cfg(test)]
@@ -919,20 +921,20 @@ pub mod tests {
     #[test]
     #[traced_test]
     fn store_dict() {
-        let init_builder = Rc::new(CellBuilder::new());
+        let init_builder = SafeRc::new_dyn_value(CellBuilder::new());
         let mut dict = Dict::<u32, u32>::new();
         dict.add(1, 1).unwrap();
-        let dict = Rc::new(dict.clone().into_root().unwrap());
+        let dict = dict.clone().into_root().unwrap();
 
-        let stored = Rc::new({
+        let stored = SafeRc::new_dyn_value({
             let mut builder = CellBuilder::new();
             builder.store_bit_one().unwrap();
             builder.store_reference(Cell::clone(&dict)).unwrap();
             builder
         });
-        assert_run_vm!("STDICT", [raw dict.clone(), raw init_builder.clone()] => [raw stored]);
+        assert_run_vm!("STDICT", [cell dict.clone(), raw init_builder.clone()] => [raw stored]);
 
-        let stored = Rc::new({
+        let stored = SafeRc::new_dyn_value({
             let mut builder = CellBuilder::new();
             builder.store_bit_zero().unwrap();
             builder
@@ -1351,11 +1353,11 @@ pub mod tests {
         let value = BigInt::from(value);
         let mut builder = CellBuilder::new();
         store_int_to_builder(&value, 32, true, &mut builder).unwrap();
-        Rc::new(OwnedCellSlice::from(builder.build().unwrap()))
+        SafeRc::new_dyn_value(OwnedCellSlice::from(builder.build().unwrap()))
     }
 
     fn new_cell(value: i32) -> RcStackValue {
-        Rc::new(CellBuilder::build_from(value).unwrap())
+        SafeRc::new_dyn_value(CellBuilder::build_from(value).unwrap())
     }
 
     fn build_dict<K, V, F>(f: F) -> RcStackValue
@@ -1366,6 +1368,6 @@ pub mod tests {
     {
         let mut dict = Dict::<K, V>::new();
         f(&mut dict).unwrap();
-        Rc::new(dict.into_root().unwrap())
+        SafeRc::new_dyn_value(dict.into_root().unwrap())
     }
 }

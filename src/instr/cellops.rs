@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::rc::Rc;
 
 use anyhow::Result;
 use everscale_types::cell::{
@@ -13,9 +12,11 @@ use num_traits::ToPrimitive;
 use crate::cont::OrdCont;
 use crate::dispatch::Opcodes;
 use crate::error::{VmError, VmResult};
-use crate::stack::{RcStackValue, Stack};
+use crate::saferc::SafeRc;
+use crate::stack::Stack;
 use crate::state::VmState;
 use crate::util::{bitsize, load_int_from_slice, remove_trailing, OwnedCellSlice};
+use crate::StackValue;
 
 pub struct Cellops;
 
@@ -83,8 +84,8 @@ impl Cellops {
         let code = OwnedCellSlice::from((st.code.cell().clone(), slice_range));
         vm_log_op!("PUSHCONT {}", code);
 
-        let cont = Rc::new(OrdCont::simple(code, st.cp.id()));
-        ok!(Rc::make_mut(&mut st.stack).push_raw(cont));
+        let cont = SafeRc::new(OrdCont::simple(code, st.cp.id()));
+        ok!(SafeRc::make_mut(&mut st.stack).push_raw(cont));
         Ok(0)
     }
 
@@ -103,8 +104,8 @@ impl Cellops {
         let code = OwnedCellSlice::from((st.code.cell().clone(), slice_range));
         vm_log_op!("PUSHCONT {}", code);
 
-        let cont = Rc::new(OrdCont::simple(code, st.cp.id()));
-        ok!(Rc::make_mut(&mut st.stack).push_raw(cont));
+        let cont = SafeRc::new(OrdCont::simple(code, st.cp.id()));
+        ok!(SafeRc::make_mut(&mut st.stack).push_raw(cont));
         Ok(0)
     }
 
@@ -115,7 +116,7 @@ impl Cellops {
     #[op(code = "c702", fmt = "SREMPTY", args(op = SliceBoolUnaryOp::NoRefs))]
     #[op(code = "c703", fmt = "SDFIRST", args(op = SliceBoolUnaryOp::FirstBit))]
     fn exec_slice_bool_unary_op(st: &mut VmState, op: SliceBoolUnaryOp) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let cs = ok!(stack.pop_cs());
         let range = cs.range();
         let res = match op {
@@ -133,7 +134,7 @@ impl Cellops {
 
     #[op(code = "c704", fmt = "SDLEXCMP")]
     fn exec_slice_lex_cmp(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let cs2 = ok!(stack.pop_cs());
         let cs1 = ok!(stack.pop_cs());
 
@@ -159,7 +160,7 @@ impl Cellops {
             left.size_bits() < right.size_bits()
         }
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let cs2 = ok!(stack.pop_cs());
         let cs1 = ok!(stack.pop_cs());
 
@@ -194,7 +195,7 @@ impl Cellops {
     #[op(code = "c712", fmt = "SDCNTTRAIL0", args(op = SliceIntUnaryOp::Trailing0))]
     #[op(code = "c713", fmt = "SDCNTTRAIL1", args(op = SliceIntUnaryOp::Trailing1))]
     fn exec_slice_int_unary_op(st: &mut VmState, op: SliceIntUnaryOp) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let cs = ok!(stack.pop_cs());
         let slice = cs.apply_allow_special();
         let res = match op {
@@ -217,15 +218,15 @@ impl Cellops {
 
     #[op(code = "c8", fmt = "NEWC")]
     fn exec_new_builder(st: &mut VmState) -> VmResult<i32> {
-        ok!(Rc::make_mut(&mut st.stack).push(CellBuilder::new()));
+        ok!(SafeRc::make_mut(&mut st.stack).push(CellBuilder::new()));
         Ok(0)
     }
 
     #[op(code = "c9", fmt = "ENDC")]
     fn exec_builder_to_cell(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let builder = stack.pop_builder()?;
-        let cell = Rc::unwrap_or_clone(builder).build_ext(&mut st.gas)?;
+        let cell = SafeRc::unwrap_or_clone(builder).build_ext(&mut st.gas)?;
         ok!(stack.push(cell));
         Ok(0)
     }
@@ -233,7 +234,7 @@ impl Cellops {
     #[op(code = "caxx", fmt = "STI {x}", args(x = (args & 0xff) + 1, signed = true))]
     #[op(code = "cbxx", fmt = "STU {x}", args(x = (args & 0xff) + 1, signed = false))]
     fn exec_store_int(st: &mut VmState, x: u32, signed: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         exec_store_int_common(stack, x as u16, StoreIntArgs::from_sign(signed))
     }
 
@@ -241,7 +242,7 @@ impl Cellops {
     #[op(code = "cf10", fmt = "STREF", args(quiet = false))]
     #[op(code = "cf18", fmt = "STREFQ", args(quiet = true))]
     fn exec_store_ref(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut builder = ok!(stack.pop_builder());
         let cell = ok!(stack.pop_cell());
 
@@ -249,7 +250,7 @@ impl Cellops {
             return finish_store_overflow(stack, cell, builder, quiet);
         }
 
-        Rc::make_mut(&mut builder).store_reference(Rc::unwrap_or_clone(cell))?;
+        SafeRc::make_mut(&mut builder).store_reference(SafeRc::unwrap_or_clone(cell))?;
 
         finish_store_ok(stack, builder, quiet)
     }
@@ -258,7 +259,7 @@ impl Cellops {
     #[op(code = "cf15", fmt = "STBREFR", args(quiet = false))]
     #[op(code = "cf1d", fmt = "STBREFRQ", args(quiet = true))]
     fn exec_store_builder_as_ref_rev(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let child_builder = ok!(stack.pop_builder());
         let mut builder = ok!(stack.pop_builder());
 
@@ -266,8 +267,8 @@ impl Cellops {
             return finish_store_overflow(stack, builder, child_builder, quiet);
         }
 
-        let cell = Rc::unwrap_or_clone(child_builder).build_ext(&mut st.gas)?;
-        Rc::make_mut(&mut builder).store_reference(cell)?;
+        let cell = SafeRc::unwrap_or_clone(child_builder).build_ext(&mut st.gas)?;
+        SafeRc::make_mut(&mut builder).store_reference(cell)?;
 
         finish_store_ok(stack, builder, quiet)
     }
@@ -276,7 +277,7 @@ impl Cellops {
     #[op(code = "cf12", fmt = "STSLICE", args(quiet = false))]
     #[op(code = "cf1a", fmt = "STSLICEQ", args(quiet = true))]
     fn exec_store_slice(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut builder = ok!(stack.pop_builder());
         let cs = ok!(stack.pop_cs());
 
@@ -286,14 +287,14 @@ impl Cellops {
 
         // TODO: Is it ok to store special cells data as is?
         let slice = cs.apply_allow_special();
-        Rc::make_mut(&mut builder).store_slice(slice)?;
+        SafeRc::make_mut(&mut builder).store_slice(slice)?;
 
         finish_store_ok(stack, builder, quiet)
     }
 
     #[op(code = "cf0$0sss", fmt = s.display_x(), args(s = StoreIntArgs(args)))]
     fn exec_store_int_var(st: &mut VmState, s: StoreIntArgs) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let bits = ok!(stack.pop_smallint_range(0, 256 + s.is_signed() as u32));
         exec_store_int_common(stack, bits as u16, s)
     }
@@ -304,13 +305,13 @@ impl Cellops {
         args(s = StoreIntArgs(args >> 8), n = (args & 0xff) + 1),
     )]
     fn exec_store_int_fixed(st: &mut VmState, s: StoreIntArgs, n: u32) -> VmResult<i32> {
-        exec_store_int_common(Rc::make_mut(&mut st.stack), n as _, s)
+        exec_store_int_common(SafeRc::make_mut(&mut st.stack), n as _, s)
     }
 
     #[op(code = "cf11", fmt = "STBREF", args(quiet = false))]
     #[op(code = "cf19", fmt = "STBREFQ", args(quiet = true))]
     fn exec_store_builder_as_ref(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut builder = ok!(stack.pop_builder());
         let child_builder = ok!(stack.pop_builder());
 
@@ -318,8 +319,8 @@ impl Cellops {
             return finish_store_overflow(stack, child_builder, builder, quiet);
         }
 
-        let cell = Rc::unwrap_or_clone(child_builder).build_ext(&mut st.gas)?;
-        Rc::make_mut(&mut builder).store_reference(cell)?;
+        let cell = SafeRc::unwrap_or_clone(child_builder).build_ext(&mut st.gas)?;
+        SafeRc::make_mut(&mut builder).store_reference(cell)?;
 
         finish_store_ok(stack, builder, quiet)
     }
@@ -327,7 +328,7 @@ impl Cellops {
     #[op(code = "cf13", fmt = "STB", args(quiet = false))]
     #[op(code = "cf1b", fmt = "STBQ", args(quiet = true))]
     fn exec_store_builder(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut builder = ok!(stack.pop_builder());
         let other_builder = ok!(stack.pop_builder());
 
@@ -335,7 +336,7 @@ impl Cellops {
             return finish_store_overflow(stack, other_builder, builder, quiet);
         }
 
-        Rc::make_mut(&mut builder).store_builder(&other_builder)?;
+        SafeRc::make_mut(&mut builder).store_builder(&other_builder)?;
 
         finish_store_ok(stack, builder, quiet)
     }
@@ -343,7 +344,7 @@ impl Cellops {
     #[op(code = "cf14", fmt = "STREFR", args(quiet = false))]
     #[op(code = "cf1c", fmt = "STREFRQ", args(quiet = true))]
     fn exec_store_ref_rev(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let cell = ok!(stack.pop_cell());
         let mut builder = ok!(stack.pop_builder());
 
@@ -351,7 +352,7 @@ impl Cellops {
             return finish_store_overflow(stack, builder, cell, quiet);
         }
 
-        Rc::make_mut(&mut builder).store_reference(Rc::unwrap_or_clone(cell))?;
+        SafeRc::make_mut(&mut builder).store_reference(SafeRc::unwrap_or_clone(cell))?;
 
         finish_store_ok(stack, builder, quiet)
     }
@@ -359,7 +360,7 @@ impl Cellops {
     #[op(code = "cf16", fmt = "STSLICER", args(quiet = false))]
     #[op(code = "cf1e", fmt = "STSLICERQ", args(quiet = true))]
     fn exec_store_slice_rev(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let cs = ok!(stack.pop_cs());
         let mut builder = ok!(stack.pop_builder());
 
@@ -369,7 +370,7 @@ impl Cellops {
 
         // TODO: Is it ok to store special cells data as is?
         let slice = cs.apply_allow_special();
-        Rc::make_mut(&mut builder).store_slice(slice)?;
+        SafeRc::make_mut(&mut builder).store_slice(slice)?;
 
         finish_store_ok(stack, builder, quiet)
     }
@@ -377,7 +378,7 @@ impl Cellops {
     #[op(code = "cf17", fmt = "STBR", args(quiet = false))]
     #[op(code = "cf1f", fmt = "STBRQ", args(quiet = true))]
     fn exec_store_builder_rev(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let other_builder = ok!(stack.pop_builder());
         let mut builder = ok!(stack.pop_builder());
 
@@ -385,7 +386,7 @@ impl Cellops {
             return finish_store_overflow(stack, builder, other_builder, quiet);
         }
 
-        Rc::make_mut(&mut builder).store_builder(&other_builder)?;
+        SafeRc::make_mut(&mut builder).store_builder(&other_builder)?;
 
         finish_store_ok(stack, builder, quiet)
     }
@@ -398,7 +399,7 @@ impl Cellops {
 
         vm_log_op!("STREF{refs}CONST");
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut builder = ok!(stack.pop_builder());
 
         vm_ensure!(
@@ -407,7 +408,7 @@ impl Cellops {
         );
 
         {
-            let builder = Rc::make_mut(&mut builder);
+            let builder = SafeRc::make_mut(&mut builder);
             let mut code = st.code.apply()?;
             for _ in 0..refs {
                 let cell = code.load_reference_cloned()?;
@@ -422,7 +423,7 @@ impl Cellops {
 
     #[op(code = "cf22$ss", fmt = "{s}", args(s = StoreLeIntArgs(args)))]
     fn exec_store_le_int(st: &mut VmState, s: StoreLeIntArgs) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut builder = ok!(stack.pop_builder());
 
         let bits = if s.is_long() { 64 } else { 32 };
@@ -452,7 +453,7 @@ impl Cellops {
         };
 
         {
-            let builder = Rc::make_mut(&mut builder);
+            let builder = SafeRc::make_mut(&mut builder);
             match x {
                 Int::U32(x) => builder.store_u32(x.swap_bytes()),
                 Int::U64(x) => builder.store_u64(x.swap_bytes()),
@@ -465,10 +466,10 @@ impl Cellops {
 
     #[op(code = "cf23", fmt = "ENDXC")]
     fn exec_builder_to_special_cell(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
 
         let special = ok!(stack.pop_bool());
-        let mut builder = Rc::unwrap_or_clone(ok!(stack.pop_builder()));
+        let mut builder = SafeRc::unwrap_or_clone(ok!(stack.pop_builder()));
 
         builder.set_exotic(special);
 
@@ -481,7 +482,7 @@ impl Cellops {
 
     #[op(code = "cf30", fmt = "BDEPTH")]
     fn exec_builder_depth(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let builder = ok!(stack.pop_builder());
 
         let depth = compute_depth(builder.references());
@@ -491,7 +492,7 @@ impl Cellops {
 
     #[op(code = "cf31", fmt = "BBITS")]
     fn exec_builder_bits(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let builder = ok!(stack.pop_builder());
         ok!(stack.push_int(builder.size_bits()));
         Ok(0)
@@ -499,7 +500,7 @@ impl Cellops {
 
     #[op(code = "cf32", fmt = "BREFS")]
     fn exec_builder_refs(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let builder = ok!(stack.pop_builder());
         ok!(stack.push_int(builder.size_refs()));
         Ok(0)
@@ -507,7 +508,7 @@ impl Cellops {
 
     #[op(code = "cf33", fmt = "BBITREFS")]
     fn exec_builder_bits_refs(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let builder = ok!(stack.pop_builder());
         ok!(stack.push_int(builder.size_bits()));
         ok!(stack.push_int(builder.size_refs()));
@@ -516,7 +517,7 @@ impl Cellops {
 
     #[op(code = "cf35", fmt = "BREMBITS")]
     fn exec_builder_rem_bits(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let builder = ok!(stack.pop_builder());
         ok!(stack.push_int(builder.spare_capacity_bits()));
         Ok(0)
@@ -524,7 +525,7 @@ impl Cellops {
 
     #[op(code = "cf36", fmt = "BREMREFS")]
     fn exec_builder_rem_refs(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let builder = ok!(stack.pop_builder());
         ok!(stack.push_int(builder.spare_capacity_refs()));
         Ok(0)
@@ -532,7 +533,7 @@ impl Cellops {
 
     #[op(code = "cf37", fmt = "BREMBITREFS")]
     fn exec_builder_rem_bits_refs(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let builder = ok!(stack.pop_builder());
         ok!(stack.push_int(builder.spare_capacity_bits()));
         ok!(stack.push_int(builder.spare_capacity_refs()));
@@ -542,7 +543,7 @@ impl Cellops {
     #[op(code = "cf38xx", fmt = "BCHKBITS {x}", args(x = (args & 0xff) + 1, quiet = false))]
     #[op(code = "cf3cxx", fmt = "BCHKBITSQ {x}", args(x = (args & 0xff) + 1, quiet = true))]
     fn exec_builder_chk_bits(st: &mut VmState, x: u32, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let builder = ok!(stack.pop_builder());
 
         let fits = builder.has_capacity(x as u16, 0);
@@ -561,7 +562,7 @@ impl Cellops {
     #[op(code = "cf3e", fmt = "BCHKREFSQ", args(mode = CheckMode::Refs, quiet = true))]
     #[op(code = "cf3f", fmt = "BCHKBITREFSQ", args(mode = CheckMode::BitRefs, quiet = true))]
     fn exec_builder_chk_bits_refs(st: &mut VmState, mode: CheckMode, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
 
         // TODO: Check why `7` is the max value for refs in the original code
         let (bits, refs) = match mode {
@@ -588,7 +589,7 @@ impl Cellops {
     #[op(code = "cf41", fmt = "STONES", args(value = Some(true)))]
     #[op(code = "cf42", fmt = "STSAME", args(value = None))]
     fn exec_store_same(st: &mut VmState, value: Option<bool>) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
 
         let value = match value {
             Some(value) => value,
@@ -603,7 +604,7 @@ impl Cellops {
         );
 
         {
-            let builder = Rc::make_mut(&mut builder);
+            let builder = SafeRc::make_mut(&mut builder);
             match value {
                 true => builder.store_ones(bits as _)?,
                 false => builder.store_zeros(bits as _)?,
@@ -640,9 +641,9 @@ impl Cellops {
             OwnedCellSlice::from((st.code.cell().clone(), slice_range))
         );
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut builder = ok!(stack.pop_builder());
-        Rc::make_mut(&mut builder).store_slice(slice)?;
+        SafeRc::make_mut(&mut builder).store_slice(slice)?;
         ok!(stack.push_raw(builder));
         Ok(0)
     }
@@ -656,12 +657,12 @@ impl Cellops {
 
     #[op(code = "d0", fmt = "CTOS")]
     fn exec_cell_to_slice(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let cell = ok!(stack.pop_cell());
 
         let cell = st
             .gas
-            .load_cell(Rc::unwrap_or_clone(cell), LoadMode::UseGas)?;
+            .load_cell(SafeRc::unwrap_or_clone(cell), LoadMode::UseGas)?;
         let cs = OwnedCellSlice::new(cell);
 
         ok!(stack.push(cs));
@@ -670,7 +671,7 @@ impl Cellops {
 
     #[op(code = "d1", fmt = "ENDS")]
     fn exec_slice_chk_empty(st: &mut VmState) -> VmResult<i32> {
-        let cs = ok!(Rc::make_mut(&mut st.stack).pop_cs());
+        let cs = ok!(SafeRc::make_mut(&mut st.stack).pop_cs());
         let range = cs.range();
         vm_ensure!(
             range.size_bits() == 0 && range.size_refs() == 0,
@@ -682,13 +683,13 @@ impl Cellops {
     #[op(code = "d2xx", fmt = "LDI {x}", args(x = (args & 0xff) + 1, signed = true))]
     #[op(code = "d3xx", fmt = "LDU {x}", args(x = (args & 0xff) + 1, signed = false))]
     fn exec_load_int_fixed(st: &mut VmState, x: u32, signed: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         exec_load_int_common(stack, x as _, LoadIntArgs::from_sign(signed))
     }
 
     #[op(code = "d4", fmt = "LDREF")]
     fn exec_load_ref(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut cs = ok!(stack.pop_cs());
         vm_ensure!(cs.range().size_refs() > 0, CellError(Error::CellUnderflow));
 
@@ -697,14 +698,14 @@ impl Cellops {
         ok!(stack.push(cell));
 
         let range = slice.range();
-        Rc::make_mut(&mut cs).set_range(range);
+        SafeRc::make_mut(&mut cs).set_range(range);
         ok!(stack.push_raw(cs));
         Ok(0)
     }
 
     #[op(code = "d5", fmt = "LDREFRTOS")]
     fn exec_load_ref_rev_to_slice(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut cs = ok!(stack.pop_cs());
         vm_ensure!(cs.range().size_refs() > 0, CellError(Error::CellUnderflow));
 
@@ -713,7 +714,7 @@ impl Cellops {
         let cell = st.gas.load_cell(cell, LoadMode::UseGas)?;
 
         let range = slice.range();
-        Rc::make_mut(&mut cs).set_range(range);
+        SafeRc::make_mut(&mut cs).set_range(range);
         ok!(stack.push_raw(cs));
         ok!(stack.push(OwnedCellSlice::new(cell)));
         Ok(0)
@@ -721,13 +722,13 @@ impl Cellops {
 
     #[op(code = "d6xx", fmt = "LDSLICE {x}", args(x = (args & 0xff) + 1))]
     fn exec_load_slice_fixed(st: &mut VmState, x: u32) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         exec_load_slice_common(stack, x as _, LoadSliceArgs(0))
     }
 
     #[op(code = "d70$0sss", fmt = s.display_x(), args(s = LoadIntArgs(args)))]
     fn exec_load_int_var(st: &mut VmState, s: LoadIntArgs) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let bits = ok!(stack.pop_smallint_range(0, 256 + s.is_signed() as u32));
         exec_load_int_common(stack, bits as _, s)
     }
@@ -738,12 +739,12 @@ impl Cellops {
         args(s = LoadIntArgs(args >> 8), n = (args & 0xff) + 1)
     )]
     fn exec_load_int_fixed2(st: &mut VmState, s: LoadIntArgs, n: u32) -> VmResult<i32> {
-        exec_load_int_common(Rc::make_mut(&mut st.stack), n as _, s)
+        exec_load_int_common(SafeRc::make_mut(&mut st.stack), n as _, s)
     }
 
     #[op(code = "d71$0xxx", fmt = "PLDUZ {x}", args(x = ((args & 7) + 1) << 5))]
     fn exec_preload_uint_fixed_0e(st: &mut VmState, x: u32) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut cs = ok!(stack.pop_cs());
 
         let (int, range) = {
@@ -788,7 +789,7 @@ impl Cellops {
             (int, slice.range())
         };
 
-        Rc::make_mut(&mut cs).set_range(range);
+        SafeRc::make_mut(&mut cs).set_range(range);
         ok!(stack.push_raw(cs));
 
         ok!(match int {
@@ -800,7 +801,7 @@ impl Cellops {
 
     #[op(code = "d71$10ss", fmt = s.display_x(), args(s = LoadSliceArgs(args)))]
     fn exec_load_slice(st: &mut VmState, s: LoadSliceArgs) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let bits = ok!(stack.pop_smallint_range(0, 1023));
         exec_load_slice_common(stack, bits as _, s)
     }
@@ -811,7 +812,7 @@ impl Cellops {
         args(s = LoadSliceArgs(args >> 8), n = (args & 0xff) + 1)
     )]
     fn exec_load_slice_fixed2(st: &mut VmState, s: LoadSliceArgs, n: u32) -> VmResult<i32> {
-        exec_load_slice_common(Rc::make_mut(&mut st.stack), n as _, s)
+        exec_load_slice_common(SafeRc::make_mut(&mut st.stack), n as _, s)
     }
 
     #[op(code = "d720", fmt = "SDCUTFIRST", args(op = SliceRangeOp::CutFirst))]
@@ -819,7 +820,7 @@ impl Cellops {
     #[op(code = "d722", fmt = "SDCUTLAST", args(op = SliceRangeOp::CutLast))]
     #[op(code = "d723", fmt = "SDSKIPLAST", args(op = SliceRangeOp::SkipLast))]
     fn exec_slice_range_op(st: &mut VmState, op: SliceRangeOp) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let bits = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let mut cs = ok!(stack.pop_cs());
 
@@ -838,14 +839,14 @@ impl Cellops {
         .is_ok();
         debug_assert!(ok);
 
-        Rc::make_mut(&mut cs).set_range(range);
+        SafeRc::make_mut(&mut cs).set_range(range);
         ok!(stack.push_raw(cs));
         Ok(0)
     }
 
     #[op(code = "d724", fmt = "SDSUBSTR")]
     fn exec_slice_substr(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let len_bits = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let offset_bits = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let mut cs = ok!(stack.pop_cs());
@@ -860,7 +861,7 @@ impl Cellops {
         ok &= range.only_first(len_bits, 0).is_ok();
         debug_assert!(ok);
 
-        Rc::make_mut(&mut cs).set_range(range);
+        SafeRc::make_mut(&mut cs).set_range(range);
         ok!(stack.push_raw(cs));
         Ok(0)
     }
@@ -868,7 +869,7 @@ impl Cellops {
     #[op(code = "d726", fmt = "SDBEGINSX", args(quiet = false))]
     #[op(code = "d727", fmt = "SDBEGINSXQ", args(quiet = true))]
     fn exec_slice_begins_with(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let target = ok!(stack.pop_cs());
         let target = target.apply_allow_special();
         exec_slice_begins_with_common(stack, &target, quiet)
@@ -898,7 +899,7 @@ impl Cellops {
             OwnedCellSlice::from((st.code.cell().clone(), slice_range))
         );
 
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         exec_slice_begins_with_common(stack, &slice, quiet)
     }
 
@@ -907,7 +908,7 @@ impl Cellops {
     #[op(code = "d732", fmt = "SCUTLAST", args(op = SliceRangeOp::CutLast))]
     #[op(code = "d733", fmt = "SSKIPLAST", args(op = SliceRangeOp::SkipLast))]
     fn exec_slice_full_range_op(st: &mut VmState, op: SliceRangeOp) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let refs = ok!(stack.pop_smallint_range(0, 4)) as u8;
         let bits = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let mut cs = ok!(stack.pop_cs());
@@ -927,14 +928,14 @@ impl Cellops {
         .is_ok();
         debug_assert!(ok);
 
-        Rc::make_mut(&mut cs).set_range(range);
+        SafeRc::make_mut(&mut cs).set_range(range);
         ok!(stack.push_raw(cs));
         Ok(0)
     }
 
     #[op(code = "d734", fmt = "SUBSLICE")]
     fn exec_subslice(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let len_refs = ok!(stack.pop_smallint_range(0, 4)) as u8;
         let len_bits = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let offset_refs = ok!(stack.pop_smallint_range(0, 4)) as u8;
@@ -951,7 +952,7 @@ impl Cellops {
         ok &= range.only_first(len_bits, len_refs).is_ok();
         debug_assert!(ok);
 
-        Rc::make_mut(&mut cs).set_range(range);
+        SafeRc::make_mut(&mut cs).set_range(range);
         ok!(stack.push_raw(cs));
         Ok(0)
     }
@@ -959,7 +960,7 @@ impl Cellops {
     #[op(code = "d736", fmt = "SPLIT", args(quiet = false))]
     #[op(code = "d737", fmt = "SPLITQ", args(quiet = true))]
     fn exec_split(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let refs = ok!(stack.pop_smallint_range(0, 4)) as u8;
         let bits = ok!(stack.pop_smallint_range(0, 1023)) as u16;
         let mut cs = ok!(stack.pop_cs());
@@ -981,7 +982,7 @@ impl Cellops {
 
         ok!(stack.push(OwnedCellSlice::from((cs.cell().clone(), prefix_range))));
 
-        Rc::make_mut(&mut cs).set_range(range);
+        SafeRc::make_mut(&mut cs).set_range(range);
         ok!(stack.push_raw(cs));
 
         if quiet {
@@ -992,13 +993,13 @@ impl Cellops {
 
     #[op(code = "d739", fmt = "XCTOS")]
     fn exec_cell_to_slice_maybe_special(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let cell = ok!(stack.pop_cell());
         let is_special = cell.descriptor().is_exotic();
 
         let cell = st
             .gas
-            .load_cell(Rc::unwrap_or_clone(cell), LoadMode::UseGas)?;
+            .load_cell(SafeRc::unwrap_or_clone(cell), LoadMode::UseGas)?;
         let cs = OwnedCellSlice::new(cell);
         ok!(stack.push(cs));
         ok!(stack.push_bool(is_special));
@@ -1008,9 +1009,9 @@ impl Cellops {
     #[op(code = "d73a", fmt = "XLOAD", args(quiet = false))]
     #[op(code = "d73b", fmt = "XLOADQ", args(quiet = true))]
     fn exec_load_special_cell(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
-        let cell: Rc<Cell> = ok!(stack.pop_cell());
-        let cell = Rc::unwrap_or_clone(cell);
+        let stack = SafeRc::make_mut(&mut st.stack);
+        let cell: SafeRc<Cell> = ok!(stack.pop_cell());
+        let cell = SafeRc::unwrap_or_clone(cell);
         let loaded_cell_res = st.gas.load_cell(cell, LoadMode::UseGas);
         let mut cell: Cell = match loaded_cell_res {
             Err(_) if quiet => {
@@ -1047,7 +1048,7 @@ impl Cellops {
             }
         }
 
-        ok!(stack.push_raw(Rc::new(cell)));
+        ok!(stack.push_raw(SafeRc::new(cell)));
         if quiet {
             ok!(stack.push_bool(true));
         }
@@ -1062,7 +1063,7 @@ impl Cellops {
     #[op(code = "d746", fmt = "SCHKREFSQ", args(mode = CheckMode::Refs, quiet = true))]
     #[op(code = "d747", fmt = "SCHKBITREFSQ", args(mode = CheckMode::BitRefs, quiet = true))]
     fn exec_check_slice(st: &mut VmState, mode: CheckMode, quiet: bool) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
 
         let (bits, refs) = match mode {
             CheckMode::Bits => (ok!(stack.pop_smallint_range(0, 1023)), 0),
@@ -1086,7 +1087,7 @@ impl Cellops {
 
     #[op(code = "d748", fmt = "PLDREFVAR")]
     fn exec_preload_ref(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let idx = ok!(stack.pop_smallint_range(0, 3)) as u8;
         let cs = ok!(stack.pop_cs());
 
@@ -1100,7 +1101,7 @@ impl Cellops {
     #[op(code = "d74a", fmt = "SREFS", args(mode = CheckMode::Refs))]
     #[op(code = "d74b", fmt = "SBITREFS", args(mode = CheckMode::BitRefs))]
     fn exec_slice_bits_refs(st: &mut VmState, mode: CheckMode) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let cs = ok!(stack.pop_cs());
 
         let range = cs.range();
@@ -1115,7 +1116,7 @@ impl Cellops {
 
     #[op(code = "d74$11xx", fmt = "PLDREFIDX {x}")]
     fn exec_preload_ref_fixed(st: &mut VmState, x: u32) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let cs = ok!(stack.pop_cs());
 
         let slice = cs.apply_allow_special();
@@ -1126,7 +1127,7 @@ impl Cellops {
 
     #[op(code = "d75s", fmt = "{s}", args(s = LoadLeIntArgs(args)))]
     fn exec_load_le_int(st: &mut VmState, s: LoadLeIntArgs) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let mut cs = ok!(stack.pop_cs());
 
         let bits = if s.is_long() { 64 } else { 32 };
@@ -1158,7 +1159,7 @@ impl Cellops {
         };
 
         if !s.is_prefetch() {
-            Rc::make_mut(&mut cs).set_range(range);
+            SafeRc::make_mut(&mut cs).set_range(range);
             ok!(stack.push_raw(cs));
         }
 
@@ -1172,7 +1173,7 @@ impl Cellops {
     #[op(code = "d761", fmt = "LDONES", args(value = Some(true)))]
     #[op(code = "d762", fmt = "LDSAME", args(value = None))]
     fn exec_load_same(st: &mut VmState, value: Option<bool>) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let value = match value {
             Some(value) => value,
             None => ok!(stack.pop_smallint_range(0, 1)) != 0,
@@ -1196,14 +1197,14 @@ impl Cellops {
             slice.range()
         };
 
-        Rc::make_mut(&mut cs).set_range(range);
+        SafeRc::make_mut(&mut cs).set_range(range);
         ok!(stack.push_raw(cs));
         Ok(0)
     }
 
     #[op(code = "d764", fmt = "SDEPTH")]
     fn exec_slice_depth(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let cs = ok!(stack.pop_cs());
         let slice = cs.apply_allow_special();
 
@@ -1214,7 +1215,7 @@ impl Cellops {
 
     #[op(code = "d765", fmt = "CDEPTH")]
     fn exec_cell_depth(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
 
         let cell = {
             let item = ok!(stack.pop());
@@ -1237,7 +1238,7 @@ impl Cellops {
 
     #[op(code = "d766", fmt = "CLEVEL")]
     fn exec_cell_level(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let cell = ok!(stack.pop_cell());
         let level = cell.descriptor().level_mask().level();
         ok!(stack.push_int(level));
@@ -1246,7 +1247,7 @@ impl Cellops {
 
     #[op(code = "d767", fmt = "CLEVELMASK")]
     fn exec_cell_level_mask(st: &mut VmState) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let cell = ok!(stack.pop_cell());
         let mask = cell.descriptor().level_mask().to_byte();
         ok!(stack.push_int(mask));
@@ -1256,13 +1257,13 @@ impl Cellops {
     #[op(code = "d76$10xx", fmt = "CHASHI {x}", args(op = LevelOp::Hash))]
     #[op(code = "d76$11xx", fmt = "CDEPTHI {x}", args(op = LevelOp::Depth))]
     fn exec_cell_level_op(st: &mut VmState, x: u32, op: LevelOp) -> VmResult<i32> {
-        exec_cell_level_op_common(Rc::make_mut(&mut st.stack), x as _, op)
+        exec_cell_level_op_common(SafeRc::make_mut(&mut st.stack), x as _, op)
     }
 
     #[op(code = "d770", fmt = "CHASHIX", args(op = LevelOp::Hash))]
     #[op(code = "d771", fmt = "CDEPTHIX", args(op = LevelOp::Depth))]
     fn exec_cell_level_op_var(st: &mut VmState, op: LevelOp) -> VmResult<i32> {
-        let stack = Rc::make_mut(&mut st.stack);
+        let stack = SafeRc::make_mut(&mut st.stack);
         let x = ok!(stack.pop_smallint_range(0, 3));
         exec_cell_level_op_common(stack, x as _, op)
     }
@@ -1293,7 +1294,7 @@ fn exec_push_ref_common(
 
     vm_log_op!("{name} ({})", cell.repr_hash());
 
-    let stack = Rc::make_mut(&mut st.stack);
+    let stack = SafeRc::make_mut(&mut st.stack);
     ok!(match mode {
         PushRefMode::Cell => stack.push(cell),
         PushRefMode::Slice => {
@@ -1302,7 +1303,7 @@ fn exec_push_ref_common(
         }
         PushRefMode::Cont => {
             let code = st.gas.load_cell(cell, LoadMode::Full)?;
-            let cont = Rc::new(OrdCont::simple(code.into(), st.cp.id()));
+            let cont = SafeRc::new(OrdCont::simple(code.into(), st.cp.id()));
             stack.push_raw(cont)
         }
     });
@@ -1329,10 +1330,10 @@ fn exec_push_slice_common(st: &mut VmState, bits: u16, data_bits: u16, refs: u8)
         slice_range = slice.range();
     }
 
-    let slice: RcStackValue = Rc::new(OwnedCellSlice::from((st.code.cell().clone(), slice_range)));
+    let slice = SafeRc::new_dyn_value(OwnedCellSlice::from((st.code.cell().clone(), slice_range)));
     vm_log_op!("PUSHSLICE {}", slice.display_list());
 
-    ok!(Rc::make_mut(&mut st.stack).push_raw(slice));
+    ok!(SafeRc::make_mut(&mut st.stack).push_raw(slice));
     Ok(0)
 }
 
@@ -1368,8 +1369,8 @@ enum SliceIntUnaryOp {
 fn exec_store_int_common(stack: &mut Stack, bits: u16, args: StoreIntArgs) -> VmResult<i32> {
     fn finish_store_fail(
         stack: &mut Stack,
-        builder: Rc<CellBuilder>,
-        x: Rc<BigInt>,
+        builder: SafeRc<CellBuilder>,
+        x: SafeRc<BigInt>,
         code: i32,
         args: StoreIntArgs,
     ) -> VmResult<i32> {
@@ -1416,7 +1417,7 @@ fn exec_store_int_common(stack: &mut Stack, bits: u16, args: StoreIntArgs) -> Vm
     }
 
     {
-        let builder = Rc::make_mut(&mut builder);
+        let builder = SafeRc::make_mut(&mut builder);
         match x.to_u64() {
             Some(value) => builder.store_uint(value, bits)?,
             None => {
@@ -1452,12 +1453,16 @@ fn exec_store_int_common(stack: &mut Stack, bits: u16, args: StoreIntArgs) -> Vm
     finish_store_ok(stack, builder, args.is_quiet())
 }
 
-pub(crate) fn finish_store_overflow(
+pub(crate) fn finish_store_overflow<T1, T2>(
     stack: &mut Stack,
-    arg1: RcStackValue,
-    arg2: RcStackValue,
+    arg1: SafeRc<T1>,
+    arg2: SafeRc<T2>,
     quiet: bool,
-) -> VmResult<i32> {
+) -> VmResult<i32>
+where
+    T1: StackValue + 'static,
+    T2: StackValue + 'static,
+{
     if quiet {
         ok!(stack.push_raw(arg1));
         ok!(stack.push_raw(arg2));
@@ -1470,7 +1475,7 @@ pub(crate) fn finish_store_overflow(
 
 pub(crate) fn finish_store_ok(
     stack: &mut Stack,
-    builder: Rc<CellBuilder>,
+    builder: SafeRc<CellBuilder>,
     quiet: bool,
 ) -> VmResult<i32> {
     ok!(stack.push_raw(builder));
@@ -1596,7 +1601,7 @@ fn exec_load_int_common(stack: &mut Stack, bits: u16, args: LoadIntArgs) -> VmRe
     };
 
     if !args.is_prefetch() {
-        Rc::make_mut(&mut cs).set_range(range);
+        SafeRc::make_mut(&mut cs).set_range(range);
         ok!(stack.push_raw(cs));
     }
 
@@ -1717,7 +1722,7 @@ fn exec_load_slice_common(stack: &mut Stack, bits: u16, args: LoadSliceArgs) -> 
     };
 
     if !args.is_prefetch() {
-        Rc::make_mut(&mut cs).set_range(range);
+        SafeRc::make_mut(&mut cs).set_range(range);
         ok!(stack.push_raw(cs));
     }
 
@@ -1790,7 +1795,7 @@ fn exec_slice_begins_with_common(
         slice.range()
     };
 
-    Rc::make_mut(&mut cs).set_range(range);
+    SafeRc::make_mut(&mut cs).set_range(range);
     ok!(stack.push_raw(cs));
 
     if quiet {

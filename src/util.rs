@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::rc::Rc;
 
 use everscale_types::cell::CellTreeStats;
 use everscale_types::dict::DictKey;
@@ -317,13 +316,6 @@ pub fn remove_trailing(slice: &mut CellSlice<'_>) -> Result<(), everscale_types:
     let n = ok!(slice.count_trailing(false));
     // NOTE: Skip one additional bit for non-empty slice
     slice.skip_last(n + (n != bits) as u16, 0)
-}
-
-#[inline]
-pub fn rc_ptr_eq<T1: ?Sized, T2: ?Sized>(lhs: &Rc<T1>, rhs: &Rc<T2>) -> bool {
-    let lhs = Rc::as_ptr(lhs) as *const ();
-    let rhs = Rc::as_ptr(rhs) as *const ();
-    lhs == rhs
 }
 
 #[cfg(test)]

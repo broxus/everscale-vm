@@ -74,39 +74,39 @@ macro_rules! tuple_impl {
 
     (@v [$($values:tt)*] int $value:expr $(, $($tt:tt)* )?) => {
         $crate::tuple_impl!(@v [
-            $($values)* ::std::rc::Rc::new(
+            $($values)* $crate::RcStackValue::new_dyn_value(
                 $crate::__export::num_bigint::BigInt::from($value)
-            ) as $crate::RcStackValue,
+            ),
         ] $($($tt)*)?)
     };
 
     (@v [$($values:tt)*] cell $value:expr $(, $($tt:tt)* )?) => {
         $crate::tuple_impl!(@v [
-            $($values)* ::std::rc::Rc::new(
+            $($values)* $crate::RcStackValue::new_dyn_value(
                 $value
-            ) as $crate::RcStackValue,
+            ),
         ] $($($tt)*)?)
     };
 
     (@v [$($values:tt)*] slice $value:expr $(, $($tt:tt)* )?) => {
         $crate::tuple_impl!(@v [
-            $($values)* ::std::rc::Rc::new(
+            $($values)* $crate::RcStackValue::new_dyn_value(
                 $crate::OwnedCellSlice::from($value)
-            ) as $crate::RcStackValue,
+            ),
         ] $($($tt)*)?)
     };
 
     (@v [$($values:tt)*] [ $($inner:tt)* ] $(, $($tt:tt)* )?) => {
         $crate::tuple_impl!(@v [
-            $($values)* ::std::rc::Rc::new(
+            $($values)* $crate::RcStackValue::new_dyn_value(
                 $crate::tuple!($($inner)*)
-            ) as $crate::RcStackValue,
+            ),
         ] $($($tt)*)?)
     };
 
     (@v [$($values:tt)*] raw $value:expr $(, $($tt:tt)* )?) => {
         $crate::tuple_impl!(@v [
-            $($values)* $value as $crate::RcStackValue,
+            $($values)* $crate::SafeRc::into_dyn_value($value),
         ] $($($tt)*)?)
     };
 
@@ -181,8 +181,8 @@ macro_rules! assert_run_vm_with_c7 {
 }
 
 pub use self::cont::{
-    AgainCont, ArgContExt, Cont, ControlData, ControlRegs, DynCont, ExcQuitCont, OrdCont,
-    PushIntCont, QuitCont, RcCont, RepeatCont, UntilCont, WhileCont,
+    AgainCont, ArgContExt, Cont, ControlData, ControlRegs, ExcQuitCont, OrdCont, PushIntCont,
+    QuitCont, RcCont, RepeatCont, UntilCont, WhileCont,
 };
 pub use self::dispatch::{
     DispatchTable, FnExecInstrArg, FnExecInstrFull, FnExecInstrSimple, Opcode, Opcodes,
@@ -190,6 +190,7 @@ pub use self::dispatch::{
 pub use self::error::{VmError, VmException, VmResult};
 pub use self::gas::{GasConsumer, GasParams, LibraryProvider, NoLibraries};
 pub use self::instr::{codepage, codepage0};
+pub use self::saferc::{SafeDelete, SafeRc, SafeRcMakeMut};
 pub use self::smc_info::{
     CustomSmcInfo, SmcInfo, SmcInfoBase, SmcInfoTonV4, SmcInfoTonV6, VmVersion,
 };
@@ -206,6 +207,7 @@ mod dispatch;
 mod error;
 mod gas;
 mod instr;
+mod saferc;
 mod smc_info;
 mod stack;
 mod state;
@@ -250,8 +252,6 @@ mod __private {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
-
     use everscale_types::prelude::*;
     use tracing_test::traced_test;
 
@@ -267,7 +267,7 @@ mod tests {
             .with_code(code)
             .with_smc_info(CustomSmcInfo {
                 version: VmState::DEFAULT_VERSION,
-                c7: Rc::new(c7_params),
+                c7: SafeRc::new(c7_params),
             })
             .with_debug(TracingOutput::default())
             .with_stack(original_stack)

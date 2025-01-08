@@ -10,7 +10,8 @@ use num_bigint::{BigInt, Sign};
 use sha2::Digest;
 
 use crate::error::VmResult;
-use crate::stack::{RcStackValue, Stack, Tuple};
+use crate::saferc::{SafeDelete, SafeRc};
+use crate::stack::{Stack, Tuple};
 use crate::util::OwnedCellSlice;
 
 /// Version of a VM context.
@@ -37,7 +38,7 @@ impl VmVersion {
 pub trait SmcInfo {
     fn version(&self) -> VmVersion;
 
-    fn build_c7(&self) -> Rc<Tuple>;
+    fn build_c7(&self) -> SafeRc<Tuple>;
 }
 
 impl<T: SmcInfo + ?Sized> SmcInfo for &'_ T {
@@ -47,7 +48,7 @@ impl<T: SmcInfo + ?Sized> SmcInfo for &'_ T {
     }
 
     #[inline]
-    fn build_c7(&self) -> Rc<Tuple> {
+    fn build_c7(&self) -> SafeRc<Tuple> {
         T::build_c7(self)
     }
 }
@@ -59,7 +60,7 @@ impl<T: SmcInfo + ?Sized> SmcInfo for Box<T> {
     }
 
     #[inline]
-    fn build_c7(&self) -> Rc<Tuple> {
+    fn build_c7(&self) -> SafeRc<Tuple> {
         T::build_c7(self)
     }
 }
@@ -71,7 +72,7 @@ impl<T: SmcInfo + ?Sized> SmcInfo for Rc<T> {
     }
 
     #[inline]
-    fn build_c7(&self) -> Rc<Tuple> {
+    fn build_c7(&self) -> SafeRc<Tuple> {
         T::build_c7(self)
     }
 }
@@ -83,7 +84,19 @@ impl<T: SmcInfo + ?Sized> SmcInfo for Arc<T> {
     }
 
     #[inline]
-    fn build_c7(&self) -> Rc<Tuple> {
+    fn build_c7(&self) -> SafeRc<Tuple> {
+        T::build_c7(self)
+    }
+}
+
+impl<T: SmcInfo + SafeDelete + ?Sized> SmcInfo for SafeRc<T> {
+    #[inline]
+    fn version(&self) -> VmVersion {
+        T::version(self)
+    }
+
+    #[inline]
+    fn build_c7(&self) -> SafeRc<Tuple> {
         T::build_c7(self)
     }
 }
@@ -185,28 +198,28 @@ impl SmcInfoBase {
 
     fn write_items(&self, items: &mut Tuple) {
         // magic:0x076ef1ea
-        items.push(Rc::new(BigInt::from(Self::MAGIC)));
+        items.push(SafeRc::new_dyn_value(BigInt::from(Self::MAGIC)));
         // actions:Integer
         items.push(Stack::make_zero());
         // msgs_sent:Integer
         items.push(Stack::make_zero());
         // unixtime:Integer
-        items.push(Rc::new(BigInt::from(self.now)));
+        items.push(SafeRc::new_dyn_value(BigInt::from(self.now)));
         // block_lt:Integer
-        items.push(Rc::new(BigInt::from(self.block_lt)));
+        items.push(SafeRc::new_dyn_value(BigInt::from(self.block_lt)));
         // trans_lt:Integer
-        items.push(Rc::new(BigInt::from(self.tx_lt)));
+        items.push(SafeRc::new_dyn_value(BigInt::from(self.tx_lt)));
         // rand_seed:Integer
-        items.push(Rc::new(BigInt::from_bytes_be(
+        items.push(SafeRc::new_dyn_value(BigInt::from_bytes_be(
             Sign::Plus,
             self.rand_seed.as_slice(),
         )));
         // balance_remaining:[Integer (Maybe Cell)]
-        items.push(balance_as_tuple(&self.account_balance));
+        items.push(balance_as_tuple(&self.account_balance).into_dyn_value());
         // myself:MsgAddressInt
-        items.push(Rc::new(OwnedCellSlice::from(
+        items.push(SafeRc::new_dyn_value(OwnedCellSlice::from(
             CellBuilder::build_from(&self.addr).unwrap(),
-        )) as RcStackValue);
+        )));
         // global_config:(Maybe Cell) ] = SmartContractInfo;
         items.push(
             match self
@@ -215,7 +228,7 @@ impl SmcInfoBase {
                 .and_then(|c| c.as_dict().root().as_ref())
             {
                 None => Stack::make_null(),
-                Some(config_root) => Rc::new(config_root.clone()),
+                Some(config_root) => SafeRc::new_dyn_value(config_root.clone()),
             },
         );
     }
@@ -226,10 +239,10 @@ impl SmcInfo for SmcInfoBase {
         VmVersion::Ton(1)
     }
 
-    fn build_c7(&self) -> Rc<Tuple> {
+    fn build_c7(&self) -> SafeRc<Tuple> {
         let mut t1 = Vec::with_capacity(Self::C7_ITEM_COUNT);
         self.write_items(&mut t1);
-        Rc::new(vec![Rc::new(t1)])
+        SafeRc::new(vec![SafeRc::new_dyn_value(t1)])
     }
 }
 
@@ -245,7 +258,7 @@ pub struct SmcInfoTonV4 {
     /// Storage fees collected on the storage phase.
     pub storage_fees: Tokens,
     /// Previous blocks info (raw for now).
-    pub prev_blocks_info: Option<Rc<Tuple>>,
+    pub prev_blocks_info: Option<SafeRc<Tuple>>,
 }
 
 impl SmcInfoTonV4 {
@@ -271,7 +284,7 @@ impl SmcInfoTonV4 {
         self
     }
 
-    pub fn with_prev_blocks_info(mut self, prev_blocks_info: Rc<Tuple>) -> Self {
+    pub fn with_prev_blocks_info(mut self, prev_blocks_info: SafeRc<Tuple>) -> Self {
         self.prev_blocks_info = Some(prev_blocks_info);
         self
     }
@@ -290,18 +303,20 @@ impl SmcInfoTonV4 {
         // code:Cell
         items.push(match self.code.clone() {
             None => Stack::make_null(),
-            Some(code) => Rc::new(code),
+            Some(code) => SafeRc::new_dyn_value(code),
         });
         // in_msg_value:[Integer (Maybe Cell)]
-        items.push(balance_as_tuple(&self.message_balance));
+        items.push(balance_as_tuple(&self.message_balance).into_dyn_value());
         // storage_fees:Integer
-        items.push(Rc::new(BigInt::from(self.storage_fees.into_inner())));
+        items.push(SafeRc::new_dyn_value(BigInt::from(
+            self.storage_fees.into_inner(),
+        )));
         // [ wc:Integer shard:Integer seqno:Integer root_hash:Integer file_hash:Integer] = BlockId;
         // [ last_mc_blocks:[BlockId...]
         //   prev_key_block:BlockId ] : PrevBlocksInfo
         match self.prev_blocks_info.clone() {
             None => items.push(Stack::make_null()),
-            Some(info) => items.push(info),
+            Some(info) => items.push(info.into_dyn_value()),
         }
     }
 }
@@ -311,10 +326,10 @@ impl SmcInfo for SmcInfoTonV4 {
         VmVersion::Ton(4)
     }
 
-    fn build_c7(&self) -> Rc<Tuple> {
+    fn build_c7(&self) -> SafeRc<Tuple> {
         let mut t1 = Vec::with_capacity(Self::C7_ITEM_COUNT);
         self.write_items(&mut t1);
-        Rc::new(vec![Rc::new(t1)])
+        SafeRc::new(vec![SafeRc::new_dyn_value(t1)])
     }
 }
 
@@ -324,7 +339,7 @@ pub struct SmcInfoTonV6 {
     /// Base values.
     pub base: SmcInfoTonV4,
     /// Unpacked blockchain config.
-    pub unpacked_config: Option<Rc<Tuple>>,
+    pub unpacked_config: Option<SafeRc<Tuple>>,
     /// Storage phase debt.
     pub due_payment: Tokens,
     // TODO: Add `precompiled_gas_usage`.
@@ -337,7 +352,10 @@ impl SmcInfoTonV6 {
 
     const C7_ITEM_COUNT: usize = SmcInfoTonV4::C7_ITEM_COUNT + 3;
 
-    pub fn unpack_config(params: &BlockchainConfigParams, now: u32) -> Result<Rc<Tuple>, Error> {
+    pub fn unpack_config(
+        params: &BlockchainConfigParams,
+        now: u32,
+    ) -> Result<SafeRc<Tuple>, Error> {
         let mut storage_prices = None;
         {
             let prices = RawDict::<32>::from(params.get_storage_prices()?.into_root());
@@ -356,13 +374,13 @@ impl SmcInfoTonV6 {
             let Some(value) = params.as_dict().get(id)? else {
                 return Ok(Stack::make_null());
             };
-            Ok(Rc::new(OwnedCellSlice::from(value)))
+            Ok(SafeRc::new_dyn_value(OwnedCellSlice::from(value)))
         };
 
-        Ok(Rc::new(vec![
+        Ok(SafeRc::new(vec![
             match storage_prices {
                 None => Stack::make_null(),
-                Some(prices) => Rc::new(OwnedCellSlice::from(prices)),
+                Some(prices) => SafeRc::new_dyn_value(OwnedCellSlice::from(prices)),
             }, // storage_prices
             get_param(19)?, // global_id
             get_param(20)?, // config_mc_gas_prices
@@ -373,7 +391,7 @@ impl SmcInfoTonV6 {
         ]))
     }
 
-    pub fn with_unpacked_config(mut self, config: Rc<Tuple>) -> Self {
+    pub fn with_unpacked_config(mut self, config: SafeRc<Tuple>) -> Self {
         self.unpacked_config = Some(config);
         self
     }
@@ -397,10 +415,10 @@ impl SmcInfoTonV6 {
         // unpacked_config_tuple:[...]
         items.push(match &self.unpacked_config {
             None => Stack::make_null(),
-            Some(config) => config.clone(),
+            Some(config) => config.clone().into_dyn_value(),
         });
         // due_payment:Integer
-        items.push(Rc::new(BigInt::from(self.due_payment.into_inner())));
+        items.push(SafeRc::new_dyn_value(BigInt::from(self.due_payment.into_inner())));
         // precompiled_gas_usage:Integer
         items.push(Stack::make_null());
     }
@@ -411,17 +429,17 @@ impl SmcInfo for SmcInfoTonV6 {
         VmVersion::Ton(6)
     }
 
-    fn build_c7(&self) -> Rc<Tuple> {
+    fn build_c7(&self) -> SafeRc<Tuple> {
         let mut t1 = Vec::with_capacity(Self::C7_ITEM_COUNT);
         self.write_items(&mut t1);
-        Rc::new(vec![Rc::new(t1)])
+        SafeRc::new(vec![SafeRc::new_dyn_value(t1)])
     }
 }
 
 /// Custom-built Smart Contract Info.
 pub struct CustomSmcInfo {
     pub version: VmVersion,
-    pub c7: Rc<Tuple>,
+    pub c7: SafeRc<Tuple>,
 }
 
 impl SmcInfo for CustomSmcInfo {
@@ -429,17 +447,17 @@ impl SmcInfo for CustomSmcInfo {
         self.version
     }
 
-    fn build_c7(&self) -> Rc<Tuple> {
+    fn build_c7(&self) -> SafeRc<Tuple> {
         self.c7.clone()
     }
 }
 
-fn balance_as_tuple(balance: &CurrencyCollection) -> Rc<Tuple> {
-    Rc::new(vec![
-        Rc::new(BigInt::from(balance.tokens.into_inner())),
+fn balance_as_tuple(balance: &CurrencyCollection) -> SafeRc<Tuple> {
+    SafeRc::new(vec![
+        SafeRc::new_dyn_value(BigInt::from(balance.tokens.into_inner())),
         match balance.other.as_dict().root() {
             None => Stack::make_null(),
-            Some(cell) => Rc::new(cell.clone()),
+            Some(cell) => SafeRc::new_dyn_value(cell.clone()),
         },
     ])
 }
