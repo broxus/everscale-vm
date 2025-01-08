@@ -807,7 +807,7 @@ impl Cellops {
     }
 
     #[op(
-        code = "d71$11ss#n",
+        code = "d71$11ss#nn",
         fmt = ("{} {n}", s.display()),
         args(s = LoadSliceArgs(args >> 8), n = (args & 0xff) + 1)
     )]
@@ -1011,9 +1011,17 @@ impl Cellops {
     fn exec_load_special_cell(st: &mut VmState, quiet: bool) -> VmResult<i32> {
         let stack = SafeRc::make_mut(&mut st.stack);
         let cell: SafeRc<Cell> = ok!(stack.pop_cell());
+        if st.version.is_ton(..5) {
+            ok!(stack.push_raw(cell));
+            if quiet {
+                ok!(stack.push_bool(true));
+            }
+            return Ok(0);
+        }
+
         let cell = SafeRc::unwrap_or_clone(cell);
         let loaded_cell_res = st.gas.load_cell(cell, LoadMode::UseGas);
-        let mut cell: Cell = match loaded_cell_res {
+        let cell = match loaded_cell_res {
             Err(_) if quiet => {
                 ok!(stack.push_bool(false));
                 return Ok(0);
@@ -1032,27 +1040,25 @@ impl Cellops {
                 _ => vm_bail!(CellError(Error::CellUnderflow)),
             }
 
-            if cell.data().len() != 33 {
+            if cell.bit_len() != 8 + 256 {
                 vm_bail!(CellError(Error::InvalidCell))
             }
 
             let hash_bytes = HashBytes::from_slice(&cell.data()[1..]);
 
             match st.gas.load_library(&hash_bytes)? {
-                Some(library) => cell = library,
+                Some(library) => {
+                    ok!(stack.push_raw(SafeRc::new(library)));
+                    if quiet {
+                        ok!(stack.push_bool(true));
+                    }
+                }
                 None if quiet => {
                     ok!(stack.push_bool(false));
-                    return Ok(0);
                 }
                 None => vm_bail!(CellError(Error::CellUnderflow)),
             }
         }
-
-        ok!(stack.push_raw(SafeRc::new(cell)));
-        if quiet {
-            ok!(stack.push_bool(true));
-        }
-
         Ok(0)
     }
 
@@ -1833,7 +1839,11 @@ fn exec_cell_level_op_common(stack: &mut Stack, level: u8, op: LevelOp) -> VmRes
 
 #[cfg(test)]
 mod tests {
+    use everscale_types::cell::CellBuilder;
+    use everscale_vm::util::store_int_to_builder;
     use tracing_test::traced_test;
+
+    use super::*;
 
     #[test]
     #[traced_test]
@@ -1857,5 +1867,343 @@ mod tests {
             "#,
             [] => [],
         );
+    }
+
+    #[test]
+    #[traced_test]
+    fn ctos_tests() {
+        let mut cb = CellBuilder::new();
+        cb.store_u8(1).unwrap();
+        cb.store_u8(0).unwrap();
+
+        let cell = cb.build().unwrap();
+        let slice = OwnedCellSlice::from(cell.clone());
+        assert_run_vm!("CTOS", [cell cell] => [slice slice])
+    }
+
+    #[test]
+    #[traced_test]
+    fn ends_tests() {
+        let cell = Cell::default();
+        let slice = OwnedCellSlice::from(cell.clone());
+
+        assert_run_vm!("ENDS", [slice slice.clone()] => []);
+        assert_run_vm!("ENDS", [int 1, slice slice] => [int 1]);
+
+        let mut cb = CellBuilder::new();
+        cb.store_u8(1).unwrap();
+        let cell = cb.build().unwrap();
+        let sc = OwnedCellSlice::from(cell);
+
+        assert_run_vm!("ENDS", [slice sc] => [int 0], exit_code: 9)
+    }
+
+    #[test]
+    #[traced_test]
+    fn ldi_tests() {
+        let slice = make_int_cell_slice(i128::MIN, 257);
+
+        let (left, right) = cut_slice_to_int(&slice, 16);
+        assert_run_vm!("LDI 16", [slice slice.clone()] => [int left, slice right.clone()]);
+
+        let (left, right) = cut_slice_to_int(&slice, 32);
+        assert_run_vm!("LDI 32", [slice slice.clone()] => [int left, slice right.clone()]);
+
+        let (left, right) = cut_slice_to_int(&slice, 1);
+        assert_run_vm!("LDI 1", [slice slice.clone()] => [int left, slice right.clone()]);
+
+        let slice = make_int_cell_slice(i128::MAX, 255);
+        assert_run_vm!("LDIQ 256", [slice slice.clone()] => [slice slice.clone(), int 0]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn ldu_tests() {
+        let slice = make_int_cell_slice(i128::MIN, 256);
+
+        let (left, right) = cut_slice_to_int(&slice, 16);
+        assert_run_vm!("LDI 16", [slice slice.clone()] => [int left, slice right.clone()]);
+
+        let (left, right) = cut_slice_to_int(&slice, 32);
+        assert_run_vm!("LDI 32", [slice slice.clone()] => [int left, slice right.clone()]);
+
+        let (left, right) = cut_slice_to_int(&slice, 1);
+        assert_run_vm!("LDI 1", [slice slice.clone()] => [int left, slice right.clone()]);
+
+        let slice = make_int_cell_slice(i128::MAX, 254);
+        assert_run_vm!("LDIQ 255", [slice slice.clone()] => [slice slice.clone(), int 0]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn ldref_tests() {
+        let cell = make_cell_with_reference();
+        let reference = cell.reference_cloned(0).unwrap();
+
+        let mut slice = OwnedCellSlice::from(cell.clone());
+        let initial_rc_slice = slice.clone();
+
+        let mut cs = slice.apply().unwrap();
+        cs.skip_first(0, 1).unwrap();
+        slice.set_range(cs.range());
+
+        assert_run_vm!("LDREF", [slice initial_rc_slice.clone()] => [cell reference.clone(), slice slice]);
+
+        let slice = OwnedCellSlice::from(cell.clone());
+        let mut initial_rc_slice = slice.clone();
+        let mut cs = initial_rc_slice.apply().unwrap();
+        cs.skip_first(0, 1).unwrap();
+        initial_rc_slice.set_range(cs.range());
+
+        assert_run_vm!("LDREF", [slice initial_rc_slice] => [int 0], exit_code: 9);
+    }
+
+    #[test]
+    #[traced_test]
+    fn ldrefrtos_tests() {
+        let cell = make_cell_with_reference();
+        let reference = cell.reference_cloned(0).unwrap();
+
+        let initial_cell = OwnedCellSlice::from(cell.clone());
+        let result_slice = OwnedCellSlice::from(reference.clone());
+
+        let mut slice = OwnedCellSlice::from(cell.clone());
+        let mut cs = slice.apply().unwrap();
+        cs.skip_first(0, 1).unwrap();
+        slice.set_range(cs.range());
+
+        assert_run_vm!("LDREFRTOS", [slice initial_cell] => [slice slice, slice result_slice]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn ldslice_tests() {
+        let slice = make_uint_cell_slice(1000, 32);
+        let (left, right) = cut_slice(&slice, 16);
+
+        assert_run_vm!("LDSLICE 16", [slice slice.clone()] => [slice left, slice right]);
+
+        let (left, right) = cut_slice(&slice, 32);
+        assert_run_vm!("LDSLICE 32", [slice slice.clone()] => [slice left, slice right]);
+
+        let (left, right) = cut_slice(&slice, 1);
+        assert_run_vm!("LDSLICE 1", [slice slice.clone()] => [slice left.clone(), slice right.clone()]);
+        assert_run_vm!("LDSLICEQ 1", [slice slice.clone()] => [slice left, slice right, int -1 ]);
+        assert_run_vm!("LDSLICE 33", [slice slice.clone()] => [int 0], exit_code: 9);
+        assert_run_vm!("LDSLICEQ 33", [slice slice.clone()] => [slice slice, int 0]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn ldslicex_tests() {
+        let slice = make_uint_cell_slice(1000, 32);
+        let (left, right) = cut_slice(&slice, 16);
+
+        assert_run_vm!("LDSLICEX", [slice slice.clone(), int 16] => [slice left, slice right]);
+
+        let (left, right) = cut_slice(&slice, 32);
+        assert_run_vm!("LDSLICEX", [slice slice.clone(), int 32] => [slice left.clone(), slice right.clone()]);
+        assert_run_vm!("LDSLICEXQ", [slice slice.clone(), int 32] => [slice left, slice right, int -1]);
+
+        let (left, right) = cut_slice(&slice, 1);
+        assert_run_vm!("LDSLICEX", [slice slice.clone(), int 1] => [slice left, slice right]);
+        assert_run_vm!("LDSLICEX", [slice slice.clone(), int 33] => [int 0], exit_code: 9);
+        assert_run_vm!("LDSLICEXQ", [slice slice.clone(), int 33] => [slice slice, int 0]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn ldix_tests() {
+        let slice = make_int_cell_slice(i128::MIN, 257);
+
+        let (left, right) = cut_slice_to_int(&slice, 16);
+        assert_run_vm!("LDIX", [slice slice.clone(), int 16] => [int left, slice right.clone()]);
+
+        let (left, right) = cut_slice_to_int(&slice, 32);
+        assert_run_vm!("LDIX", [slice slice.clone(), int 32] => [int left, slice right.clone()]);
+
+        let (left, right) = cut_slice_to_int(&slice, 1);
+        assert_run_vm!("LDIX", [slice slice.clone(), int 1] => [int left, slice right.clone()]);
+
+        assert_run_vm!("LDIX", [slice slice.clone(), int 258] => [int 0], exit_code: 5);
+        assert_run_vm!("LDIXQ", [slice slice.clone(), int 258] => [int 0], exit_code: 5);
+
+        let slice = make_int_cell_slice(i128::MAX, 256);
+        assert_run_vm!("LDIXQ", [slice slice.clone(), int 257] => [slice slice.clone(), int 0]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn ldux_tests() {
+        let slice = make_uint_cell_slice(u128::MAX, 256);
+
+        let (left, right) = cut_slice_to_uint(&slice, 16);
+        assert_run_vm!("LDIX", [slice slice.clone(), int 16] => [int left, slice right.clone()]);
+
+        let (left, right) = cut_slice_to_uint(&slice, 32);
+        assert_run_vm!("LDUX", [slice slice.clone(), int 32] => [int left, slice right.clone()]);
+
+        let (left, right) = cut_slice_to_uint(&slice, 1);
+        assert_run_vm!("LDUX", [slice slice.clone(), int 1] => [int left, slice right.clone()]);
+
+        assert_run_vm!("LDUX", [slice slice.clone(), int 257] => [int 0], exit_code: 5);
+        assert_run_vm!("LDUXQ", [slice slice.clone(), int 257] => [int 0], exit_code: 5);
+
+        let slice = make_uint_cell_slice(u128::MAX, 255);
+        assert_run_vm!("LDUXQ", [slice slice.clone(), int 256] => [slice slice.clone(), int 0]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn pldi_tests() {
+        let slice = make_int_cell_slice(i128::MIN, 200);
+        let i = extract_int(&slice, 200);
+        assert_run_vm!("PLDI 200", [slice slice.clone()] => [int i.clone()]);
+        assert_run_vm!("PLDIQ 200", [slice slice.clone()] => [int i, int -1]);
+        let i = extract_int(&slice, 37);
+        assert_run_vm!("PLDI 37", [slice slice.clone()] => [int i.clone()]);
+
+        let _i = extract_int(&slice, 200);
+        assert_run_vm!("PLDI 210", [slice slice.clone()] => [int 0], exit_code: 9);
+        assert_run_vm!("PLDIQ 210", [slice slice.clone()] => [int 0]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn pldu_tests() {
+        let slice = make_uint_cell_slice(u128::MAX, 200);
+        let i = extract_uint(&slice, 200);
+        assert_run_vm!("PLDI 200", [slice slice.clone()] => [int i.clone()]);
+        assert_run_vm!("PLDIQ 200", [slice slice.clone()] => [int i, int -1]);
+        let i = extract_int(&slice, 37);
+        assert_run_vm!("PLDI 37", [slice slice.clone()] => [int i.clone()]);
+
+        let _i = extract_int(&slice, 200);
+        assert_run_vm!("PLDI 210", [slice slice.clone()] => [int 0], exit_code: 9);
+        assert_run_vm!("PLDIQ 210", [slice slice.clone()] => [int 0]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn pldix_tests() {
+        let slice = make_int_cell_slice(i128::MIN, 200);
+        let i = extract_int(&slice, 200);
+        assert_run_vm!("PLDIX", [slice slice.clone(), int 200] => [int i.clone()]);
+        assert_run_vm!("PLDIXQ", [slice slice.clone(), int 200] => [int i, int -1]);
+        let i = extract_int(&slice, 37);
+        assert_run_vm!("PLDIX", [slice slice.clone(), int 37] => [int i.clone()]);
+
+        let _i = extract_int(&slice, 200);
+        assert_run_vm!("PLDIX", [slice slice.clone(), int 210] => [int 0], exit_code: 9);
+        assert_run_vm!("PLDIXQ", [slice slice.clone(), int 210] => [int 0]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn pldux_tests() {
+        let slice = make_uint_cell_slice(u128::MAX, 200);
+        let i = extract_uint(&slice, 200);
+        assert_run_vm!("PLDUX", [slice slice.clone(), int 200] => [int i.clone()]);
+        assert_run_vm!("PLDUXQ", [slice slice.clone(), int 200] => [int i, int -1]);
+
+        // let i = extract_uint(&slice, 64);
+        // assert_run_vm!("PLDUZ 64", [raw Rc::new(slice.clone())] => [raw Rc::new(slice.clone()), int i.clone()]);
+
+        let i = extract_int(&slice, 37);
+        assert_run_vm!("PLDUX", [slice slice.clone(), int 37] => [int i.clone()]);
+
+        let _i = extract_int(&slice, 200);
+        assert_run_vm!("PLDUX", [slice slice.clone(), int 210] => [int 0], exit_code: 9);
+        assert_run_vm!("PLDUXQ", [slice slice.clone(), int 210] => [int 0]);
+    }
+
+    fn make_uint_cell_slice(value: u128, bits: u16) -> OwnedCellSlice {
+        let mut cb = CellBuilder::new();
+        store_int_to_builder(&BigInt::from(value), bits, false, &mut cb).unwrap();
+        let cell = cb.build().unwrap();
+        OwnedCellSlice::from(cell.clone())
+    }
+
+    fn make_int_cell_slice(value: i128, bits: u16) -> OwnedCellSlice {
+        let mut cb = CellBuilder::new();
+        store_int_to_builder(&BigInt::from(value), bits, true, &mut cb).unwrap();
+        let cell = cb.build().unwrap();
+        OwnedCellSlice::from(cell.clone())
+    }
+
+    fn cut_slice(slice: &OwnedCellSlice, bits: u16) -> (OwnedCellSlice, OwnedCellSlice) {
+        let mut cs = slice.apply().unwrap();
+        let prefix = cs.load_prefix(bits, 0).unwrap();
+        let mut left = slice.clone();
+        let mut right = slice.clone();
+
+        left.set_range(prefix.range());
+        right.set_range(cs.range());
+        (left, right)
+    }
+
+    fn cut_slice_to_uint(slice: &OwnedCellSlice, bits: u16) -> (BigInt, OwnedCellSlice) {
+        let mut cs = slice.apply().unwrap();
+        let prefix = load_int_from_slice(&mut cs, bits, false).unwrap();
+
+        let mut right = slice.clone();
+        right.set_range(cs.range());
+        (prefix, right)
+    }
+
+    fn cut_slice_to_int(slice: &OwnedCellSlice, bits: u16) -> (BigInt, OwnedCellSlice) {
+        let mut cs = slice.apply().unwrap();
+        let prefix = load_int_from_slice(&mut cs, bits, true).unwrap();
+
+        let mut right = slice.clone();
+        right.set_range(cs.range());
+        (prefix, right)
+    }
+
+    fn extract_int(slice: &OwnedCellSlice, bits: u16) -> BigInt {
+        let cs = slice.apply().unwrap();
+        get_int_from_slice(&cs, bits, true).unwrap()
+    }
+
+    fn extract_uint(slice: &OwnedCellSlice, bits: u16) -> BigInt {
+        let cs = slice.apply().unwrap();
+        get_int_from_slice(&cs, bits, false).unwrap()
+    }
+
+    fn make_cell_with_reference() -> Cell {
+        let mut cb = CellBuilder::new();
+        cb.store_reference(Cell::default()).unwrap();
+        cb.build().unwrap()
+    }
+
+    fn get_int_from_slice(slice: &CellSlice<'_>, bits: u16, signed: bool) -> Result<BigInt, Error> {
+        match bits {
+            0 => Ok(BigInt::default()),
+            0..=64 if !signed => slice.get_uint(slice.offset_bits(), bits).map(BigInt::from),
+            0..=64 if signed => slice.get_uint(slice.offset_bits(), bits).map(|mut int| {
+                if bits < 64 {
+                    // Clone sign bit into all high bits
+                    int |= ((int >> (bits - 1)) * u64::MAX) << (bits - 1);
+                }
+                BigInt::from(int as i64)
+            }),
+            _ => {
+                let rem = bits % 8;
+                let mut buffer = [0u8; 33];
+                slice
+                    .get_raw(slice.offset_bits(), &mut buffer, bits)
+                    .map(|buffer| {
+                        let mut int = if signed {
+                            BigInt::from_signed_bytes_be(buffer)
+                        } else {
+                            BigInt::from_bytes_be(Sign::Plus, buffer)
+                        };
+                        if bits % 8 != 0 {
+                            int >>= 8 - rem;
+                        }
+                        int
+                    })
+            }
+        }
     }
 }
