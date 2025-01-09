@@ -1,5 +1,5 @@
 use anyhow::Result;
-use everscale_vm_proc::vm_module;
+use tycho_vm_proc::vm_module;
 
 use crate::dispatch::Opcodes;
 use crate::error::VmResult;

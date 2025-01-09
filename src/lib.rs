@@ -1,7 +1,7 @@
 #[cfg(test)]
 #[macro_use]
 extern crate everscale_asm_macros;
-extern crate self as everscale_vm;
+extern crate self as tycho_vm;
 
 /// Prevents using `From::from` for plain error conversion.
 macro_rules! ok {

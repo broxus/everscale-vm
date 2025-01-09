@@ -2,16 +2,17 @@ use everscale_types::cell::LoadMode;
 use everscale_types::error::Error;
 use everscale_types::num::SplitDepth;
 use everscale_types::prelude::*;
-use everscale_vm::error::VmResult;
-use everscale_vm::util::{load_uint_leq, OwnedCellSlice};
-use everscale_vm::VmState;
-use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
+use tycho_vm_proc::vm_module;
 
+use crate::error::VmResult;
 use crate::gas::GasConsumer;
 use crate::saferc::SafeRc;
 use crate::stack::{RcStackValue, Stack, StackValue, Tuple};
-use crate::util::{bitsize, load_int_from_slice, store_int_to_builder_unchecked};
+use crate::state::VmState;
+use crate::util::{
+    bitsize, load_int_from_slice, load_uint_leq, store_int_to_builder_unchecked, OwnedCellSlice,
+};
 
 pub struct CurrencyOps;
 

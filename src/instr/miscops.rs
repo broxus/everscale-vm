@@ -1,12 +1,12 @@
 use everscale_types::cell::RefsIter;
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
-use everscale_vm::stack::StackValueType;
-use everscale_vm_proc::vm_module;
 use num_traits::{Signed, ToPrimitive};
+use tycho_vm_proc::vm_module;
 
 use crate::error::VmResult;
 use crate::saferc::SafeRc;
+use crate::stack::StackValueType;
 use crate::state::VmState;
 
 pub struct Miscops;

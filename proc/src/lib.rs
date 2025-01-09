@@ -88,8 +88,8 @@ pub fn vm_module(_: TokenStream, input: TokenStream) -> TokenStream {
         }
 
         #[automatically_derived]
-        impl #impl_generics ::everscale_vm::instr::Module for #ty #ty_generics #where_clause {
-            fn init(&self, #opcodes_arg: &mut ::everscale_vm::dispatch::Opcodes) -> ::anyhow::Result<()> {
+        impl #impl_generics ::tycho_vm::instr::Module for #ty #ty_generics #where_clause {
+            fn init(&self, #opcodes_arg: &mut ::tycho_vm::dispatch::Opcodes) -> ::anyhow::Result<()> {
                 #(self.#init_function_names(#opcodes_arg)?;)*
                 #(#definitions)*
                 Ok(())
@@ -447,7 +447,7 @@ fn process_instr_definition(
             }
 
             quote! {
-                fn #wrapper_func_name(st: &mut ::everscale_vm::state::VmState) -> ::everscale_vm::error::VmResult<i32> {
+                fn #wrapper_func_name(st: &mut ::tycho_vm::state::VmState) -> ::tycho_vm::error::VmResult<i32> {
                     #(#arg_definitions)*
                     vm_log_op!(#fmt);
                     #function_name(st, #(#arg_idents),*)
@@ -460,7 +460,7 @@ fn process_instr_definition(
             });
 
             quote! {
-                fn #wrapper_func_name(st: &mut ::everscale_vm::state::VmState, args: u32) -> ::everscale_vm::error::VmResult<i32> {
+                fn #wrapper_func_name(st: &mut ::tycho_vm::state::VmState, args: u32) -> ::tycho_vm::error::VmResult<i32> {
                     #(#arg_definitions)*
                     #cond
                     vm_log_op!(#fmt);

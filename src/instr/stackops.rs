@@ -1,4 +1,4 @@
-use everscale_vm_proc::vm_module;
+use tycho_vm_proc::vm_module;
 
 use crate::error::VmResult;
 use crate::saferc::SafeRc;

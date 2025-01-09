@@ -1,15 +1,14 @@
 use everscale_types::cell::HashBytes;
-use everscale_vm::stack::Stack;
-use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
 use sha2::Digest;
+use tycho_vm_proc::vm_module;
 
 use crate::cont::ControlRegs;
 use crate::error::VmResult;
 use crate::gas::GasConsumer;
 use crate::saferc::SafeRc;
 use crate::smc_info::SmcInfoBase;
-use crate::stack::StackValueType;
+use crate::stack::{Stack, StackValueType};
 use crate::state::VmState;
 
 pub struct RandOps;

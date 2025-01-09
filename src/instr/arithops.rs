@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 
 use anyhow::Result;
-use everscale_vm_proc::vm_module;
+use tycho_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
 use num_integer::Integer;
 use num_traits::Zero;

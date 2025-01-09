@@ -1,6 +1,6 @@
 use anyhow::Result;
 use everscale_types::prelude::Cell;
-use everscale_vm_proc::vm_module;
+use tycho_vm_proc::vm_module;
 
 use crate::cont::{ArgContExt, ControlData, ControlRegs, OrdCont, PushIntCont, RcCont};
 use crate::dispatch::Opcodes;

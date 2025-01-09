@@ -4,19 +4,19 @@ use everscale_types::cell::{CellTreeStats, LoadMode};
 use everscale_types::dict;
 use everscale_types::models::{GasLimitsPrices, MsgForwardPrices, StoragePrices};
 use everscale_types::prelude::*;
-use everscale_vm::cont::ControlRegs;
-use everscale_vm::util::store_int_to_builder;
-use everscale_vm::VmState;
-use everscale_vm_proc::vm_module;
 use num_bigint::Sign;
+use tycho_vm_proc::vm_module;
 
+use crate::cont::ControlRegs;
 use crate::error::VmResult;
 use crate::gas::GasConsumer;
 use crate::saferc::SafeRc;
 use crate::smc_info::{SmcInfoBase, SmcInfoTonV4, SmcInfoTonV6};
 use crate::stack::{RcStackValue, Stack, TupleExt};
+use crate::state::VmState;
 use crate::util::{
-    shift_ceil_price, GasLimitsPricesExt, MsgForwardPricesExt, OwnedCellSlice, StoragePricesExt,
+    shift_ceil_price, store_int_to_builder, GasLimitsPricesExt, MsgForwardPricesExt,
+    OwnedCellSlice, StoragePricesExt,
 };
 
 pub struct ConfigOps;

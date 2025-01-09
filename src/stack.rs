@@ -1427,11 +1427,10 @@ impl_safe_delete! {
 #[cfg(test)]
 mod tests {
     use everscale_types::models::SimpleLib;
-    use everscale_vm::VmVersion;
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::VmState;
+    use crate::{VmState, VmVersion};
 
     #[test]
     #[traced_test]

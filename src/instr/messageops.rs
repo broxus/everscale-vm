@@ -7,10 +7,9 @@ use everscale_types::models::{
 };
 use everscale_types::num::{SplitDepth, Tokens};
 use everscale_types::prelude::*;
-use everscale_vm::util::load_uint_leq;
-use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
 use num_traits::ToPrimitive;
+use tycho_vm_proc::vm_module;
 
 use crate::cont::ControlRegs;
 use crate::error::VmResult;
@@ -19,7 +18,7 @@ use crate::saferc::SafeRc;
 use crate::smc_info::{SmcInfoBase, SmcInfoTonV4, SmcInfoTonV6, VmVersion};
 use crate::stack::{Stack, Tuple, TupleExt};
 use crate::state::VmState;
-use crate::util::{MsgForwardPricesExt, OwnedCellSlice};
+use crate::util::{load_uint_leq, MsgForwardPricesExt, OwnedCellSlice};
 
 pub struct MessageOps;
 

@@ -5,18 +5,17 @@ use everscale_types::cell::{
     Cell, CellBuilder, CellContext, CellFamily, CellSlice, CellType, DynCell, HashBytes, LoadMode,
 };
 use everscale_types::error::Error;
-use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
 use num_traits::ToPrimitive;
+use tycho_vm_proc::vm_module;
 
 use crate::cont::OrdCont;
 use crate::dispatch::Opcodes;
 use crate::error::{VmError, VmResult};
 use crate::saferc::SafeRc;
-use crate::stack::Stack;
+use crate::stack::{Stack, StackValue};
 use crate::state::VmState;
 use crate::util::{bitsize, load_int_from_slice, remove_trailing, OwnedCellSlice};
-use crate::StackValue;
 
 pub struct Cellops;
 
@@ -1840,10 +1839,10 @@ fn exec_cell_level_op_common(stack: &mut Stack, level: u8, op: LevelOp) -> VmRes
 #[cfg(test)]
 mod tests {
     use everscale_types::cell::CellBuilder;
-    use everscale_vm::util::store_int_to_builder;
     use tracing_test::traced_test;
 
     use super::*;
+    use crate::util::store_int_to_builder;
 
     #[test]
     #[traced_test]

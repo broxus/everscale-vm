@@ -1,5 +1,5 @@
-use everscale_vm_proc::vm_module;
 use num_traits::Zero;
+use tycho_vm_proc::vm_module;
 
 use crate::error::VmResult;
 use crate::gas::GasConsumer;

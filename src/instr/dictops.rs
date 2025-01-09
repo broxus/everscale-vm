@@ -2,18 +2,18 @@ use everscale_types::cell::{CellBuilder, CellSlice, CellSliceParts, Load, Size};
 use everscale_types::dict::{self, DictBound, SetMode};
 use everscale_types::error::Error;
 use everscale_types::prelude::{Cell, CellFamily, Store};
-use everscale_vm::cont::OrdCont;
-use everscale_vm::util::load_int_from_slice;
-use everscale_vm_proc::vm_module;
 use num_bigint::Sign;
+use tycho_vm_proc::vm_module;
 
+use crate::cont::OrdCont;
 use crate::dispatch::Opcodes;
 use crate::error::VmResult;
 use crate::saferc::SafeRc;
 use crate::stack::RcStackValue;
 use crate::state::VmState;
 use crate::util::{
-    bitsize, in_bitsize_range, store_int_to_builder, store_int_to_builder_unchecked, OwnedCellSlice,
+    bitsize, in_bitsize_range, load_int_from_slice, store_int_to_builder,
+    store_int_to_builder_unchecked, OwnedCellSlice,
 };
 
 pub struct Dictops;

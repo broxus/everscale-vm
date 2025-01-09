@@ -3,15 +3,14 @@ use std::ops::Range;
 use everscale_crypto::ed25519;
 use everscale_types::cell::{CellBuilder, CellSlice};
 use everscale_types::error::Error;
-use everscale_vm::stack::{Stack, Tuple};
-use everscale_vm_proc::vm_module;
 use num_bigint::{BigInt, Sign};
 use sha2::Digest;
+use tycho_vm_proc::vm_module;
 
 use crate::error::VmResult;
 use crate::gas::GasConsumer;
 use crate::saferc::SafeRc;
-use crate::stack::StackValueType;
+use crate::stack::{Stack, StackValueType, Tuple};
 use crate::state::VmState;
 
 pub struct Hashops;
