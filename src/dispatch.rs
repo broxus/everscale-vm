@@ -308,3 +308,72 @@ const MAX_OPCODE: u32 = 1 << MAX_OPCODE_BITS;
 
 const GAS_PER_INSTRUCTION: u64 = 10;
 const GAS_PER_BIT: u64 = 1;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cont::QuitCont;
+    use crate::error::VmError;
+    use crate::gas::{GasConsumer, GasParams};
+    use crate::saferc::SafeRc;
+    use crate::smc_info::VmVersion;
+
+    #[test]
+    fn dummy_codepage() {
+        let cp = DispatchTable::builder(123).build();
+
+        let mut state = VmState {
+            code: Default::default(),
+            stack: Default::default(),
+            cr: Default::default(),
+            commited_state: Default::default(),
+            steps: 0,
+            quit0: SafeRc::from(QuitCont { exit_code: 0 }),
+            quit1: SafeRc::from(QuitCont { exit_code: 0 }),
+            gas: GasConsumer::new(GasParams::getter()),
+            cp: Box::leak(Box::new(cp)),
+            debug: None,
+            modifiers: Default::default(),
+            version: VmVersion::LATEST_TON,
+        };
+
+        let dummy = state.cp.lookup(0x800000);
+        assert_eq!(dummy.range(), (0x000000, 0x1000000));
+
+        let err = dummy.dispatch(&mut state, 0x800000, 24).unwrap_err();
+        assert!(matches!(*err, VmError::InvalidOpcode));
+    }
+
+    #[test]
+    fn opcode_overlap_check_works() {
+        // Simple overlap
+        {
+            let mut cp = DispatchTable::builder(123);
+            cp.add_simple(0xab, 8, |_| Ok(0)).unwrap();
+            cp.add_simple(0xab, 8, |_| Ok(0)).unwrap_err();
+        }
+
+        // Range-simple overlap
+        {
+            let mut cp = DispatchTable::builder(123);
+            cp.add_simple(0xab, 8, |_| Ok(0)).unwrap();
+            cp.add_fixed_range(0xa0, 0xaf, 8, 4, |_, _| Ok(0))
+                .unwrap_err();
+        }
+
+        // Simple-range overlap
+        {
+            let mut cp = DispatchTable::builder(123);
+            cp.add_fixed_range(0xa0, 0xaf, 8, 4, |_, _| Ok(0)).unwrap();
+            cp.add_simple(0xab, 8, |_| Ok(0)).unwrap_err();
+        }
+
+        // Range-range overlap
+        {
+            let mut cp = DispatchTable::builder(123);
+            cp.add_fixed_range(0xa0, 0xaf, 8, 4, |_, _| Ok(0)).unwrap();
+            cp.add_fixed_range(0xa4, 0xa7, 8, 2, |_, _| Ok(0))
+                .unwrap_err();
+        }
+    }
+}
