@@ -896,7 +896,7 @@ impl Contops {
     // === Dictjump ===
 
     #[op(code = "f0nn", fmt = "CALLDICT {n}")]
-    #[op(code = "f1$00nn#n", fmt = "CALLDICT {n}")]
+    #[op(code = "f1$00nn#nnn", fmt = "CALLDICT {n}")]
     fn exec_calldict_short(st: &mut VmState, n: u32) -> VmResult<i32> {
         ok!(SafeRc::make_mut(&mut st.stack).push_int(n));
         let Some(c3) = st.cr.c[3].clone() else {
@@ -908,7 +908,7 @@ impl Contops {
         st.call(c3)
     }
 
-    #[op(code = "f1$01nn#n", fmt = "JMPDICT {n}")]
+    #[op(code = "f1$01nn#nnn", fmt = "JMPDICT {n}")]
     fn exec_jmpdict(st: &mut VmState, n: u32) -> VmResult<i32> {
         ok!(SafeRc::make_mut(&mut st.stack).push_int(n));
         let Some(c3) = st.cr.c[3].clone() else {
@@ -920,7 +920,7 @@ impl Contops {
         st.jump(c3)
     }
 
-    #[op(code = "f1$10nn#n", fmt = "PREPAREDICT {n}")]
+    #[op(code = "f1$10nn#nnn", fmt = "PREPAREDICT {n}")]
     fn exec_preparedict(st: &mut VmState, n: u32) -> VmResult<i32> {
         let stack = SafeRc::make_mut(&mut st.stack);
         ok!(stack.push_int(n));
@@ -951,9 +951,9 @@ impl Contops {
         st.throw_exception(n as i32)
     }
 
-    #[op(code = "f2c$1nnn#n", fmt = "THROWARG {n}", args(mode = ThrowMode::Direct))]
-    #[op(code = "f2d$1nnn#n", fmt = "THROWARGIF {n}", args(mode = ThrowMode::Cond(true)))]
-    #[op(code = "f2e$1nnn#n", fmt = "THROWARGIFNOT {n}", args(mode = ThrowMode::Cond(false)))]
+    #[op(code = "f2c$1nnn#nn", fmt = "THROWARG {n}", args(mode = ThrowMode::Direct))]
+    #[op(code = "f2d$1nnn#nn", fmt = "THROWARGIF {n}", args(mode = ThrowMode::Cond(true)))]
+    #[op(code = "f2e$1nnn#nn", fmt = "THROWARGIFNOT {n}", args(mode = ThrowMode::Cond(false)))]
     fn exec_throw_arg_fixed(st: &mut VmState, n: u32, mode: ThrowMode) -> VmResult<i32> {
         let stack = SafeRc::make_mut(&mut st.stack);
 
