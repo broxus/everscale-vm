@@ -258,7 +258,7 @@ mod tests {
             .with_debug(TracingOutput::default())
             .with_stack(original_stack)
             .with_gas(GasParams {
-                max: u64::MAX,
+                max: gas_limit,
                 limit: gas_limit,
                 credit: 0,
             })

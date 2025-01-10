@@ -293,10 +293,7 @@ impl VmState {
 
     pub fn ref_to_cont(&mut self, code: Cell) -> VmResult<RcCont> {
         let code = self.gas.load_cell(code, LoadMode::Full)?;
-        Ok(SafeRc::from(OrdCont::simple(
-            code.into(),
-            self.cp.id(),
-        )))
+        Ok(SafeRc::from(OrdCont::simple(code.into(), self.cp.id())))
     }
 
     pub fn c1_envelope_if(&mut self, cond: bool, cont: RcCont, save: bool) -> RcCont {

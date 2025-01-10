@@ -645,11 +645,12 @@ impl Contops {
             actual: value.ty(),
         });
 
-        // NOTE: Is it ok to ignore redefinition errors?
         let prev = st
             .cr
             .get_as_stack_value(i as _)
             .unwrap_or_else(Stack::make_null);
+
+        // NOTE: Is it ok to ignore redefinition errors?
         force_cdata(&mut c0).save.define(i as _, prev).ok();
 
         // TODO: Check if the order of setting c0 and `cr.set(..)` really matters
@@ -709,8 +710,9 @@ impl Contops {
             .get_as_stack_value(i as _)
             .unwrap_or_else(Stack::make_null);
 
-        ok!(force_cdata(&mut c0).save.define(i as _, value.clone()));
-        ok!(force_cdata(&mut c1).save.define(i as _, value));
+        // NOTE: Is it ok to ignore redefinition errors?
+        force_cdata(&mut c0).save.define(i as _, value.clone()).ok();
+        force_cdata(&mut c1).save.define(i as _, value).ok();
         st.cr.c[0] = Some(c0);
         st.cr.c[1] = Some(c1);
         Ok(0)
@@ -1833,6 +1835,44 @@ mod tests {
     }
 
     #[test]
+    #[traced_test]
+    fn callcc() {
+        assert_run_vm!(
+            r#"
+            PUSHCONT { DROP }
+            INT 0
+            INT -1
+            CALLCCVARARGS
+            "#,
+            [] => []
+        );
+
+        assert_run_vm!(
+            r#"
+            PUSHCONT { DROP }
+            POPSAVE c0
+
+            INT 2
+            REPEATEND
+            PUSH c0
+            CALLCCARGS 0, 3
+            DROP
+            "#,
+            [] => [],
+        );
+
+        assert_run_vm!(
+            r#"
+            INT 0
+            SAVECTR c2
+            RETURNARGS 0
+            "#,
+            [] => [int 0],
+        );
+    }
+
+    #[test]
+    // #[traced_test]
     fn infinite_recursion() {
         assert_run_vm!(
             r#"
@@ -1845,6 +1885,72 @@ mod tests {
             "#,
             [] => [int 999990],
             exit_code: -14,
+        );
+    }
+
+    #[test]
+    // #[traced_test]
+    fn infinite_loop_1() {
+        assert_run_vm!(
+            r#"
+            AGAINEND
+            SAVEBOTHCTR c0
+            "#,
+            [] => [int 999985],
+            exit_code: -14,
+        );
+    }
+
+    #[test]
+    // #[traced_test]
+    fn infinite_loop_2() {
+        assert_run_vm!(
+            r#"
+            PUSHINT -1
+            PUSHINT 10
+            PUSHCONT { PUSHCONT {} }
+            AGAIN
+            AND
+            AGAINEND
+            DEPTH
+            "#,
+            [] => [int 999997],
+            exit_code: -14,
+        );
+    }
+
+    #[test]
+    // #[traced_test]
+    fn infinite_loop_3() {
+        assert_run_vm!(
+            r#"
+            PUSHCONT {
+                @inline x{94ed}
+            }
+            POPSAVE c2
+            AGAINEND
+            @inline x{8a}
+            "#,
+            [] => [int 999952],
+            exit_code: -14,
+        );
+    }
+
+    #[test]
+    // #[traced_test]
+    fn oom_1() {
+        assert_run_vm!(
+            r#"
+            PUSHCONT {
+                PUSHNULL
+                PUSHINT 7
+                REPEATEND
+                BLKPUSH 15, 0
+                TUPLE 15
+            }
+            CALLXARGS 0, 0
+            "#,
+            [] => [],
         );
     }
 
