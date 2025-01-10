@@ -297,6 +297,8 @@ impl SmcInfoTonV4 {
         }
     }
 
+
+
     fn write_items(&self, items: &mut Tuple) {
         // ..base:SmartContractInfo
         self.base.write_items(items);

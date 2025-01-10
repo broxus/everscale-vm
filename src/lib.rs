@@ -119,14 +119,17 @@ macro_rules! tuple_impl {
 macro_rules! assert_run_vm {
     (
         $($code:literal),+,
+        $(c7: $c7_params:expr,)?
+        $(gas: $gas_limit:expr,)?
         [$($origin_stack:tt)*] => [$($expected_stack:tt)*]
         $(, exit_code: $exit_code:literal)?
         $(,)?
     ) => {{
         let (exit_code, vm) = $crate::tests::run_vm_with_stack(
             tvmasm!($($code),+),
-            $crate::tuple![],
+            $crate::assert_run_vm!(@c7 $($c7_params)?),
             $crate::tuple![$($origin_stack)*],
+            $crate::assert_run_vm!(@gas $($gas_limit)?),
         );
         $crate::assert_run_vm!(@check_exit_code exit_code $($exit_code)?);
 
@@ -144,38 +147,17 @@ macro_rules! assert_run_vm {
     (@check_exit_code $ident:ident $exit_code:literal) => {
         assert_eq!($ident, $exit_code, "exit code mismatch")
     };
-}
-
-#[cfg(test)]
-#[macro_export]
-macro_rules! assert_run_vm_with_c7 {
-    (
-        $($code:literal),+,
-        [$($c7_params:tt)*],
-        [$($origin_stack:tt)*] => [$($expected_stack:tt)*]
-        $(, exit_code: $exit_code:literal)?
-        $(,)?
-    ) => {{
-        let (exit_code, vm) = $crate::tests::run_vm_with_stack(
-            tvmasm!($($code),+),
-            $($c7_params)*,
-            $crate::tuple![$($origin_stack)*],
-        );
-        $crate::assert_run_vm!(@check_exit_code exit_code $($exit_code)?);
-
-        let expected_stack = $crate::tuple![$($expected_stack)*];
-
-        let expected = format!("{}", (&expected_stack as &dyn $crate::stack::StackValue).display_list());
-        let actual = format!("{}", (&vm.stack.items as &dyn $crate::stack::StackValue).display_list());
-        assert_eq!(actual, expected);
-
-        $crate::tests::compare_stack(&vm.stack.items, &expected_stack);
-    }};
-    (@check_exit_code $ident:ident) => {
-        assert_eq!($ident, 0, "non-zero exit code")
+    (@c7) => {
+        $crate::tuple![]
     };
-    (@check_exit_code $ident:ident $exit_code:literal) => {
-        assert_eq!($ident, $exit_code, "exit code mismatch")
+    (@c7 $c7_params:expr) => {
+        $c7_params
+    };
+    (@gas) => {
+        1000000
+    };
+    (@gas $gas_limit:expr) => {
+        $gas_limit
     };
 }
 
@@ -257,7 +239,12 @@ mod tests {
     use super::*;
     use crate::stack::{RcStackValue, Tuple};
 
-    pub fn run_vm_with_stack<I>(code: &[u8], c7_params: Tuple, original_stack: I) -> (i32, VmState)
+    pub fn run_vm_with_stack<I>(
+        code: &[u8],
+        c7_params: Tuple,
+        original_stack: I,
+        gas_limit: u64,
+    ) -> (i32, VmState)
     where
         I: IntoIterator<Item = RcStackValue>,
     {
@@ -272,7 +259,7 @@ mod tests {
             .with_stack(original_stack)
             .with_gas(GasParams {
                 max: u64::MAX,
-                limit: 1000000,
+                limit: gas_limit,
                 credit: 0,
             })
             .build();

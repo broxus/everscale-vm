@@ -36,6 +36,7 @@ everscale-crypto = "0.3.0"
 [dev-dependencies]
 criterion = "0.5"
 hex = "0.4.3"
+rand = "0.8"
 tracing = "0.1"
 tracing-test = "0.2"
 
@@ -43,6 +44,7 @@ everscale-types = { version = "0.1.2", default-features = false, features = [
     "sync",
     "models",
     "base64",
+    "rand"
 ] }
 everscale-asm-macros = { git = "https://github.com/broxus/everscale-asm.git", rev = "b9f5deaf7631aa83b39abfc74dcf324aa3e35b2d" }
 

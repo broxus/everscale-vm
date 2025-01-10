@@ -219,18 +219,19 @@ pub mod test {
         ]];
 
         let result = uint256("504C79E96A1A3D91262EDE19D9F064E9752EEA03E21A5E208D7BDCAF2D6610EE");
-        assert_run_vm_with_c7!("RAND", [c7.clone()], [int value.clone()] => [int result]);
+        assert_run_vm!("RAND", c7: c7.clone(), [int value.clone()] => [int result]);
 
         let result = uint256("EB1A91B388F714F56EE88C7B1B0902FF713FE8EBA39F64FC8F7F2F618601BBF5");
-        assert_run_vm_with_c7!("RANDU256", [c7.clone()], [] => [int result]);
+        assert_run_vm!("RANDU256", c7: c7.clone(), [] => [int result]);
 
-        assert_run_vm_with_c7!(
+        assert_run_vm!(
             r#"
                 INT 123
                 SETRAND
                 GETPARAM 6
             "#,
-            [c7.clone()], [] => [int 123],
+            c7: c7.clone(),
+            [] => [int 123],
         );
 
         let new_rand = BigInt::from_bytes_be(
@@ -248,13 +249,14 @@ pub mod test {
             }),
         );
 
-        assert_run_vm_with_c7!(
+        assert_run_vm!(
             r#"
                 INT 123
                 ADDRAND
                 GETPARAM 6
             "#,
-            [c7], [] => [int new_rand],
+            c7: c7,
+            [] => [int new_rand],
         );
     }
 }

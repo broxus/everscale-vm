@@ -1,4 +1,4 @@
-use everscale_types::cell::RefsIter;
+use everscale_types::cell::{LoadMode, RefsIter};
 use everscale_types::error::Error;
 use everscale_types::prelude::*;
 use num_traits::{Signed, ToPrimitive};
@@ -8,6 +8,7 @@ use crate::error::VmResult;
 use crate::saferc::SafeRc;
 use crate::stack::StackValueType;
 use crate::state::VmState;
+use crate::GasConsumer;
 
 pub struct Miscops;
 
@@ -31,7 +32,7 @@ impl Miscops {
             _ => vm_bail!(IntegerOverflow),
         };
         let limit = bound.to_u64().unwrap_or(u64::MAX);
-        let mut storage = StorageStatExt::with_limit(limit);
+        let mut storage = StorageStatExt::with_limit(&mut st.gas, limit);
 
         let ok = if is_slice {
             let Some(slice) = value.as_cell_slice() else {
@@ -41,7 +42,7 @@ impl Miscops {
                 })
             };
             let cs = slice.apply()?;
-            storage.add_slice(&cs)
+            ok!(storage.add_slice(&cs))
         } else {
             let Some(cell) = value.as_cell() else {
                 vm_bail!(InvalidType {
@@ -49,7 +50,7 @@ impl Miscops {
                     actual: value.ty()
                 })
             };
-            storage.add_cell(cell.as_ref())
+            ok!(storage.add_cell(cell.as_ref()))
         };
 
         if ok {
@@ -69,6 +70,7 @@ impl Miscops {
 }
 
 struct StorageStatExt<'a> {
+    gas: &'a mut GasConsumer,
     visited: ahash::HashSet<&'a HashBytes>,
     stack: Vec<RefsIter<'a>>,
     stats: CellTreeStatsExt,
@@ -76,8 +78,9 @@ struct StorageStatExt<'a> {
 }
 
 impl<'a> StorageStatExt<'a> {
-    pub fn with_limit(limit: u64) -> Self {
+    pub fn with_limit(gas: &'a mut GasConsumer, limit: u64) -> Self {
         Self {
+            gas,
             visited: Default::default(),
             stack: Vec::new(),
             stats: Default::default(),
@@ -85,10 +88,15 @@ impl<'a> StorageStatExt<'a> {
         }
     }
 
-    fn add_cell(&mut self, cell: &'a DynCell) -> bool {
+    fn add_cell(&mut self, mut cell: &'a DynCell) -> VmResult<bool> {
         if !self.visited.insert(cell.repr_hash()) {
-            return true;
+            return Ok(true);
         }
+        if self.stats.cell_count >= self.limit {
+            return Ok(false);
+        }
+
+        cell = self.gas.load_dyn_cell(cell, LoadMode::UseGas)?;
 
         let refs = cell.references();
 
@@ -101,7 +109,7 @@ impl<'a> StorageStatExt<'a> {
         self.reduce_stack()
     }
 
-    fn add_slice(&mut self, slice: &CellSlice<'a>) -> bool {
+    fn add_slice(&mut self, slice: &CellSlice<'a>) -> VmResult<bool> {
         let refs = slice.references();
 
         self.stats.bit_count += slice.size_bits() as u64;
@@ -112,16 +120,18 @@ impl<'a> StorageStatExt<'a> {
         self.reduce_stack()
     }
 
-    fn reduce_stack(&mut self) -> bool {
+    fn reduce_stack(&mut self) -> VmResult<bool> {
         'outer: while let Some(item) = self.stack.last_mut() {
-            for cell in item.by_ref() {
+            for mut cell in item.by_ref() {
                 if !self.visited.insert(cell.repr_hash()) {
                     continue;
                 }
 
                 if self.stats.cell_count >= self.limit {
-                    return false;
+                    return Ok(false);
                 }
+
+                cell = self.gas.load_dyn_cell(cell, LoadMode::UseGas)?;
 
                 let next = cell.references();
                 let ref_count = next.len();
@@ -139,7 +149,7 @@ impl<'a> StorageStatExt<'a> {
             self.stack.pop();
         }
 
-        true
+        Ok(true)
     }
 }
 
@@ -148,4 +158,92 @@ struct CellTreeStatsExt {
     bit_count: u64,
     ref_count: u64,
     cell_count: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use everscale_types::prelude::*;
+    use rand::Rng;
+    use tracing_test::traced_test;
+
+    use crate::OwnedCellSlice;
+
+    #[test]
+    #[traced_test]
+    fn data_size() {
+        let empty_cell = Cell::default();
+        assert_run_vm!("CDATASIZE", [cell empty_cell.clone(), int 10] => [int 1, int 0, int 0]);
+        assert_run_vm!("CDATASIZE", [cell empty_cell.clone(), int 0] => [int 0], exit_code: 8);
+        assert_run_vm!("CDATASIZEQ", [cell empty_cell.clone(), int 10] => [int 1, int 0, int 0, int -1]);
+        assert_run_vm!("CDATASIZEQ", [cell empty_cell.clone(), int 0] => [int 0]);
+        assert_run_vm!("CDATASIZEQ", [cell empty_cell.clone(), nan] => [int 0], exit_code: 4);
+
+        let empty_slice = OwnedCellSlice::from(empty_cell);
+        assert_run_vm!("SDATASIZE", [slice empty_slice.clone(), int 10] => [int 0, int 0, int 0]);
+        assert_run_vm!("SDATASIZE", [slice empty_slice.clone(), int 0] => [int 0, int 0, int 0]);
+        assert_run_vm!("SDATASIZEQ", [slice empty_slice.clone(), int 10] => [int 0, int 0, int 0, int -1]);
+        assert_run_vm!("SDATASIZEQ", [slice empty_slice, int 0] => [int 0, int 0, int 0, int -1]);
+
+        let plain_cell = CellBuilder::build_from((123u8, 123123123u32, false)).unwrap();
+        assert_run_vm!("CDATASIZE", [cell plain_cell.clone(), int 1] => [int 1, int 8 + 32 + 1, int 0]);
+        assert_run_vm!("CDATASIZEQ", [cell plain_cell.clone(), int 1] => [int 1, int 8 + 32 + 1, int 0, int -1]);
+
+        let plain_slice = OwnedCellSlice::from(plain_cell);
+        assert_run_vm!("SDATASIZE", [slice plain_slice.clone(), int 1] => [int 0, int 8 + 32 + 1, int 0]);
+        assert_run_vm!("SDATASIZEQ", [slice plain_slice.clone(), int 1] => [int 0, int 8 + 32 + 1, int 0, int -1]);
+
+        let one_ref_cell =
+            CellBuilder::build_from((123u8, 123123123u32, false, Cell::default())).unwrap();
+        assert_run_vm!("CDATASIZE", [cell one_ref_cell.clone(), int 2] => [int 2, int 8 + 32 + 1, int 1]);
+        assert_run_vm!("CDATASIZEQ", [cell one_ref_cell.clone(), int 2] => [int 2, int 8 + 32 + 1, int 1, int -1]);
+        assert_run_vm!("CDATASIZE", [cell one_ref_cell.clone(), int 1] => [int 0], exit_code: 8);
+        assert_run_vm!("CDATASIZEQ", [cell one_ref_cell.clone(), int 1] => [int 0]);
+
+        let one_ref_slice = OwnedCellSlice::from(one_ref_cell);
+        assert_run_vm!("SDATASIZE", [slice one_ref_slice.clone(), int 1] => [int 1, int 8 + 32 + 1, int 1]);
+        assert_run_vm!("SDATASIZEQ", [slice one_ref_slice.clone(), int 1] => [int 1, int 8 + 32 + 1, int 1, int -1]);
+        assert_run_vm!("SDATASIZE", [slice one_ref_slice.clone(), int 0] => [int 0], exit_code: 8);
+        assert_run_vm!("SDATASIZEQ", [slice one_ref_slice.clone(), int 0] => [int 0]);
+
+        let mut deep_cell = CellBuilder::build_from(HashBytes::ZERO).unwrap();
+        for _ in 0..100 {
+            deep_cell = CellBuilder::build_from((
+                deep_cell.clone(),
+                deep_cell.clone(),
+                deep_cell.clone(),
+                deep_cell.clone(),
+            ))
+            .unwrap();
+        }
+        assert_run_vm!("CDATASIZE", [cell deep_cell.clone(), int 101] => [int 101, int 256, int 100 * 4]);
+        assert_run_vm!("CDATASIZEQ", [cell deep_cell.clone(), int 100] => [int 0]);
+
+        let deep_slice = OwnedCellSlice::from(deep_cell);
+        assert_run_vm!("SDATASIZE", [slice deep_slice.clone(), int 100] => [int 100, int 256, int 100 * 4]);
+        assert_run_vm!("SDATASIZEQ", [slice deep_slice.clone(), int 99] => [int 0]);
+
+        fn make_huge_cell(rng: &mut impl Rng, depth: u8) -> Cell {
+            if depth == 0 {
+                CellBuilder::build_from(rng.gen::<HashBytes>()).unwrap()
+            } else {
+                CellBuilder::build_from((
+                    rng.gen::<HashBytes>(),
+                    make_huge_cell(rng, depth - 1),
+                    make_huge_cell(rng, depth - 1),
+                ))
+                .unwrap()
+            }
+        }
+        let huge_cell = make_huge_cell(&mut rand::thread_rng(), 10);
+        assert_run_vm!("CDATASIZE", [cell huge_cell.clone(), int 2048] => [int 2047, int 524032, int 2046]);
+        assert_run_vm!("CDATASIZEQ", [cell huge_cell.clone(), int 100] => [int 0]);
+        assert_run_vm!("CDATASIZE", gas: 10000, [cell huge_cell.clone(), int 2048] => [int 9926], exit_code: -14);
+        assert_run_vm!("CDATASIZEQ", gas: 10000, [cell huge_cell.clone(), int 2048] => [int 9926], exit_code: -14);
+
+        let huge_slice = OwnedCellSlice::from(huge_cell);
+        assert_run_vm!("SDATASIZE", [slice huge_slice.clone(), int 2048] => [int 2046, int 524032, int 2046]);
+        assert_run_vm!("SDATASIZEQ", [slice huge_slice.clone(), int 100] => [int 0]);
+        assert_run_vm!("SDATASIZE", gas: 10000, [slice huge_slice.clone(), int 2048] => [int 9926], exit_code: -14);
+        assert_run_vm!("SDATASIZEQ", gas: 10000, [slice huge_slice.clone(), int 2048] => [int 9926], exit_code: -14);
+    }
 }

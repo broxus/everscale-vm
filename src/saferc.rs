@@ -266,3 +266,17 @@ impl SafeDeleter {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn drop_deep_tuple() {
+        let mut tuple = SafeRc::new_dyn_value(());
+        for _ in 0..1000000 {
+            tuple = SafeRc::new_dyn_value(vec![tuple]);
+        }
+    }
+}
