@@ -1838,7 +1838,8 @@ fn exec_cell_level_op_common(stack: &mut Stack, level: u8, op: LevelOp) -> VmRes
 
 #[cfg(test)]
 mod tests {
-    use everscale_types::cell::CellBuilder;
+    use std::thread::Builder;
+    use everscale_types::cell::{CellBuilder, CellRefsBuilder};
     use tracing_test::traced_test;
 
     use super::*;
@@ -1866,6 +1867,125 @@ mod tests {
             "#,
             [] => [],
         );
+    }
+
+    #[test]
+    #[traced_test]
+    fn lexcmp_tests() {
+        let slice1 = make_uint_cell_slice(0b0, 1);
+        let slice2 = make_uint_cell_slice(0b1, 1);
+
+        assert_run_vm!("SDLEXCMP", [slice slice1.clone(), slice slice1.clone()] => [int 0]);
+        assert_run_vm!("SDLEXCMP", [slice slice1.clone(), slice slice2.clone()] => [int -1]);
+        assert_run_vm!("SDLEXCMP", [slice slice2, slice slice1] => [int 1]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn store_tests() {
+        let mut cb = CellBuilder::new();
+        let cell = cb.build().unwrap();
+        let init_builder = init_builder_with_refs(cell.clone(), 0);
+        let result_builer = init_builder_with_refs(cell.clone(), 1);
+
+        assert_run_vm!("STREF", [cell cell.clone(), raw SafeRc::new(init_builder) ] => [raw SafeRc::new(result_builer)]);
+
+        let init_builder = init_builder_with_refs(cell.clone(), 4);
+        assert_run_vm!("STREF", [cell cell.clone(), raw SafeRc::new(init_builder) ] => [int 0], exit_code: 8);
+
+        let init_builder_one = init_builder_with_refs(cell.clone(), 1);
+        let init_builder_two = init_builder_with_refs(cell.clone(), 0);
+        let cb = init_builder_two.clone();
+        let cell = cb.build().unwrap();
+
+        let result = init_builder_with_refs(cell.clone(), 2);
+        assert_run_vm!("STBREFR", [raw SafeRc::new(init_builder_one.clone()), raw SafeRc::new(init_builder_two.clone()) ] => [raw SafeRc::new(result.clone())]);
+        assert_run_vm!("ENDCST", [raw SafeRc::new(init_builder_one.clone()), raw SafeRc::new(init_builder_two.clone()) ] => [raw SafeRc::new(result.clone())]);
+        assert_run_vm!("ENDC SWAP STREF", [raw SafeRc::new(init_builder_one.clone()), raw SafeRc::new(init_builder_two.clone()) ] => [raw SafeRc::new(result.clone())]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn store_builder_tests() {
+        let mut builder1 = CellBuilder::new();
+        builder1.store_uint(1, 512).unwrap();
+        let mut builder2 = CellBuilder::new();
+        builder2.store_uint(2, 511).unwrap();
+
+        let mut builder3 = CellBuilder::new();
+        builder3.store_uint(3, 512).unwrap();
+
+
+        let mut result = CellBuilder::new();
+        result.store_uint(2, 511).unwrap();
+        result.store_uint(1, 512).unwrap();
+
+        assert_run_vm!("STB", [raw SafeRc::new(builder1.clone()), raw SafeRc::new(builder2.clone())] => [raw SafeRc::new(result.clone())]);
+        assert_run_vm!("STB", [raw SafeRc::new(builder1.clone()), raw SafeRc::new(builder3.clone())] => [int 0], exit_code: 8);
+        assert_run_vm!("STBQ", [raw SafeRc::new(builder1.clone()), raw SafeRc::new(builder3.clone())] => [raw SafeRc::new(builder1.clone()), raw SafeRc::new(builder3.clone()), int -1]); // -1 here is part of the spec
+
+        assert_run_vm!("STBR", [raw SafeRc::new(builder2.clone()), raw SafeRc::new(builder1.clone())] => [raw SafeRc::new(result.clone())]);
+        assert_run_vm!("STBRQ", [raw SafeRc::new(builder2.clone()), raw SafeRc::new(builder1.clone())] => [raw SafeRc::new(result.clone()), int 0]); // 0 here is part of the spec
+    }
+
+    #[test]
+    #[traced_test]
+    fn builder_info_tests() {
+        let mut builder = CellBuilder::new();
+        builder.store_uint(1, 512).unwrap();
+        builder.store_reference(Cell::empty_cell()).unwrap();
+        assert_run_vm!("BCHKBITS", [raw SafeRc::new(builder.clone()), int 256] => []);
+        assert_run_vm!("BCHKBITSQ", [raw SafeRc::new(builder.clone()), int 256] => [int -1]);
+        assert_run_vm!("BCHKBITS", [raw SafeRc::new(builder.clone()), int 512] => [int 0], exit_code: 8);
+        assert_run_vm!("BCHKBITSQ", [raw SafeRc::new(builder.clone()), int 512] => [int 0]);
+
+
+        assert_run_vm!("BCHKREFS", [raw SafeRc::new(builder.clone()), int 3] => []);
+        assert_run_vm!("BCHKREFS", [raw SafeRc::new(builder.clone()), int 4] => [int 0], exit_code: 8);
+
+        assert_run_vm!("BCHKBITREFS", [raw SafeRc::new(builder.clone()), int 256, int 3] => []);
+        assert_run_vm!("BCHKBITREFS", [raw SafeRc::new(builder.clone()), int 256, int 4] => [int 0], exit_code: 8);
+
+        assert_run_vm!("BDEPTH", [raw SafeRc::new(builder.clone())] => [int 1]);
+        assert_run_vm!("BBITS", [raw SafeRc::new(builder.clone())] => [int 512]);
+        assert_run_vm!("BREFS", [raw SafeRc::new(builder.clone())] => [int 1]);
+        assert_run_vm!("BBITREFS", [raw SafeRc::new(builder.clone())] => [int 512, int 1]);
+
+        let mut builder1 = CellBuilder::new();
+        builder1.store_reference(Cell::empty_cell()).unwrap();
+        let cell = builder1.build().unwrap();
+        builder.store_reference(cell).unwrap();
+        assert_run_vm!("BDEPTH", [raw SafeRc::new(builder.clone())] => [int 2]);
+        assert_run_vm!("BDEPTH", [raw SafeRc::new(CellBuilder::new())] => [int 0]);
+
+        let builder = create_builder(1023);
+        assert_run_vm!("BDEPTH", [raw SafeRc::new(builder)] => [int 1024]); // 1 + depth according to spec
+    }
+
+
+    fn create_builder(depth: u32) -> CellBuilder {
+        let mut builder = CellBuilder::new();
+        let cell = create_complex_cell(0, depth);
+        builder.store_reference(cell).unwrap();
+        builder
+    }
+    fn create_complex_cell(mut current_depth: u32, depth: u32) -> Cell {
+        if current_depth == depth {
+            return Cell::empty_cell();
+        }
+        current_depth += 1;
+        let mut builder = CellBuilder::new();
+        let cell = create_complex_cell(current_depth, depth);
+        builder.store_reference(cell).unwrap();
+        builder.build().unwrap()
+    }
+
+    fn init_builder_with_refs(cell: Cell, ref_count: u8) -> CellBuilder {
+        let mut cb = CellBuilder::new();
+        for _ in 0..ref_count {
+            cb.store_reference(cell.clone()).unwrap();
+        }
+        cb
     }
 
     #[test]
@@ -2120,13 +2240,13 @@ mod tests {
     #[traced_test]
     fn pldslice_tests() {
         let slice = make_uint_cell_slice(1000, 512);
-        let prefix = cut_slice_prefix(&slice, 256);
+        let prefix = cut_slice_prefix(&slice, 256, 0);
         assert_run_vm!("PLDSLICE 256", [slice slice.clone()] => [slice prefix.clone()]);
         assert_run_vm!("PLDSLICEQ 256", [slice slice.clone()] => [slice prefix.clone(), int -1]);
 
-        let prefix = cut_slice_prefix(&slice, 1);
+        let prefix = cut_slice_prefix(&slice, 1, 0);
         assert_run_vm!("PLDSLICE 1", [slice slice.clone()] => [slice prefix.clone()]);
-        let _prefix = cut_slice_prefix(&slice, 0);
+        let _prefix = cut_slice_prefix(&slice, 0, 0);
 
         let slice = make_uint_cell_slice(1000, 128);
         assert_run_vm!("PLDSLICE 129", [slice slice.clone()] => [int 0], exit_code: 9);
@@ -2137,15 +2257,15 @@ mod tests {
     #[traced_test]
     fn pldslicex_tests() {
         let slice = make_uint_cell_slice(1000, 512);
-        let prefix = cut_slice_prefix(&slice, 256);
+        let prefix = cut_slice_prefix(&slice, 256, 0);
         assert_run_vm!("PLDSLICEX", [slice slice.clone(), int 256] => [slice prefix.clone()]);
         assert_run_vm!("SDCUTFIRST", [slice slice.clone(), int 256] => [slice prefix.clone()]);
         assert_run_vm!("PLDSLICEXQ", [slice slice.clone(), int 256] => [slice prefix.clone(), int -1],);
 
-        let prefix = cut_slice_prefix(&slice, 1);
+        let prefix = cut_slice_prefix(&slice, 1, 0);
         assert_run_vm!("PLDSLICEX", [slice slice.clone(), int 1] => [slice prefix.clone()]);
         assert_run_vm!("SDCUTFIRST", [slice slice.clone(), int 1] => [slice prefix.clone()]);
-        let _prefix = cut_slice_prefix(&slice, 0);
+        let _prefix = cut_slice_prefix(&slice, 0, 0);
 
         let slice = make_uint_cell_slice(1000, 128);
         assert_run_vm!("PLDSLICEX", [slice slice.clone(), int 129] => [int 0], exit_code: 9);
@@ -2157,7 +2277,7 @@ mod tests {
     #[traced_test]
     fn cut_tests() {
         let slice = make_uint_cell_slice(1000, 512);
-        let suffix = cut_slice_suffix(&slice, 256);
+        let suffix = cut_slice_suffix(&slice, 256, 0);
 
         assert_run_vm!("SDSKIPFIRST", [slice slice.clone(), int 256] => [slice suffix.clone()]);
         assert_run_vm!("SDSKIPFIRST", [slice slice.clone(), int 513] => [int 0], exit_code: 9);
@@ -2166,20 +2286,20 @@ mod tests {
         assert_run_vm!("LDSLICEX NIP", [slice slice.clone(), int 513] => [int 0], exit_code: 9);
 
         assert_run_vm!("SDCUTLAST", [slice slice.clone(), int 256] => [slice suffix.clone()]);
-        let suffix = cut_slice_suffix(&slice, 512);
+        let suffix = cut_slice_suffix(&slice, 512, 0);
 
         assert_run_vm!("SDCUTLAST", [slice slice.clone(), int 512] => [slice suffix.clone()]);
 
-        let suffix = cut_slice_suffix(&slice, 0);
+        let suffix = cut_slice_suffix(&slice, 0, 0);
         assert_run_vm!("SDCUTLAST", [slice slice.clone(), int 0] => [slice suffix.clone()]);
         assert_run_vm!("SDCUTLAST", [slice slice.clone(), int 513] => [int 0], exit_code: 9);
 
-        let prefix = cut_slice_prefix(&slice, 512);
+        let prefix = cut_slice_prefix(&slice, 512, 0);
         assert_run_vm!("SDSKIPLAST", [slice slice.clone(), int 0] => [slice prefix.clone()]);
 
-        let prefix = cut_slice_prefix(&slice, 256);
+        let prefix = cut_slice_prefix(&slice, 256, 0);
         assert_run_vm!("SDSKIPLAST", [slice slice.clone(), int 256] => [slice prefix.clone()]);
-        let prefix = cut_slice_prefix(&slice, 0);
+        let prefix = cut_slice_prefix(&slice, 0, 0);
         assert_run_vm!("SDSKIPLAST", [slice slice.clone(), int 512] => [slice prefix.clone()]);
 
         assert_run_vm!("SDSKIPLAST", [slice slice.clone(), int 513] => [int 0], exit_code: 9);
@@ -2187,8 +2307,33 @@ mod tests {
 
     #[test]
     #[traced_test]
+    fn cut_with_refs_tests() {
+        let slice = make_cell_slice_with_refs(1000, 512, 2);
+        let prefix = cut_slice_prefix(&slice, 256, 2);
+        assert_run_vm!("SCUTFIRST", [slice slice.clone(), int 256, int 2] => [slice prefix.clone()]);
+        assert_run_vm!("SCUTFIRST", [slice slice.clone(), int 512, int 2] => [slice slice.clone()]);
+        assert_run_vm!("SCUTFIRST", [slice slice.clone(), int 256, int 3] => [int 0], exit_code: 9);
+
+        assert_run_vm!("SSKIPLAST", [slice slice.clone(), int 256, int 0] => [slice prefix.clone()]);
+        assert_run_vm!("SSKIPLAST", [slice slice.clone(), int 0, int 0] => [slice slice.clone()]);
+        assert_run_vm!("SSKIPLAST", [slice slice.clone(), int 256, int 3] => [int 0], exit_code: 9);
+
+        let suffix = cut_slice_suffix(&slice, 256, 2);
+
+        assert_run_vm!("SCUTLAST", [slice slice.clone(), int 256, int 2] => [slice suffix.clone()]);
+        assert_run_vm!("SCUTLAST", [slice slice.clone(), int 512, int 2] => [slice slice.clone()]);
+        assert_run_vm!("SCUTLAST", [slice slice.clone(), int 256, int 3] => [int 0], exit_code: 9);
+
+        assert_run_vm!("SSKIPFIRST", [slice slice.clone(), int 256, int 0] => [slice suffix.clone()]);
+        assert_run_vm!("SSKIPFIRST", [slice slice.clone(), int 0, int 0] => [slice slice.clone()]);
+        assert_run_vm!("SSKIPFIRST", [slice slice.clone(), int 256, int 3] => [int 0], exit_code: 9);
+
+    }
+
+    #[test]
+    #[traced_test]
     fn subslice_tests() {
-        let slice = make_uint_cell_slice(1000, 512);
+        let slice = make_cell_slice_with_refs(1000, 512, 4);
         let initial = slice.clone();
         let subslice = get_subslice(&slice, 10, 10, 0, 0);
         assert_run_vm!("SDSUBSTR", [slice initial.clone(), int 10, int 10] => [slice subslice]);
@@ -2200,6 +2345,70 @@ mod tests {
         assert_run_vm!("SDSUBSTR", [slice initial.clone(), int 100, int 50] => [slice subslice]);
         assert_run_vm!("SDSUBSTR", [slice initial.clone(), int 100, int 513] => [int 0], exit_code: 9);
         assert_run_vm!("SDSUBSTR", [slice initial.clone(), int 513, int 5] => [int 0], exit_code: 9);
+
+        let subslice = get_subslice(&slice, 100, 50, 0, 4);
+        assert_run_vm!("SUBSLICE", [slice initial.clone(), int 100, int 0, int 50, int 4] => [slice subslice]);
+
+        let subslice = get_subslice(&slice, 1, 50, 2, 2);
+        assert_run_vm!("SUBSLICE", [slice initial.clone(), int 1, int 2, int 50, int 2] => [slice subslice]);
+        assert_run_vm!("SUBSLICE", [slice initial.clone(), int 1, int 2, int 50, int 3] => [int 0], exit_code: 9);
+
+        assert_run_vm!("SUBSLICE", [slice initial.clone(), int 100, int 0, int 50, int 5] => [int 0], exit_code: 5);
+        assert_run_vm!("SUBSLICE", [slice initial.clone(), int 100, int 5, int 50, int 4] => [int 0], exit_code: 5);
+    }
+
+    #[test]
+    #[traced_test]
+    fn check_tests() {
+        let slice = make_cell_slice_with_refs(1000, 512, 2);
+        assert_run_vm!("SCHKBITS", [slice slice.clone(), int 512] => []);
+        assert_run_vm!("SCHKBITS", [slice slice.clone(), int 0] => []);
+        assert_run_vm!("SCHKBITSQ", [slice slice.clone(), int 0] => [int -1]);
+
+        assert_run_vm!("SCHKBITS", [slice slice.clone(), int 1023] => [int 0,], exit_code: 8);
+        assert_run_vm!("SCHKBITS", [slice slice.clone(), int 99999999] => [int 0], exit_code: 5);
+        assert_run_vm!("SCHKBITSQ", [slice slice.clone(), int 1023] => [int 0]);
+
+        assert_run_vm!("SCHKREFS", [slice slice.clone(), int 2] => []);
+        assert_run_vm!("SCHKREFS", [slice slice.clone(), int 0] => []);
+        assert_run_vm!("SCHKREFSQ", [slice slice.clone(), int 1] => [int -1]);
+
+        assert_run_vm!("SCHKREFS", [slice slice.clone(), int 3] => [int 0], exit_code: 8);
+        assert_run_vm!("SCHKREFS", [slice slice.clone(), int 99999] => [int 0], exit_code: 5);
+        assert_run_vm!("SCHKREFSQ", [slice slice.clone(), int 3] => [int 0]);
+
+        assert_run_vm!("SCHKBITREFS", [slice slice.clone(), int 512, int 2] => []);
+        assert_run_vm!("SCHKBITREFS", [slice slice.clone(), int 0, int 0] => []);
+        assert_run_vm!("SCHKBITREFSQ", [slice slice.clone(), int 0, int 1] => [int -1]);
+
+        assert_run_vm!("SCHKBITREFS", [slice slice.clone(), int 1023, int 3] => [int 0], exit_code: 8);
+        assert_run_vm!("SCHKBITREFSQ", [slice slice.clone(), int 1023, int 3] => [int 0]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn info_tests() {
+        let slice = make_cell_slice_with_refs(1000, 512, 2);
+        let cs = slice.apply().unwrap();
+        let cell = cs.get_reference_cloned(0).unwrap();
+        assert_run_vm!("PLDREFVAR", [slice slice.clone(), int 0] => [cell cell.clone()]);
+        assert_run_vm!("PLDREF", [slice slice.clone()] => [cell cell.clone()]);
+        assert_run_vm!("PLDREFIDX 0", [slice slice.clone()] => [cell cell]);
+
+        let cell = cs.get_reference_cloned(1).unwrap();
+        assert_run_vm!("PLDREFVAR", [slice slice.clone(), int 1] => [cell cell.clone()]);
+        assert_run_vm!("PLDREFIDX 1", [slice slice.clone()] => [cell cell]);
+
+        assert_run_vm!("PLDREFVAR", [slice slice.clone(), int 3] => [int 0], exit_code: 9);
+        assert_run_vm!("PLDREFIDX 3", [slice slice.clone()] => [int 0], exit_code: 9);
+        assert_run_vm!("PLDREFVAR", [slice slice.clone(), int 10] => [int 0], exit_code: 5);
+
+        assert_run_vm!("SBITS", [slice slice.clone()] => [int 512]);
+        assert_run_vm!("SREFS", [slice slice.clone()] => [int 2]);
+        assert_run_vm!("SBITREFS", [slice slice.clone()] => [int 512, int 2]);
+
+
+
     }
 
     #[test]
@@ -2209,11 +2418,12 @@ mod tests {
         let prefix = make_uint_cell_slice(0b0000, 4);
         let result = skip_common(&slice, &prefix);
 
-        assert_run_vm!("SDBEGINSX", [slice slice.clone(), slice prefix.clone()] => [slice result]);
+        assert_run_vm!("SDBEGINSX", [slice slice.clone(), slice prefix.clone()] => [slice result.clone()]);
+        assert_run_vm!("SDBEGINSXQ", [slice slice.clone(), slice prefix.clone()] => [slice result, int -1]);
 
-        let prefix = make_uint_cell_slice(0b1, 1);
-        let _result = skip_common(&slice, &prefix);
+        let prefix = make_uint_cell_slice(0b11, 9);
         assert_run_vm!("SDBEGINSX", [slice slice.clone(), slice prefix.clone()] => [int 0], exit_code: 9);
+        assert_run_vm!("SDBEGINSXQ", [slice slice.clone(), slice prefix.clone()] => [slice slice.clone(), int 0]);
     }
 
     fn skip_common(slice: &OwnedCellSlice, prefix: &OwnedCellSlice) -> OwnedCellSlice {
@@ -2250,18 +2460,32 @@ mod tests {
         new
     }
 
+    fn make_cell_slice_with_refs(value: u128, bits: u16, refs_count: u8) -> OwnedCellSlice {
+        let mut cb = CellBuilder::new();
+        store_int_to_builder(&BigInt::from(value), bits, false, &mut cb).unwrap();
+
+        for _ in 0..refs_count {
+            let mut rb = CellBuilder::new();
+            rb.store_u64(u64::MAX).unwrap();
+            let cell = rb.build().unwrap();
+            cb.store_reference(cell).unwrap()
+        }
+        let cell = cb.build().unwrap();
+        OwnedCellSlice::from(cell)
+
+    }
     fn make_uint_cell_slice(value: u128, bits: u16) -> OwnedCellSlice {
         let mut cb = CellBuilder::new();
         store_int_to_builder(&BigInt::from(value), bits, false, &mut cb).unwrap();
         let cell = cb.build().unwrap();
-        OwnedCellSlice::from(cell.clone())
+        OwnedCellSlice::from(cell)
     }
 
     fn make_int_cell_slice(value: i128, bits: u16) -> OwnedCellSlice {
         let mut cb = CellBuilder::new();
         store_int_to_builder(&BigInt::from(value), bits, true, &mut cb).unwrap();
         let cell = cb.build().unwrap();
-        OwnedCellSlice::from(cell.clone())
+        OwnedCellSlice::from(cell)
     }
 
     fn cut_slice(slice: &OwnedCellSlice, bits: u16) -> (OwnedCellSlice, OwnedCellSlice) {
@@ -2275,19 +2499,19 @@ mod tests {
         (left, right)
     }
 
-    fn cut_slice_prefix(slice: &OwnedCellSlice, bits: u16) -> OwnedCellSlice {
+    fn cut_slice_prefix(slice: &OwnedCellSlice, bits: u16, refs: u8) -> OwnedCellSlice {
         let mut cs = slice.apply().unwrap();
-        let prefix = cs.load_prefix(bits, 0).unwrap();
+        let prefix = cs.load_prefix(bits, refs).unwrap();
         let mut slice = slice.clone();
         slice.set_range(prefix.range());
         slice
     }
 
-    fn cut_slice_suffix(slice: &OwnedCellSlice, bits: u16) -> OwnedCellSlice {
+    fn cut_slice_suffix(slice: &OwnedCellSlice, bits: u16, refs: u8) -> OwnedCellSlice {
         let mut cs = slice.apply().unwrap();
-        let prefix = cs.load_suffix(bits, 0).unwrap();
+        let suffix = cs.load_suffix(bits, refs).unwrap();
         let mut slice = slice.clone();
-        slice.set_range(prefix.range());
+        slice.set_range(suffix.range());
         slice
     }
 
