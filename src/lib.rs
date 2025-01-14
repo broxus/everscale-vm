@@ -81,8 +81,8 @@ macro_rules! tuple_impl {
 
     (@v [$($values:tt)*] cell $value:expr $(, $($tt:tt)* )?) => {
         $crate::tuple_impl!(@v [
-            $($values)* $crate::RcStackValue::new_dyn_value(
-                $value
+            $($values)* $crate::SafeRc::into_dyn_value(
+                $crate::SafeRc::<::everscale_types::cell::Cell>::new($value)
             ),
         ] $($($tt)*)?)
     };
@@ -91,6 +91,14 @@ macro_rules! tuple_impl {
         $crate::tuple_impl!(@v [
             $($values)* $crate::RcStackValue::new_dyn_value(
                 $crate::OwnedCellSlice::from($value)
+            ),
+        ] $($($tt)*)?)
+    };
+
+    (@v [$($values:tt)*] builder $value:expr $(, $($tt:tt)* )?) => {
+        $crate::tuple_impl!(@v [
+            $($values)* $crate::SafeRc::into_dyn_value(
+                $crate::SafeRc::<::everscale_types::cell::CellBuilder>::new($value)
             ),
         ] $($($tt)*)?)
     };

@@ -1838,8 +1838,7 @@ fn exec_cell_level_op_common(stack: &mut Stack, level: u8, op: LevelOp) -> VmRes
 
 #[cfg(test)]
 mod tests {
-    use std::thread::Builder;
-    use everscale_types::cell::{CellBuilder, CellRefsBuilder};
+    use everscale_types::cell::CellBuilder;
     use tracing_test::traced_test;
 
     use super::*;
@@ -1883,15 +1882,14 @@ mod tests {
     #[test]
     #[traced_test]
     fn store_tests() {
-        let mut cb = CellBuilder::new();
-        let cell = cb.build().unwrap();
+        let cell = Cell::default();
         let init_builder = init_builder_with_refs(cell.clone(), 0);
         let result_builer = init_builder_with_refs(cell.clone(), 1);
 
-        assert_run_vm!("STREF", [cell cell.clone(), raw SafeRc::new(init_builder) ] => [raw SafeRc::new(result_builer)]);
+        assert_run_vm!("STREF", [cell cell.clone(), builder init_builder] => [builder result_builer]);
 
         let init_builder = init_builder_with_refs(cell.clone(), 4);
-        assert_run_vm!("STREF", [cell cell.clone(), raw SafeRc::new(init_builder) ] => [int 0], exit_code: 8);
+        assert_run_vm!("STREF", [cell cell.clone(), builder init_builder] => [int 0], exit_code: 8);
 
         let init_builder_one = init_builder_with_refs(cell.clone(), 1);
         let init_builder_two = init_builder_with_refs(cell.clone(), 0);
@@ -1899,9 +1897,9 @@ mod tests {
         let cell = cb.build().unwrap();
 
         let result = init_builder_with_refs(cell.clone(), 2);
-        assert_run_vm!("STBREFR", [raw SafeRc::new(init_builder_one.clone()), raw SafeRc::new(init_builder_two.clone()) ] => [raw SafeRc::new(result.clone())]);
-        assert_run_vm!("ENDCST", [raw SafeRc::new(init_builder_one.clone()), raw SafeRc::new(init_builder_two.clone()) ] => [raw SafeRc::new(result.clone())]);
-        assert_run_vm!("ENDC SWAP STREF", [raw SafeRc::new(init_builder_one.clone()), raw SafeRc::new(init_builder_two.clone()) ] => [raw SafeRc::new(result.clone())]);
+        assert_run_vm!("STBREFR", [builder init_builder_one.clone(), builder init_builder_two.clone()] => [builder result.clone()]);
+        assert_run_vm!("ENDCST", [builder init_builder_one.clone(), builder init_builder_two.clone()] => [builder result.clone()]);
+        assert_run_vm!("ENDC SWAP STREF", [builder init_builder_one.clone(), builder init_builder_two.clone()] => [builder result.clone()]);
     }
 
     #[test]
@@ -1915,17 +1913,17 @@ mod tests {
         let mut builder3 = CellBuilder::new();
         builder3.store_uint(3, 512).unwrap();
 
-
         let mut result = CellBuilder::new();
         result.store_uint(2, 511).unwrap();
         result.store_uint(1, 512).unwrap();
 
-        assert_run_vm!("STB", [raw SafeRc::new(builder1.clone()), raw SafeRc::new(builder2.clone())] => [raw SafeRc::new(result.clone())]);
-        assert_run_vm!("STB", [raw SafeRc::new(builder1.clone()), raw SafeRc::new(builder3.clone())] => [int 0], exit_code: 8);
-        assert_run_vm!("STBQ", [raw SafeRc::new(builder1.clone()), raw SafeRc::new(builder3.clone())] => [raw SafeRc::new(builder1.clone()), raw SafeRc::new(builder3.clone()), int -1]); // -1 here is part of the spec
+        assert_run_vm!("STB", [builder builder1.clone(), builder builder2.clone()] => [builder result.clone()]);
+        assert_run_vm!("STB", [builder builder1.clone(), builder builder3.clone()] => [int 0], exit_code: 8);
+        assert_run_vm!("STBQ", [builder builder1.clone(), builder builder3.clone()] => [builder builder1.clone(), builder builder3.clone(), int -1]); // -1 here is part of the spec
 
-        assert_run_vm!("STBR", [raw SafeRc::new(builder2.clone()), raw SafeRc::new(builder1.clone())] => [raw SafeRc::new(result.clone())]);
-        assert_run_vm!("STBRQ", [raw SafeRc::new(builder2.clone()), raw SafeRc::new(builder1.clone())] => [raw SafeRc::new(result.clone()), int 0]); // 0 here is part of the spec
+        assert_run_vm!("STBR", [builder builder2.clone(), builder builder1.clone()] => [builder result.clone()]);
+        assert_run_vm!("STBRQ", [builder builder2.clone(), builder builder1.clone()] => [builder result.clone(), int 0]);
+        // 0 here is part of the spec
     }
 
     #[test]
@@ -1934,34 +1932,32 @@ mod tests {
         let mut builder = CellBuilder::new();
         builder.store_uint(1, 512).unwrap();
         builder.store_reference(Cell::empty_cell()).unwrap();
-        assert_run_vm!("BCHKBITS", [raw SafeRc::new(builder.clone()), int 256] => []);
-        assert_run_vm!("BCHKBITSQ", [raw SafeRc::new(builder.clone()), int 256] => [int -1]);
-        assert_run_vm!("BCHKBITS", [raw SafeRc::new(builder.clone()), int 512] => [int 0], exit_code: 8);
-        assert_run_vm!("BCHKBITSQ", [raw SafeRc::new(builder.clone()), int 512] => [int 0]);
+        assert_run_vm!("BCHKBITS", [builder builder.clone(), int 256] => []);
+        assert_run_vm!("BCHKBITSQ", [builder builder.clone(), int 256] => [int -1]);
+        assert_run_vm!("BCHKBITS", [builder builder.clone(), int 512] => [int 0], exit_code: 8);
+        assert_run_vm!("BCHKBITSQ", [builder builder.clone(), int 512] => [int 0]);
 
+        assert_run_vm!("BCHKREFS", [builder builder.clone(), int 3] => []);
+        assert_run_vm!("BCHKREFS", [builder builder.clone(), int 4] => [int 0], exit_code: 8);
 
-        assert_run_vm!("BCHKREFS", [raw SafeRc::new(builder.clone()), int 3] => []);
-        assert_run_vm!("BCHKREFS", [raw SafeRc::new(builder.clone()), int 4] => [int 0], exit_code: 8);
+        assert_run_vm!("BCHKBITREFS", [builder builder.clone(), int 256, int 3] => []);
+        assert_run_vm!("BCHKBITREFS", [builder builder.clone(), int 256, int 4] => [int 0], exit_code: 8);
 
-        assert_run_vm!("BCHKBITREFS", [raw SafeRc::new(builder.clone()), int 256, int 3] => []);
-        assert_run_vm!("BCHKBITREFS", [raw SafeRc::new(builder.clone()), int 256, int 4] => [int 0], exit_code: 8);
-
-        assert_run_vm!("BDEPTH", [raw SafeRc::new(builder.clone())] => [int 1]);
-        assert_run_vm!("BBITS", [raw SafeRc::new(builder.clone())] => [int 512]);
-        assert_run_vm!("BREFS", [raw SafeRc::new(builder.clone())] => [int 1]);
-        assert_run_vm!("BBITREFS", [raw SafeRc::new(builder.clone())] => [int 512, int 1]);
+        assert_run_vm!("BDEPTH", [builder builder.clone()] => [int 1]);
+        assert_run_vm!("BBITS", [builder builder.clone()] => [int 512]);
+        assert_run_vm!("BREFS", [builder builder.clone()] => [int 1]);
+        assert_run_vm!("BBITREFS", [builder builder.clone()] => [int 512, int 1]);
 
         let mut builder1 = CellBuilder::new();
         builder1.store_reference(Cell::empty_cell()).unwrap();
         let cell = builder1.build().unwrap();
         builder.store_reference(cell).unwrap();
-        assert_run_vm!("BDEPTH", [raw SafeRc::new(builder.clone())] => [int 2]);
-        assert_run_vm!("BDEPTH", [raw SafeRc::new(CellBuilder::new())] => [int 0]);
+        assert_run_vm!("BDEPTH", [builder builder.clone()] => [int 2]);
+        assert_run_vm!("BDEPTH", [builder CellBuilder::new()] => [int 0]);
 
         let builder = create_builder(1023);
-        assert_run_vm!("BDEPTH", [raw SafeRc::new(builder)] => [int 1024]); // 1 + depth according to spec
+        assert_run_vm!("BDEPTH", [builder builder] => [int 1024]); // 1 + depth according to spec
     }
-
 
     fn create_builder(depth: u32) -> CellBuilder {
         let mut builder = CellBuilder::new();
@@ -2107,7 +2103,7 @@ mod tests {
 
         let (left, right) = cut_slice(&slice, 1);
         assert_run_vm!("LDSLICE 1", [slice slice.clone()] => [slice left.clone(), slice right.clone()]);
-        assert_run_vm!("LDSLICEQ 1", [slice slice.clone()] => [slice left, slice right, int -1 ]);
+        assert_run_vm!("LDSLICEQ 1", [slice slice.clone()] => [slice left, slice right, int -1]);
         assert_run_vm!("LDSLICE 33", [slice slice.clone()] => [int 0], exit_code: 9);
         assert_run_vm!("LDSLICEQ 33", [slice slice.clone()] => [slice slice, int 0]);
     }
@@ -2327,7 +2323,6 @@ mod tests {
         assert_run_vm!("SSKIPFIRST", [slice slice.clone(), int 256, int 0] => [slice suffix.clone()]);
         assert_run_vm!("SSKIPFIRST", [slice slice.clone(), int 0, int 0] => [slice slice.clone()]);
         assert_run_vm!("SSKIPFIRST", [slice slice.clone(), int 256, int 3] => [int 0], exit_code: 9);
-
     }
 
     #[test]
@@ -2406,9 +2401,6 @@ mod tests {
         assert_run_vm!("SBITS", [slice slice.clone()] => [int 512]);
         assert_run_vm!("SREFS", [slice slice.clone()] => [int 2]);
         assert_run_vm!("SBITREFS", [slice slice.clone()] => [int 512, int 2]);
-
-
-
     }
 
     #[test]
@@ -2472,7 +2464,6 @@ mod tests {
         }
         let cell = cb.build().unwrap();
         OwnedCellSlice::from(cell)
-
     }
     fn make_uint_cell_slice(value: u128, bits: u16) -> OwnedCellSlice {
         let mut cb = CellBuilder::new();
