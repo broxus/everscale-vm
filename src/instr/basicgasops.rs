@@ -1,5 +1,5 @@
-use tycho_vm_proc::vm_module;
 use num_traits::{Signed, ToPrimitive};
+use tycho_vm_proc::vm_module;
 
 use crate::cont::QuitCont;
 use crate::error::VmResult;

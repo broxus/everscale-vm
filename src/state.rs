@@ -80,6 +80,7 @@ impl VmStateBuilder {
             gas: GasConsumer::with_libraries(
                 self.gas,
                 self.libraries.unwrap_or_else(|| Box::new(NoLibraries)),
+                self.version.clone().unwrap_or(VmState::DEFAULT_VERSION),
             ),
             cp,
             debug: self.debug,

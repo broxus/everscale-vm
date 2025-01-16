@@ -5,11 +5,13 @@ use std::sync::Arc;
 use ahash::HashSet;
 use everscale_types::cell::{CellParts, LoadMode};
 use everscale_types::error::Error;
+use everscale_types::error::Error::CellUnderflow;
 use everscale_types::models::{LibDescr, SimpleLib};
 use everscale_types::prelude::*;
 
 use crate::saferc::SafeRc;
 use crate::stack::Stack;
+use crate::{OwnedCellSlice, VmVersion};
 
 /// Initialization params for [`GasConsumer`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,11 +52,33 @@ impl Default for GasParams {
 /// Library cells resolver.
 pub trait LibraryProvider {
     fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error>;
+
+    fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error>;
 }
 
 impl<T: LibraryProvider> LibraryProvider for &'_ T {
     fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
         T::find(self, library_hash)
+    }
+
+    fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
+        T::find_ref(self, library_hash)
+    }
+}
+
+impl<T1: LibraryProvider, T2: LibraryProvider> LibraryProvider for (T1, T2) {
+    fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
+        if let res @ Some(_) = ok!(T1::find(&self.0, library_hash)) {
+            return Ok(res);
+        }
+        T2::find(&self.1, library_hash)
+    }
+
+    fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
+        if let res @ Some(_) = ok!(T1::find_ref(&self.0, library_hash)) {
+            return Ok(res);
+        }
+        T2::find_ref(&self.1, library_hash)
     }
 }
 
@@ -62,17 +86,27 @@ impl<T: LibraryProvider> LibraryProvider for Box<T> {
     fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
         T::find(self, library_hash)
     }
+    fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
+        T::find_ref(self, library_hash)
+    }
 }
 
 impl<T: LibraryProvider> LibraryProvider for Rc<T> {
     fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
         T::find(self, library_hash)
     }
+    fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
+        T::find_ref(self, library_hash)
+    }
 }
 
 impl<T: LibraryProvider> LibraryProvider for Arc<T> {
     fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
         T::find(self, library_hash)
+    }
+
+    fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
+        T::find_ref(self, library_hash)
     }
 }
 
@@ -83,6 +117,10 @@ pub struct NoLibraries;
 impl LibraryProvider for NoLibraries {
     #[inline]
     fn find(&self, _library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
+        Ok(None)
+    }
+
+    fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
         Ok(None)
     }
 }
@@ -97,11 +135,46 @@ impl LibraryProvider for Vec<Dict<HashBytes, SimpleLib>> {
         }
         Ok(None)
     }
+    fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
+        for lib in self {
+            match lib
+                .cast_ref::<HashBytes, SimpleLibRef<'_>>()
+                .get(library_hash)?
+            {
+                Some(lib) => return Ok(Some(lib.root)),
+                None => continue,
+            }
+        }
+        Ok(None)
+    }
 }
 
 impl LibraryProvider for Dict<HashBytes, LibDescr> {
     fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
         Ok(self.get(library_hash)?.map(|lib| lib.lib.clone()))
+    }
+
+    fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
+
+        struct LibDescrRef<'tlb> {
+            lib: &'tlb DynCell,
+        }
+
+        impl<'a> Load<'a> for LibDescrRef<'a> {
+            fn load_from(slice: &mut CellSlice<'a>) -> Result<Self, Error> {
+                if slice.load_small_uint(2)? != 0 {
+                    return Err(Error::InvalidTag);
+                }
+                Ok(Self {lib: slice.load_reference()?})
+            }
+        }
+
+        impl EquivalentRepr<LibDescr> for LibDescrRef<'_> {}
+
+        Ok(self
+            .cast_ref::<HashBytes, LibDescrRef<'a>>()
+            .get(library_hash)?
+            .map(|lib| lib.lib))
     }
 }
 
@@ -109,7 +182,26 @@ impl<S: BuildHasher> LibraryProvider for std::collections::HashMap<HashBytes, Si
     fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
         Ok(self.get(library_hash).map(|lib| lib.root.clone()))
     }
+
+    fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
+        Ok(self
+            .get(library_hash)
+            .map(|lib| lib.root.as_ref()))
+    }
 }
+
+struct SimpleLibRef<'tlb> {
+    root: &'tlb DynCell,
+}
+
+impl<'a> Load<'a> for SimpleLibRef<'a> {
+    fn load_from(slice: &mut CellSlice<'a>) -> Result<Self, Error> {
+        slice.load_bit()?;
+        Ok(Self { root: slice.load_reference()? })
+    }
+}
+
+impl EquivalentRepr<SimpleLib> for SimpleLibRef<'_> {}
 
 /// Gas tracking context.
 pub struct GasConsumer {
@@ -134,6 +226,8 @@ pub struct GasConsumer {
 
     /// Fallback cell context.
     pub empty_context: <Cell as CellFamily>::EmptyCellContext,
+
+    vm_version: VmVersion,
 }
 
 impl GasConsumer {
@@ -152,11 +246,15 @@ impl GasConsumer {
     pub const IMPLICIT_RET_GAS_PRICE: u64 = 5;
     pub const EXCEPTION_GAS_PRICE: u64 = 50;
 
-    pub fn new(params: GasParams) -> Self {
-        Self::with_libraries(params, Box::new(NoLibraries))
+    pub fn new(params: GasParams, vm_version: VmVersion) -> Self {
+        Self::with_libraries(params, Box::new(NoLibraries), vm_version)
     }
 
-    pub fn with_libraries(params: GasParams, libraries: Box<dyn LibraryProvider>) -> Self {
+    pub fn with_libraries(
+        params: GasParams,
+        libraries: Box<dyn LibraryProvider>,
+        vm_version: VmVersion,
+    ) -> Self {
         let gas_remaining = params.limit.saturating_add(params.credit);
 
         Self {
@@ -169,6 +267,7 @@ impl GasConsumer {
             libraries,
             chksign_counter: 0,
             empty_context: Default::default(),
+            vm_version,
         }
     }
 
@@ -243,6 +342,10 @@ impl GasConsumer {
         self.libraries.find(library_hash)
     }
 
+    pub fn load_library_ref<'a>(&'a mut self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
+        self.libraries.find_ref(library_hash)
+    }
+
     fn consume_load_cell(&mut self, cell: &DynCell, mode: LoadMode) -> Result<(), Error> {
         if mode.use_gas() {
             let gas = if self.loaded_cells.insert(*cell.repr_hash()) {
@@ -254,7 +357,167 @@ impl GasConsumer {
         }
         Ok(())
     }
+
+
+    // fn consume_load_impl_cell<'a>(&mut self, cell: Cell, load_mode: LoadMode) -> Result<Cell, Error> {
+    //     self.consume_load_cell(cell.as_ref(), load_mode)?;
+    //
+    //     if matches!(cell.cell_type(), CellType::PrunedBranch) {
+    //         // check virtualizaion and throw an exception if needed
+    //     }
+    //
+    //     if !load_mode.resolve() {
+    //         return Ok(cell);
+    //     }
+    //
+    //     match cell.cell_type() {
+    //         CellType::LibraryReference => {
+    //             if cell.bit_len() != 8 + 256 {
+    //                 return Err(CellUnderflow);
+    //             }
+    //
+    //             let library_cell = self.load_library(cell.repr_hash())?;
+    //             if let Some(library) = library_cell {
+    //                 if matches!(library.cell_type(), CellType::LibraryReference) {
+    //                     return Err(CellUnderflow);
+    //                 }
+    //                 Ok(library)
+    //             } else {
+    //                 Err(CellUnderflow)
+    //             }
+    //         }
+    //         CellType::PrunedBranch => {
+    //             // TODO: check virtualizaion and throw an exception if needed
+    //             Ok(cell)
+    //         }
+    //         _ => Err(CellUnderflow),
+    //     }
+    // }
+
+
+    fn consume_load_dyn_cell<'a>(
+        &'a mut self,
+        container: CellContainer<'a>,
+        load_mode: LoadMode,
+    ) -> Result<CellContainer<'a>, Error> {
+        self.consume_load_cell(container.as_dyn(), load_mode)?;
+
+        if matches!(container.cell_type(), CellType::PrunedBranch) {
+            // check virtualizaion and throw an exception if needed
+        }
+
+        if !load_mode.resolve() {
+            return Ok(container);
+        }
+
+        match container.cell_type() {
+            CellType::LibraryReference => {
+                if container.bit_len() != 8 + 256 {
+                    return Err(CellUnderflow);
+                }
+
+                let library_cell= if container.is_cell() {
+                    self.load_library(container.repr_hash())?.map(CellContainer::OwnedCell)
+                } else {
+                    self.load_library_ref(container.repr_hash())?.map(CellContainer::RefCell)
+                };
+
+                if let Some(library) = library_cell {
+                    if matches!(library.cell_type(), CellType::LibraryReference) {
+                        return Err(CellUnderflow);
+                    }
+                    Ok(library)
+                } else {
+                    Err(CellUnderflow)
+                }
+            }
+            CellType::PrunedBranch => {
+                // TODO: check virtualizaion and throw an exception if needed
+                Ok(container)
+            }
+            _ => Err(CellUnderflow),
+        }
+    }
 }
+
+// trait CellContainer<'a> {
+//     fn is_cell(&self) -> bool;
+//     fn as_dyn(&self) -> &'a DynCell;
+//     fn to_cell(self) -> Result<Cell, Error>;
+//     fn repr_hash(&self) -> &HashBytes;
+//     fn bit_len(&self) -> u16;
+//     fn cell_type(&self) -> CellType;
+// }
+
+enum CellContainer<'a> {
+    OwnedCell(Cell),
+    RefCell(&'a DynCell),
+}
+
+impl<'a> CellContainer<'a> {
+    fn is_cell(&self) -> bool {
+        match self {
+            CellContainer::OwnedCell(_) => true,
+            CellContainer::RefCell(_) => false,
+        }
+    }
+
+    fn as_dyn(&'a self) -> &'a DynCell {
+        match self {
+            CellContainer::OwnedCell(cell) => cell.as_ref(),
+            CellContainer::RefCell(r) => *r,
+        }
+    }
+
+    fn to_cell(self) -> Result<Cell, Error> {
+        match self {
+            CellContainer::OwnedCell(cell) => Ok(cell),
+            CellContainer::RefCell(r) => Err(CellUnderflow),
+        }
+    }
+
+    fn repr_hash(&self) -> &HashBytes {
+        match self {
+            CellContainer::OwnedCell(cell) => cell.repr_hash(),
+            CellContainer::RefCell(r) => r.repr_hash(),
+        }
+    }
+
+    fn bit_len(&self) -> u16 {
+        match self {
+            CellContainer::OwnedCell(cell) => cell.bit_len(),
+            CellContainer::RefCell(r) => r.bit_len(),
+        }
+    }
+
+    fn cell_type(&self) -> CellType {
+        match self {
+            CellContainer::OwnedCell(cell) => cell.cell_type(),
+            CellContainer::RefCell(r) => r.cell_type(),
+        }
+    }
+}
+
+// impl CellContainer for Cell {
+//     fn is_cell(&self) -> bool {true}
+//     fn as_dyn(&self) -> &DynCell {
+//         self.as_ref()
+//     }
+//     fn to_cell(self) -> Result<Cell, Error> { Ok(self) }
+//     fn repr_hash(&self) -> &HashBytes { self.repr_hash() }
+//     fn bit_len(&self) -> u16 { self.bit_len() }
+//     fn cell_type(&self) -> CellType { self.cell_type() }
+// }
+//
+// impl CellContainer for &DynCell {
+//     fn is_cell(&self) -> bool {false}
+//     fn as_dyn(&self) -> &DynCell {&self}
+//
+//     fn to_cell(self) -> Result<Cell, Error> { Err(CellUnderflow) }
+//     fn repr_hash(&self) -> &HashBytes { self.repr_hash() }
+//     fn bit_len(&self) -> u16 { self.bit_len() }
+//     fn cell_type(&self) -> CellType { self.cell_type() }
+// }
 
 impl CellContext for GasConsumer {
     fn finalize_cell(&mut self, cell: CellParts<'_>) -> Result<Cell, Error> {
@@ -263,8 +526,8 @@ impl CellContext for GasConsumer {
     }
 
     fn load_cell(&mut self, cell: Cell, mode: LoadMode) -> Result<Cell, Error> {
-        ok!(self.consume_load_cell(cell.as_ref(), mode));
-        Ok(cell)
+        let container = self.consume_load_dyn_cell(CellContainer::OwnedCell(cell), mode)?;
+        container.to_cell()
     }
 
     fn load_dyn_cell<'a>(
@@ -272,7 +535,7 @@ impl CellContext for GasConsumer {
         cell: &'a DynCell,
         mode: LoadMode,
     ) -> Result<&'a DynCell, Error> {
-        ok!(self.consume_load_cell(cell, mode));
-        Ok(cell)
+        let container = self.consume_load_dyn_cell(CellContainer::RefCell(cell), mode)?;
+        Ok(container.as_dyn())
     }
 }

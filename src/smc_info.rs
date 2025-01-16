@@ -297,8 +297,6 @@ impl SmcInfoTonV4 {
         }
     }
 
-
-
     fn write_items(&self, items: &mut Tuple) {
         // ..base:SmartContractInfo
         self.base.write_items(items);
@@ -420,7 +418,9 @@ impl SmcInfoTonV6 {
             Some(config) => config.clone().into_dyn_value(),
         });
         // due_payment:Integer
-        items.push(SafeRc::new_dyn_value(BigInt::from(self.due_payment.into_inner())));
+        items.push(SafeRc::new_dyn_value(BigInt::from(
+            self.due_payment.into_inner(),
+        )));
         // precompiled_gas_usage:Integer
         items.push(Stack::make_null());
     }
