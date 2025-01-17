@@ -225,7 +225,7 @@ impl Cellops {
     fn exec_builder_to_cell(st: &mut VmState) -> VmResult<i32> {
         let stack = SafeRc::make_mut(&mut st.stack);
         let builder = stack.pop_builder()?;
-        let cell = SafeRc::unwrap_or_clone(builder).build_ext(&mut st.gas)?;
+        let cell = SafeRc::unwrap_or_clone(builder).build_ext(&st.gas)?;
         ok!(stack.push(cell));
         Ok(0)
     }
@@ -266,7 +266,7 @@ impl Cellops {
             return finish_store_overflow(stack, builder, child_builder, quiet);
         }
 
-        let cell = SafeRc::unwrap_or_clone(child_builder).build_ext(&mut st.gas)?;
+        let cell = SafeRc::unwrap_or_clone(child_builder).build_ext(&st.gas)?;
         SafeRc::make_mut(&mut builder).store_reference(cell)?;
 
         finish_store_ok(stack, builder, quiet)
@@ -318,7 +318,7 @@ impl Cellops {
             return finish_store_overflow(stack, child_builder, builder, quiet);
         }
 
-        let cell = SafeRc::unwrap_or_clone(child_builder).build_ext(&mut st.gas)?;
+        let cell = SafeRc::unwrap_or_clone(child_builder).build_ext(&st.gas)?;
         SafeRc::make_mut(&mut builder).store_reference(cell)?;
 
         finish_store_ok(stack, builder, quiet)
@@ -473,7 +473,7 @@ impl Cellops {
         builder.set_exotic(special);
 
         // TODO: Test if `special` build fails with ordinary cell type in first 8 bits
-        let cell = builder.build_ext(&mut st.gas)?;
+        let cell = builder.build_ext(&st.gas)?;
 
         ok!(stack.push(cell));
         Ok(0)

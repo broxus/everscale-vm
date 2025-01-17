@@ -37,7 +37,7 @@ impl Store for ControlData {
     fn store_into(
         &self,
         builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
+        context: &dyn CellContext,
     ) -> Result<(), Error> {
         match self.nargs {
             None => ok!(builder.store_bit_zero()),
@@ -259,7 +259,7 @@ impl Store for ControlRegs {
     fn store_into(
         &self,
         builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
+        context: &dyn CellContext,
     ) -> Result<(), Error> {
         #[repr(transparent)]
         struct AsDictValue<'a>(&'a dyn StackValue);
@@ -269,7 +269,7 @@ impl Store for ControlRegs {
             fn store_into(
                 &self,
                 builder: &mut CellBuilder,
-                context: &mut dyn CellContext,
+                context: &dyn CellContext,
             ) -> Result<(), Error> {
                 self.0.store_as_stack_value(builder, context)
             }
@@ -345,7 +345,7 @@ impl<T: Cont + 'static> StackValue for T {
     fn store_as_stack_value(
         &self,
         builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
+        context: &dyn CellContext,
     ) -> Result<(), Error> {
         ok!(builder.store_u8(0x06));
         self.store_into(builder, context)
@@ -483,7 +483,7 @@ impl SafeDelete for QuitCont {
 }
 
 impl Store for QuitCont {
-    fn store_into(&self, builder: &mut CellBuilder, _: &mut dyn CellContext) -> Result<(), Error> {
+    fn store_into(&self, builder: &mut CellBuilder, _: &dyn CellContext) -> Result<(), Error> {
         ok!(builder.store_small_uint(Self::TAG, 4));
         builder.store_u32(self.exit_code as u32)
     }
@@ -540,7 +540,7 @@ impl SafeDelete for ExcQuitCont {
 }
 
 impl Store for ExcQuitCont {
-    fn store_into(&self, builder: &mut CellBuilder, _: &mut dyn CellContext) -> Result<(), Error> {
+    fn store_into(&self, builder: &mut CellBuilder, _: &dyn CellContext) -> Result<(), Error> {
         builder.store_small_uint(Self::TAG, 4)
     }
 }
@@ -606,7 +606,7 @@ impl Store for PushIntCont {
     fn store_into(
         &self,
         builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
+        context: &dyn CellContext,
     ) -> Result<(), Error> {
         ok!(builder.store_small_uint(Self::TAG, 4));
         ok!(builder.store_u32(self.value as u32));
@@ -696,7 +696,7 @@ impl Store for RepeatCont {
     fn store_into(
         &self,
         builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
+        context: &dyn CellContext,
     ) -> Result<(), Error> {
         if self.count >= Self::MAX_COUNT {
             return Err(Error::IntOverflow);
@@ -768,7 +768,7 @@ impl Store for AgainCont {
     fn store_into(
         &self,
         builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
+        context: &dyn CellContext,
     ) -> Result<(), Error> {
         ok!(builder.store_small_uint(Self::TAG, 6));
         builder.store_reference(ok!(CellBuilder::build_from_ext(&*self.body, context)))
@@ -837,7 +837,7 @@ impl Store for UntilCont {
     fn store_into(
         &self,
         builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
+        context: &dyn CellContext,
     ) -> Result<(), Error> {
         ok!(builder.store_small_uint(Self::TAG, 6));
         ok!(builder.store_reference(ok!(CellBuilder::build_from_ext(&*self.body, context))));
@@ -933,7 +933,7 @@ impl Store for WhileCont {
     fn store_into(
         &self,
         builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
+        context: &dyn CellContext,
     ) -> Result<(), Error> {
         let tag = (Self::TAG << 1) | !self.check_cond as u8;
         ok!(builder.store_small_uint(tag, 6));
@@ -1016,7 +1016,7 @@ impl Store for ArgContExt {
     fn store_into(
         &self,
         builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
+        context: &dyn CellContext,
     ) -> Result<(), Error> {
         ok!(builder.store_small_uint(Self::TAG, 2));
         self.ext.store_into(builder, context)
@@ -1100,7 +1100,7 @@ impl Store for OrdCont {
     fn store_into(
         &self,
         builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
+        context: &dyn CellContext,
     ) -> Result<(), Error> {
         ok!(builder.store_zeros(2));
         ok!(self.data.store_into(builder, context));

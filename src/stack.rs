@@ -455,7 +455,7 @@ impl Store for Stack {
     fn store_into(
         &self,
         builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
+        context: &dyn CellContext,
     ) -> Result<(), Error> {
         let depth = self.depth();
         if depth > Self::MAX_DEPTH {
@@ -536,7 +536,7 @@ pub trait StackValue: SafeDelete + std::fmt::Debug {
     fn store_as_stack_value(
         &self,
         builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
+        context: &dyn CellContext,
     ) -> Result<(), Error>;
 
     fn fmt_dump(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result;
@@ -751,7 +751,7 @@ impl StackValue for () {
     fn store_as_stack_value(
         &self,
         builder: &mut CellBuilder,
-        _: &mut dyn CellContext,
+        _: &dyn CellContext,
     ) -> Result<(), Error> {
         // vm_stk_null#00 = VmStackValue;
         builder.store_zeros(8)
@@ -788,7 +788,7 @@ impl StackValue for NaN {
     fn store_as_stack_value(
         &self,
         builder: &mut CellBuilder,
-        _: &mut dyn CellContext,
+        _: &dyn CellContext,
     ) -> Result<(), Error> {
         // vm_stk_nan#02ff = VmStackValue;
         builder.store_u16(0x02ff)
@@ -829,7 +829,7 @@ impl StackValue for BigInt {
     fn store_as_stack_value(
         &self,
         builder: &mut CellBuilder,
-        _: &mut dyn CellContext,
+        _: &dyn CellContext,
     ) -> Result<(), Error> {
         let bitsize = bitsize(self, true);
         if bitsize <= 64 {
@@ -900,7 +900,7 @@ impl StackValue for Cell {
     fn store_as_stack_value(
         &self,
         builder: &mut CellBuilder,
-        _: &mut dyn CellContext,
+        _: &dyn CellContext,
     ) -> Result<(), Error> {
         // vm_stk_cell#03 cell:^Cell = VmStackValue;
         ok!(builder.store_u8(0x03));
@@ -964,7 +964,7 @@ impl StackValue for OwnedCellSlice {
     fn store_as_stack_value(
         &self,
         builder: &mut CellBuilder,
-        _: &mut dyn CellContext,
+        _: &dyn CellContext,
     ) -> Result<(), Error> {
         // vm_stk_slice#04 _:VmCellSlice = VmStackValue;
         ok!(builder.store_u8(0x04));
@@ -1028,7 +1028,7 @@ impl StackValue for CellBuilder {
     fn store_as_stack_value(
         &self,
         builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
+        context: &dyn CellContext,
     ) -> Result<(), Error> {
         let mut b = self.clone();
         // NOTE: We cannot serialize builders with partially built
@@ -1097,7 +1097,7 @@ impl StackValue for dyn Cont {
     fn store_as_stack_value(
         &self,
         builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
+        context: &dyn CellContext,
     ) -> Result<(), Error> {
         // vm_stk_cont#06 cont:VmCont = VmStackValue;
         ok!(builder.store_u8(0x06));
@@ -1201,7 +1201,7 @@ impl StackValue for Tuple {
     fn store_as_stack_value(
         &self,
         builder: &mut CellBuilder,
-        context: &mut dyn CellContext,
+        context: &dyn CellContext,
     ) -> Result<(), Error> {
         if self.len() > u16::MAX as usize {
             return Err(Error::IntOverflow);
@@ -1481,7 +1481,7 @@ mod tests {
         fn check_value(value: RcStackValue) {
             let mut b = CellBuilder::new();
             value
-                .store_as_stack_value(&mut b, &mut Cell::empty_context())
+                .store_as_stack_value(&mut b, Cell::empty_context())
                 .unwrap();
             let parsed = Stack::load_stack_value(&mut b.as_full_slice()).unwrap();
 

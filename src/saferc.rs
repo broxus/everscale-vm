@@ -197,7 +197,7 @@ impl<'a, T: Load<'a> + SafeDelete> Load<'a> for SafeRc<T> {
 
 impl<T: Store + SafeDelete + ?Sized> Store for SafeRc<T> {
     #[inline]
-    fn store_into(&self, b: &mut CellBuilder, c: &mut dyn CellContext) -> Result<(), Error> {
+    fn store_into(&self, b: &mut CellBuilder, c: &dyn CellContext) -> Result<(), Error> {
         T::store_into(&*self.0, b, c)
     }
 }

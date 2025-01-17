@@ -143,7 +143,7 @@ impl CurrencyOps {
         };
 
         let addr = if var {
-            match rewrite_addr_var(addr, pfx, &mut st.gas) {
+            match rewrite_addr_var(addr, pfx, &st.gas) {
                 Ok(addr) => SafeRc::new_dyn_value(addr),
                 Err(e) => return handle_error(stack, e),
             }
@@ -166,7 +166,7 @@ impl CurrencyOps {
 fn rewrite_addr_var(
     addr: OwnedCellSlice,
     pfx: Option<OwnedCellSlice>,
-    gas: &mut GasConsumer,
+    gas: &GasConsumer,
 ) -> Result<OwnedCellSlice, Error> {
     let Some(pfx) = pfx else {
         return Ok(addr);

@@ -26,7 +26,7 @@ impl Hashops {
             HashSource::Cell => *ok!(stack.pop_cell()).repr_hash(),
             HashSource::Slice => {
                 let cs = ok!(stack.pop_cs());
-                let cell = CellBuilder::build_from_ext(cs.apply_allow_special(), &mut st.gas)?;
+                let cell = CellBuilder::build_from_ext(cs.apply_allow_special(), &st.gas)?;
                 *cell.repr_hash()
             }
         };
@@ -64,7 +64,7 @@ impl Hashops {
         let count = ok!(stack.pop_smallint_range(0, max_depth.try_into().unwrap_or(u32::MAX)));
 
         // TODO: pop_many on error?
-        let hash = ok!(compute_hash_ext(stack, &mut st.gas, i, count, r));
+        let hash = ok!(compute_hash_ext(stack, &st.gas, i, count, r));
         ok!(stack.pop_many(count as _));
 
         if p {
@@ -155,7 +155,7 @@ macro_rules! define_compute_hash_ext {
     ($($hash_id:literal => $fn:ident($bpg:literal, $hash:path) -> $out:ty),*$(,)?) => {
         fn compute_hash_ext(
             stack: &mut Stack,
-            gas: &mut GasConsumer,
+            gas: &GasConsumer,
             hash_id: u32,
             count: u32,
             reverse: bool,
@@ -211,7 +211,7 @@ struct HashInputReader<'a> {
     rem_bits: u16,
     prev_byte: u8,
     stack: &'a Stack,
-    gas: &'a mut GasConsumer,
+    gas: &'a GasConsumer,
 }
 
 impl<'a> HashInputReader<'a> {

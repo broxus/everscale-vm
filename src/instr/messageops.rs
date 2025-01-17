@@ -30,7 +30,7 @@ impl MessageOps {
         let mode = ok!(stack.pop_smallint_range(0, 255)) as u8;
         let cell = ok!(stack.pop_cell());
 
-        add_action(&mut st.cr, &mut st.gas, OutAction::SendMsg {
+        add_action(&mut st.cr, &st.gas, OutAction::SendMsg {
             mode: SendMsgFlags::from_bits_retain(mode),
             out_msg: Lazy::from_raw(SafeRc::unwrap_or_clone(cell)),
         })
@@ -51,7 +51,7 @@ impl MessageOps {
         let other = if x { ok!(stack.pop_cell_opt()) } else { None };
         let tokens = ok!(stack.pop_int().and_then(|int| bigint_to_tokens(&int)));
 
-        add_action(&mut st.cr, &mut st.gas, OutAction::ReserveCurrency {
+        add_action(&mut st.cr, &st.gas, OutAction::ReserveCurrency {
             mode: ReserveCurrencyFlags::from_bits_retain(mode as u8),
             value: CurrencyCollection {
                 tokens,
@@ -65,7 +65,7 @@ impl MessageOps {
         let stack = SafeRc::make_mut(&mut st.stack);
         let code = ok!(stack.pop_cell());
 
-        add_action(&mut st.cr, &mut st.gas, OutAction::SetCode {
+        add_action(&mut st.cr, &st.gas, OutAction::SetCode {
             new_code: SafeRc::unwrap_or_clone(code),
         })
     }
@@ -76,7 +76,7 @@ impl MessageOps {
         let mode = ok!(pop_change_library_mode(st.version, stack));
         let code = ok!(stack.pop_cell());
 
-        add_action(&mut st.cr, &mut st.gas, OutAction::ChangeLibrary {
+        add_action(&mut st.cr, &st.gas, OutAction::ChangeLibrary {
             mode,
             lib: LibRef::Cell(SafeRc::unwrap_or_clone(code)),
         })
@@ -103,7 +103,7 @@ impl MessageOps {
             res
         };
 
-        add_action(&mut st.cr, &mut st.gas, OutAction::ChangeLibrary {
+        add_action(&mut st.cr, &st.gas, OutAction::ChangeLibrary {
             mode,
             lib: LibRef::Hash(hash),
         })
@@ -164,8 +164,7 @@ impl MessageOps {
                 b.store_u32(if is_masterchain { 24 } else { 25 }).unwrap();
                 let key = b.as_data_slice();
 
-                let Some(mut value) = dict::dict_get(Some(config_root), 32, key, &mut st.gas)?
-                else {
+                let Some(mut value) = dict::dict_get(Some(config_root), 32, key, &st.gas)? else {
                     vm_bail!(Unknown("invalid prices config".to_owned()));
                 };
 
@@ -325,7 +324,7 @@ impl MessageOps {
         // Done
         if send {
             drop(msg_cell);
-            add_action(&mut st.cr, &mut st.gas, OutAction::SendMsg {
+            add_action(&mut st.cr, &st.gas, OutAction::SendMsg {
                 mode,
                 out_msg: Lazy::from_raw(SafeRc::unwrap_or_clone(raw_msg_cell)),
             })
@@ -428,7 +427,7 @@ fn tokens_mul_frac(value: Tokens, frac: u32) -> Tokens {
     Tokens::new(value.into_inner().saturating_mul(frac as u128) >> 16)
 }
 
-fn add_action(regs: &mut ControlRegs, gas: &mut GasConsumer, action: OutAction) -> VmResult<i32> {
+fn add_action(regs: &mut ControlRegs, gas: &GasConsumer, action: OutAction) -> VmResult<i32> {
     const ACTIONS_REG_IDX: usize = 5;
     let Some(c5) = regs.get_d(ACTIONS_REG_IDX) else {
         vm_bail!(ControlRegisterOutOfRange(ACTIONS_REG_IDX))
@@ -732,7 +731,7 @@ mod tests {
         let result = !vm_state.run();
         assert_eq!(result, 104);
         assert!(vm_state.commited_state.is_none());
-        assert_eq!(vm_state.gas.gas_credit, 10000);
+        assert_eq!(vm_state.gas.credit(), 10000);
 
         println!("code {result}");
     }

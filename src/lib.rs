@@ -279,7 +279,7 @@ mod tests {
 
     #[track_caller]
     pub fn compare_stack(actual: &Tuple, expected: &Tuple) {
-        let cx = &mut Cell::empty_context();
+        let cx = Cell::empty_context();
 
         let actual_stack = {
             let mut b = CellBuilder::new();

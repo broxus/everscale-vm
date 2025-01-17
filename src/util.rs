@@ -107,7 +107,7 @@ impl DictKey for Uint4 {
 }
 
 impl Store for Uint4 {
-    fn store_into(&self, builder: &mut CellBuilder, _: &mut dyn CellContext) -> Result<(), Error> {
+    fn store_into(&self, builder: &mut CellBuilder, _: &dyn CellContext) -> Result<(), Error> {
         if self.0 > 0xf {
             return Err(Error::IntOverflow);
         }

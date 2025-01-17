@@ -18,7 +18,7 @@ impl RandOps {
     #[op(code = "f810", fmt = "RANDU256")]
     fn exec_randu256(st: &mut VmState) -> VmResult<i32> {
         let stack = SafeRc::make_mut(&mut st.stack);
-        let random_bytes = ok!(generate_random_u256(&mut st.cr, &mut st.gas));
+        let random_bytes = ok!(generate_random_u256(&mut st.cr, &st.gas));
         let random = BigInt::from_bytes_be(Sign::Plus, random_bytes.as_ref());
         ok!(stack.push_int(random));
         Ok(0)
@@ -28,7 +28,7 @@ impl RandOps {
     fn exec_rand_int(st: &mut VmState) -> VmResult<i32> {
         let stack = SafeRc::make_mut(&mut st.stack);
         let mut int = ok!(stack.pop_int());
-        let random_bytes = ok!(generate_random_u256(&mut st.cr, &mut st.gas));
+        let random_bytes = ok!(generate_random_u256(&mut st.cr, &st.gas));
         let random = BigInt::from_bytes_be(Sign::Plus, random_bytes.as_ref());
 
         {
@@ -121,7 +121,7 @@ impl RandOps {
     }
 }
 
-fn generate_random_u256(regs: &mut ControlRegs, gas: &mut GasConsumer) -> VmResult<HashBytes> {
+fn generate_random_u256(regs: &mut ControlRegs, gas: &GasConsumer) -> VmResult<HashBytes> {
     let Some(c7) = regs.c7.as_ref() else {
         vm_bail!(ControlRegisterOutOfRange(7))
     };

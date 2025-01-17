@@ -11,7 +11,6 @@ use everscale_types::prelude::*;
 
 use crate::saferc::SafeRc;
 use crate::stack::Stack;
-use crate::{OwnedCellSlice, VmVersion};
 
 /// Initialization params for [`GasConsumer`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,7 +119,7 @@ impl LibraryProvider for NoLibraries {
         Ok(None)
     }
 
-    fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
+    fn find_ref<'a>(&'a self, _library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
         Ok(None)
     }
 }
@@ -155,7 +154,6 @@ impl LibraryProvider for Dict<HashBytes, LibDescr> {
     }
 
     fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
-
         struct LibDescrRef<'tlb> {
             lib: &'tlb DynCell,
         }
@@ -165,7 +163,9 @@ impl LibraryProvider for Dict<HashBytes, LibDescr> {
                 if slice.load_small_uint(2)? != 0 {
                     return Err(Error::InvalidTag);
                 }
-                Ok(Self {lib: slice.load_reference()?})
+                Ok(Self {
+                    lib: slice.load_reference()?,
+                })
             }
         }
 
@@ -184,9 +184,7 @@ impl<S: BuildHasher> LibraryProvider for std::collections::HashMap<HashBytes, Si
     }
 
     fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
-        Ok(self
-            .get(library_hash)
-            .map(|lib| lib.root.as_ref()))
+        Ok(self.get(library_hash).map(|lib| lib.root.as_ref()))
     }
 }
 
@@ -197,7 +195,9 @@ struct SimpleLibRef<'tlb> {
 impl<'a> Load<'a> for SimpleLibRef<'a> {
     fn load_from(slice: &mut CellSlice<'a>) -> Result<Self, Error> {
         slice.load_bit()?;
-        Ok(Self { root: slice.load_reference()? })
+        Ok(Self {
+            root: slice.load_reference()?,
+        })
     }
 }
 
@@ -206,28 +206,23 @@ impl EquivalentRepr<SimpleLib> for SimpleLibRef<'_> {}
 /// Gas tracking context.
 pub struct GasConsumer {
     /// Maximum possible value of the `limit`.
-    pub gas_max: u64,
+    gas_max: u64,
     /// Gas limit for the out-of-gas exception.
-    pub gas_limit: u64,
+    gas_limit: std::cell::Cell<u64>,
     /// Free gas (e.g. for external messages without any balance).
-    pub gas_credit: u64,
+    gas_credit: std::cell::Cell<u64>,
     /// Initial gas to compute the consumed amount.
-    pub gas_base: u64,
+    gas_base: std::cell::Cell<u64>,
     /// Remaining gas available.
-    pub gas_remaining: u64,
+    gas_remaining: std::cell::Cell<u64>,
 
     /// A set of visited cells.
-    pub loaded_cells: HashSet<HashBytes>,
+    loaded_cells: std::cell::UnsafeCell<HashSet<HashBytes>>,
     /// Libraries provider.
-    pub libraries: Box<dyn LibraryProvider>,
+    libraries: Box<dyn LibraryProvider>,
 
     /// Number of signature checks.
-    pub chksign_counter: u64,
-
-    /// Fallback cell context.
-    pub empty_context: <Cell as CellFamily>::EmptyCellContext,
-
-    vm_version: VmVersion,
+    chksign_counter: std::cell::Cell<usize>,
 }
 
 impl GasConsumer {
@@ -235,8 +230,8 @@ impl GasConsumer {
     pub const NEW_CELL_GAS: u64 = 100;
     pub const OLD_CELL_GAS: u64 = 25;
 
-    pub const FREE_STACK_DEPTH: u64 = 32;
-    pub const FREE_SIGNATURE_CHECKS: u64 = 10;
+    pub const FREE_STACK_DEPTH: usize = 32;
+    pub const FREE_SIGNATURE_CHECKS: usize = 10;
 
     pub const STACK_VALUE_GAS_PRICE: u64 = 1;
     pub const TUPLE_ENTRY_GAS_PRICE: u64 = 1;
@@ -246,181 +241,152 @@ impl GasConsumer {
     pub const IMPLICIT_RET_GAS_PRICE: u64 = 5;
     pub const EXCEPTION_GAS_PRICE: u64 = 50;
 
-    pub fn new(params: GasParams, vm_version: VmVersion) -> Self {
-        Self::with_libraries(params, Box::new(NoLibraries), vm_version)
+    pub fn new(params: GasParams) -> Self {
+        Self::with_libraries(params, Box::new(NoLibraries))
     }
 
-    pub fn with_libraries(
-        params: GasParams,
-        libraries: Box<dyn LibraryProvider>,
-        vm_version: VmVersion,
-    ) -> Self {
+    pub fn with_libraries(params: GasParams, libraries: Box<dyn LibraryProvider>) -> Self {
         let gas_remaining = params.limit.saturating_add(params.credit);
 
         Self {
             gas_max: params.max,
-            gas_limit: params.limit,
-            gas_credit: params.credit,
-            gas_base: gas_remaining,
-            gas_remaining,
+            gas_limit: std::cell::Cell::new(params.limit),
+            gas_credit: std::cell::Cell::new(params.credit),
+            gas_base: std::cell::Cell::new(gas_remaining),
+            gas_remaining: std::cell::Cell::new(gas_remaining),
             loaded_cells: Default::default(),
             libraries,
-            chksign_counter: 0,
-            empty_context: Default::default(),
-            vm_version,
+            chksign_counter: std::cell::Cell::new(0),
         }
     }
 
-    pub fn try_consume_exception_gas(&mut self) -> Result<(), Error> {
+    pub fn credit(&self) -> u64 {
+        self.gas_credit.get()
+    }
+
+    pub fn consumed(&self) -> u64 {
+        self.gas_base.get() - self.gas_remaining.get()
+    }
+
+    pub fn limit(&self) -> u64 {
+        self.gas_limit.get()
+    }
+
+    pub fn set_limit(&self, limit: u64) {
+        let limit = std::cmp::min(limit, self.gas_max);
+        vm_log_trace!(limit, "changing gas limit");
+
+        self.gas_credit.set(0);
+        self.gas_limit.set(limit);
+        self.set_base(limit);
+    }
+
+    fn set_base(&self, base: u64) {
+        let base_diff = base - self.gas_base.get();
+        self.gas_remaining.set(self.gas_remaining.get() + base_diff);
+        self.gas_base.set(base);
+    }
+
+    pub fn try_consume_exception_gas(&self) -> Result<(), Error> {
         self.try_consume(Self::EXCEPTION_GAS_PRICE)
     }
 
-    pub fn try_consume_implicit_jmpref_gas(&mut self) -> Result<(), Error> {
+    pub fn try_consume_implicit_jmpref_gas(&self) -> Result<(), Error> {
         self.try_consume(Self::IMPLICIT_JMPREF_GAS_PRICE)
     }
 
-    pub fn try_consume_implicit_ret_gas(&mut self) -> Result<(), Error> {
+    pub fn try_consume_implicit_ret_gas(&self) -> Result<(), Error> {
         self.try_consume(Self::IMPLICIT_RET_GAS_PRICE)
     }
 
-    pub fn try_consume_check_signature_gas(&mut self) -> Result<(), Error> {
-        self.chksign_counter += 1;
-        if self.chksign_counter > Self::FREE_SIGNATURE_CHECKS {
+    pub fn try_consume_check_signature_gas(&self) -> Result<(), Error> {
+        self.chksign_counter.set(self.chksign_counter.get() + 1);
+        if self.chksign_counter.get() > Self::FREE_SIGNATURE_CHECKS {
             self.try_consume(Self::CHK_SGN_GAS_PRICE)?;
         }
         Ok(())
     }
 
-    pub fn try_consume_stack_gas(&mut self, stack: Option<&SafeRc<Stack>>) -> Result<(), Error> {
+    pub fn try_consume_stack_gas(&self, stack: Option<&SafeRc<Stack>>) -> Result<(), Error> {
         if let Some(stack) = stack {
-            self.try_consume_stack_depth_gas(stack.depth() as u64)?;
+            self.try_consume_stack_depth_gas(stack.depth())?;
         }
         Ok(())
     }
 
-    pub fn try_consume_tuple_gas(&mut self, tuple_len: u64) -> Result<(), Error> {
+    pub fn try_consume_tuple_gas(&self, tuple_len: u64) -> Result<(), Error> {
         self.try_consume(tuple_len * Self::TUPLE_ENTRY_GAS_PRICE)?;
         Ok(())
     }
 
-    pub fn try_consume_stack_depth_gas(&mut self, depth: u64) -> Result<(), Error> {
+    pub fn try_consume_stack_depth_gas(&self, depth: usize) -> Result<(), Error> {
         self.try_consume(
-            (std::cmp::max(depth, Self::FREE_STACK_DEPTH) - Self::FREE_STACK_DEPTH)
+            (std::cmp::max(depth, Self::FREE_STACK_DEPTH) - Self::FREE_STACK_DEPTH) as u64
                 * Self::STACK_VALUE_GAS_PRICE,
         )
     }
 
-    pub fn try_consume(&mut self, amount: u64) -> Result<(), Error> {
-        if let Some(remaining) = self.gas_remaining.checked_sub(amount) {
-            self.gas_remaining = remaining;
+    pub fn try_consume(&self, amount: u64) -> Result<(), Error> {
+        if let Some(remaining) = self.gas_remaining.get().checked_sub(amount) {
+            self.gas_remaining.set(remaining);
             Ok(())
         } else {
             Err(Error::Cancelled)
         }
     }
 
-    pub fn gas_consumed(&self) -> u64 {
-        self.gas_base - self.gas_remaining
-    }
-
-    pub fn set_limit(&mut self, limit: u64) {
-        let limit = std::cmp::min(limit, self.gas_max);
-        vm_log_trace!(limit, "changing gas limit");
-
-        self.gas_credit = 0;
-        self.gas_limit = limit;
-        self.set_base(limit);
-    }
-
-    fn set_base(&mut self, base: u64) {
-        self.gas_remaining += base - self.gas_base;
-        self.gas_base = base;
-    }
-
-    // TODO: Update gas
-    pub fn load_library(&mut self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
-        self.libraries.find(library_hash)
-    }
-
-    pub fn load_library_ref<'a>(&'a mut self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
-        self.libraries.find_ref(library_hash)
-    }
-
-    fn consume_load_cell(&mut self, cell: &DynCell, mode: LoadMode) -> Result<(), Error> {
+    fn consume_load_cell(&self, cell: &DynCell, mode: LoadMode) -> Result<(), Error> {
         if mode.use_gas() {
-            let gas = if self.loaded_cells.insert(*cell.repr_hash()) {
+            // SAFETY: This is the only place where we borrow `loaded_cells` as mut.
+            let is_new = unsafe { (*self.loaded_cells.get()).insert(*cell.repr_hash()) };
+
+            ok!(self.try_consume(if is_new {
                 GasConsumer::NEW_CELL_GAS
             } else {
                 GasConsumer::OLD_CELL_GAS
-            };
-            ok!(self.try_consume(gas));
+            }));
         }
         Ok(())
     }
 
+    // TODO: Update gas
+    pub fn load_library(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
+        self.libraries.find(library_hash)
+    }
 
-    // fn consume_load_impl_cell<'a>(&mut self, cell: Cell, load_mode: LoadMode) -> Result<Cell, Error> {
-    //     self.consume_load_cell(cell.as_ref(), load_mode)?;
-    //
-    //     if matches!(cell.cell_type(), CellType::PrunedBranch) {
-    //         // check virtualizaion and throw an exception if needed
-    //     }
-    //
-    //     if !load_mode.resolve() {
-    //         return Ok(cell);
-    //     }
-    //
-    //     match cell.cell_type() {
-    //         CellType::LibraryReference => {
-    //             if cell.bit_len() != 8 + 256 {
-    //                 return Err(CellUnderflow);
-    //             }
-    //
-    //             let library_cell = self.load_library(cell.repr_hash())?;
-    //             if let Some(library) = library_cell {
-    //                 if matches!(library.cell_type(), CellType::LibraryReference) {
-    //                     return Err(CellUnderflow);
-    //                 }
-    //                 Ok(library)
-    //             } else {
-    //                 Err(CellUnderflow)
-    //             }
-    //         }
-    //         CellType::PrunedBranch => {
-    //             // TODO: check virtualizaion and throw an exception if needed
-    //             Ok(cell)
-    //         }
-    //         _ => Err(CellUnderflow),
-    //     }
-    // }
+    pub fn load_library_ref<'a>(
+        &'a self,
+        library_hash: &HashBytes,
+    ) -> Result<Option<&'a DynCell>, Error> {
+        self.libraries.find_ref(library_hash)
+    }
+}
 
+impl CellContext for GasConsumer {
+    fn finalize_cell(&self, cell: CellParts<'_>) -> Result<Cell, Error> {
+        ok!(self.try_consume(GasConsumer::BUILD_CELL_GAS));
+        Cell::empty_context().finalize_cell(cell)
+    }
 
-    fn consume_load_dyn_cell<'a>(
-        &'a mut self,
-        container: CellContainer<'a>,
-        load_mode: LoadMode,
-    ) -> Result<CellContainer<'a>, Error> {
-        self.consume_load_cell(container.as_dyn(), load_mode)?;
+    fn load_cell(&self, cell: Cell, mode: LoadMode) -> Result<Cell, Error> {
+        self.consume_load_cell(cell.as_ref(), mode)?;
 
-        if matches!(container.cell_type(), CellType::PrunedBranch) {
+        if matches!(cell.cell_type(), CellType::PrunedBranch) {
             // check virtualizaion and throw an exception if needed
         }
 
-        if !load_mode.resolve() {
-            return Ok(container);
+        if !mode.resolve() {
+            return Ok(cell);
         }
 
-        match container.cell_type() {
+        match cell.cell_type() {
+            CellType::Ordinary => Ok(cell),
             CellType::LibraryReference => {
-                if container.bit_len() != 8 + 256 {
+                if cell.bit_len() != 8 + 256 {
                     return Err(CellUnderflow);
                 }
 
-                let library_cell= if container.is_cell() {
-                    self.load_library(container.repr_hash())?.map(CellContainer::OwnedCell)
-                } else {
-                    self.load_library_ref(container.repr_hash())?.map(CellContainer::RefCell)
-                };
+                let library_cell = self.load_library(cell.repr_hash())?;
 
                 if let Some(library) = library_cell {
                     if matches!(library.cell_type(), CellType::LibraryReference) {
@@ -433,109 +399,50 @@ impl GasConsumer {
             }
             CellType::PrunedBranch => {
                 // TODO: check virtualizaion and throw an exception if needed
-                Ok(container)
+                Ok(cell)
             }
             _ => Err(CellUnderflow),
         }
     }
-}
 
-// trait CellContainer<'a> {
-//     fn is_cell(&self) -> bool;
-//     fn as_dyn(&self) -> &'a DynCell;
-//     fn to_cell(self) -> Result<Cell, Error>;
-//     fn repr_hash(&self) -> &HashBytes;
-//     fn bit_len(&self) -> u16;
-//     fn cell_type(&self) -> CellType;
-// }
-
-enum CellContainer<'a> {
-    OwnedCell(Cell),
-    RefCell(&'a DynCell),
-}
-
-impl<'a> CellContainer<'a> {
-    fn is_cell(&self) -> bool {
-        match self {
-            CellContainer::OwnedCell(_) => true,
-            CellContainer::RefCell(_) => false,
-        }
-    }
-
-    fn as_dyn(&'a self) -> &'a DynCell {
-        match self {
-            CellContainer::OwnedCell(cell) => cell.as_ref(),
-            CellContainer::RefCell(r) => *r,
-        }
-    }
-
-    fn to_cell(self) -> Result<Cell, Error> {
-        match self {
-            CellContainer::OwnedCell(cell) => Ok(cell),
-            CellContainer::RefCell(r) => Err(CellUnderflow),
-        }
-    }
-
-    fn repr_hash(&self) -> &HashBytes {
-        match self {
-            CellContainer::OwnedCell(cell) => cell.repr_hash(),
-            CellContainer::RefCell(r) => r.repr_hash(),
-        }
-    }
-
-    fn bit_len(&self) -> u16 {
-        match self {
-            CellContainer::OwnedCell(cell) => cell.bit_len(),
-            CellContainer::RefCell(r) => r.bit_len(),
-        }
-    }
-
-    fn cell_type(&self) -> CellType {
-        match self {
-            CellContainer::OwnedCell(cell) => cell.cell_type(),
-            CellContainer::RefCell(r) => r.cell_type(),
-        }
-    }
-}
-
-// impl CellContainer for Cell {
-//     fn is_cell(&self) -> bool {true}
-//     fn as_dyn(&self) -> &DynCell {
-//         self.as_ref()
-//     }
-//     fn to_cell(self) -> Result<Cell, Error> { Ok(self) }
-//     fn repr_hash(&self) -> &HashBytes { self.repr_hash() }
-//     fn bit_len(&self) -> u16 { self.bit_len() }
-//     fn cell_type(&self) -> CellType { self.cell_type() }
-// }
-//
-// impl CellContainer for &DynCell {
-//     fn is_cell(&self) -> bool {false}
-//     fn as_dyn(&self) -> &DynCell {&self}
-//
-//     fn to_cell(self) -> Result<Cell, Error> { Err(CellUnderflow) }
-//     fn repr_hash(&self) -> &HashBytes { self.repr_hash() }
-//     fn bit_len(&self) -> u16 { self.bit_len() }
-//     fn cell_type(&self) -> CellType { self.cell_type() }
-// }
-
-impl CellContext for GasConsumer {
-    fn finalize_cell(&mut self, cell: CellParts<'_>) -> Result<Cell, Error> {
-        ok!(self.try_consume(GasConsumer::BUILD_CELL_GAS));
-        self.empty_context.finalize_cell(cell)
-    }
-
-    fn load_cell(&mut self, cell: Cell, mode: LoadMode) -> Result<Cell, Error> {
-        let container = self.consume_load_dyn_cell(CellContainer::OwnedCell(cell), mode)?;
-        container.to_cell()
-    }
-
-    fn load_dyn_cell<'a>(
-        &mut self,
+    fn load_dyn_cell<'s: 'a, 'a>(
+        &'s self,
         cell: &'a DynCell,
         mode: LoadMode,
     ) -> Result<&'a DynCell, Error> {
-        let container = self.consume_load_dyn_cell(CellContainer::RefCell(cell), mode)?;
-        Ok(container.as_dyn())
+        self.consume_load_cell(cell, mode)?;
+
+        if matches!(cell.cell_type(), CellType::PrunedBranch) {
+            // check virtualizaion and throw an exception if needed
+        }
+
+        if !mode.resolve() {
+            return Ok(cell);
+        }
+
+        match cell.cell_type() {
+            CellType::Ordinary => Ok(cell),
+            CellType::LibraryReference => {
+                if cell.bit_len() != 8 + 256 {
+                    return Err(CellUnderflow);
+                }
+
+                let library_cell = self.load_library_ref(cell.repr_hash())?;
+
+                if let Some(library) = library_cell {
+                    if matches!(library.cell_type(), CellType::LibraryReference) {
+                        return Err(CellUnderflow);
+                    }
+                    Ok(library)
+                } else {
+                    Err(CellUnderflow)
+                }
+            }
+            CellType::PrunedBranch => {
+                // TODO: check virtualizaion and throw an exception if needed
+                Ok(cell)
+            }
+            _ => Err(CellUnderflow),
+        }
     }
 }

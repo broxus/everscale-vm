@@ -80,7 +80,6 @@ impl VmStateBuilder {
             gas: GasConsumer::with_libraries(
                 self.gas,
                 self.libraries.unwrap_or_else(|| Box::new(NoLibraries)),
-                self.version.clone().unwrap_or(VmState::DEFAULT_VERSION),
             ),
             cp,
             debug: self.debug,
@@ -421,8 +420,8 @@ impl VmState {
     }
 
     pub fn throw_out_of_gas(&mut self) -> i32 {
-        let consumed = self.gas.gas_consumed();
-        vm_log_trace!(consumed, limit = self.gas.gas_limit, "out of gas");
+        let consumed = self.gas.consumed();
+        vm_log_trace!(consumed, limit = self.gas.limit(), "out of gas");
         self.stack = SafeRc::new(Stack {
             items: vec![SafeRc::new_dyn_value(BigInt::from(consumed))],
         });
@@ -639,7 +638,7 @@ impl VmState {
                 // Ensure that the current stack has an exact number of items
                 _ if next_depth < current_depth => {
                     ok!(SafeRc::make_mut(&mut self.stack).drop_bottom(current_depth - next_depth));
-                    self.gas.try_consume_stack_depth_gas(next_depth as u64)?;
+                    self.gas.try_consume_stack_depth_gas(next_depth as _)?;
                 }
                 // Leave the current stack untouched
                 _ => {}
@@ -653,7 +652,7 @@ impl VmState {
             if depth_diff > 0 {
                 // Modify the current stack only when needed
                 ok!(SafeRc::make_mut(&mut self.stack).drop_bottom(depth_diff));
-                self.gas.try_consume_stack_depth_gas(pass_args as u64)?;
+                self.gas.try_consume_stack_depth_gas(pass_args as _)?;
             }
         }
 

@@ -33,7 +33,7 @@ impl BasicGasOps {
         ok!(st.version.require_ton(4..));
 
         let stack = SafeRc::make_mut(&mut st.stack);
-        ok!(stack.push_int(st.gas.gas_consumed()));
+        ok!(stack.push_int(st.gas.consumed()));
         Ok(0)
     }
 
@@ -45,7 +45,7 @@ impl BasicGasOps {
 }
 
 fn exec_set_gas(st: &mut VmState, gas_limit: u64) -> VmResult<i32> {
-    vm_ensure!(gas_limit >= st.gas.gas_consumed(), OutOfGas);
+    vm_ensure!(gas_limit >= st.gas.consumed(), OutOfGas);
     st.gas.set_limit(gas_limit);
     if st.modifiers.stop_on_accept {
         st.jump(SafeRc::from(QuitCont { exit_code: 0 }))

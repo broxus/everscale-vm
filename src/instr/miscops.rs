@@ -32,7 +32,7 @@ impl Miscops {
             _ => vm_bail!(IntegerOverflow),
         };
         let limit = bound.to_u64().unwrap_or(u64::MAX);
-        let mut storage = StorageStatExt::with_limit(&mut st.gas, limit);
+        let mut storage = StorageStatExt::with_limit(&st.gas, limit);
 
         let ok = if is_slice {
             let Some(slice) = value.as_cell_slice() else {
@@ -69,16 +69,16 @@ impl Miscops {
     }
 }
 
-struct StorageStatExt<'a> {
-    gas: &'a mut GasConsumer,
+struct StorageStatExt<'a, 'c: 'a> {
+    gas: &'c GasConsumer,
     visited: ahash::HashSet<&'a HashBytes>,
     stack: Vec<RefsIter<'a>>,
     stats: CellTreeStatsExt,
     limit: u64,
 }
 
-impl<'a> StorageStatExt<'a> {
-    pub fn with_limit(gas: &'a mut GasConsumer, limit: u64) -> Self {
+impl<'a, 'c: 'a> StorageStatExt<'a, 'c> {
+    pub fn with_limit(gas: &'c GasConsumer, limit: u64) -> Self {
         Self {
             gas,
             visited: Default::default(),

@@ -34,7 +34,7 @@ impl Dictops {
         let cell = ok!(stack.pop_cell_opt());
 
         cell.as_deref()
-            .store_into(SafeRc::make_mut(&mut builder), &mut Cell::empty_context())?;
+            .store_into(SafeRc::make_mut(&mut builder), Cell::empty_context())?;
         ok!(stack.push_raw(builder));
         Ok(0)
     }
@@ -134,10 +134,10 @@ impl Dictops {
         };
 
         let value = if s.is_ref() {
-            let value = dict::dict_get(dict.as_deref(), n, key, &mut st.gas)?;
+            let value = dict::dict_get(dict.as_deref(), n, key, &st.gas)?;
             ok!(value.map(to_value_ref).transpose())
         } else {
-            dict::dict_get_owned(dict.as_deref(), n, key, &mut st.gas)?
+            dict::dict_get_owned(dict.as_deref(), n, key, &st.gas)?
                 .map(|parts| SafeRc::new_dyn_value(OwnedCellSlice::from(parts)))
         };
 
@@ -211,7 +211,7 @@ impl Dictops {
         };
 
         let mut dict = dict.as_deref().cloned();
-        let result = dict::dict_insert(&mut dict, &mut key, n, value, mode, &mut st.gas);
+        let result = dict::dict_insert(&mut dict, &mut key, n, value, mode, &st.gas);
 
         ok!(stack.push_opt(dict));
 
@@ -285,7 +285,7 @@ impl Dictops {
         };
 
         let mut dict = dict.as_deref().cloned();
-        let (_, prev) = dict::dict_insert_owned(&mut dict, &mut key, n, value, mode, &mut st.gas)?;
+        let (_, prev) = dict::dict_insert_owned(&mut dict, &mut key, n, value, mode, &st.gas)?;
         let prev = ok!(prev.map(|p| extract_value_ref(p, s.is_ref())).transpose());
 
         ok!(stack.push_opt(dict));
@@ -328,7 +328,7 @@ impl Dictops {
         };
 
         let mut dict = dict.as_deref().cloned();
-        let result = dict::dict_remove_owned(&mut dict, &mut key, n, true, &mut st.gas)?;
+        let result = dict::dict_remove_owned(&mut dict, &mut key, n, true, &st.gas)?;
         ok!(stack.push_opt(dict));
         ok!(stack.push_bool(result.is_some()));
         Ok(0)
@@ -361,7 +361,7 @@ impl Dictops {
         };
 
         let mut dict = dict.as_deref().cloned();
-        let prev = dict::dict_remove_owned(&mut dict, &mut key, n, false, &mut st.gas)?;
+        let prev = dict::dict_remove_owned(&mut dict, &mut key, n, false, &st.gas)?;
         let prev = ok!(prev.map(|p| extract_value_ref(p, s.is_ref())).transpose());
 
         ok!(stack.push_opt(dict));
@@ -402,7 +402,7 @@ impl Dictops {
             cs.apply()?.load_prefix(n, 0)?
         };
 
-        let value = dict::dict_get(dict.as_deref(), n, key, &mut st.gas)?;
+        let value = dict::dict_get(dict.as_deref(), n, key, &st.gas)?;
         let value = ok!(value.map(to_value_ref).transpose());
         ok!(stack.push_opt_raw(value));
         Ok(0)
@@ -428,7 +428,7 @@ impl Dictops {
 
         let value = ok!(stack.pop_cell_opt());
 
-        let ctx = &mut st.gas;
+        let ctx = &st.gas;
         let mut dict = dict.as_deref().cloned();
         let prev = match value {
             Some(cell) => {
@@ -462,7 +462,7 @@ impl Dictops {
             DictBound::Max
         };
 
-        let ctx = &mut st.gas;
+        let ctx = &st.gas;
         if s.is_int() {
             let int = ok!(stack.pop_int());
 
@@ -531,7 +531,7 @@ impl Dictops {
         };
 
         let signed = s.is_signed();
-        let ctx = &mut st.gas;
+        let ctx = &st.gas;
         let key = if s.is_rem() {
             let mut dict = dict.as_deref().cloned();
             let prev = dict::dict_remove_bound_owned(&mut dict, n, bound, signed, ctx)?;
@@ -589,7 +589,7 @@ impl Dictops {
             store_int_to_builder_unchecked(&idx, n, signed, &mut cb)?;
             let key = cb.as_data_slice();
 
-            let Some(value) = dict::dict_get_owned(dict.as_deref(), n, key, &mut st.gas)? else {
+            let Some(value) = dict::dict_get_owned(dict.as_deref(), n, key, &st.gas)? else {
                 break 'scope;
             };
 
@@ -660,7 +660,7 @@ impl Dictops {
     //     };
 
     //     let subdict =
-    //         dict::dict_get_subdict(dict_deref.as_ref(), 32, &mut prefix, &mut st.gas)?;
+    //         dict::dict_get_subdict(dict_deref.as_ref(), 32, &mut prefix, &st.gas)?;
 
     //     ok!(stack.push_opt(subdict));
 
@@ -1270,7 +1270,7 @@ pub mod tests {
     //         dict2.into_root().as_ref(),
     //         32,
     //         &mut cloned,
-    //         &mut Cell::empty_context(),
+    //         Cell::empty_context(),
     //     )
     //     .unwrap()
     //     .unwrap();

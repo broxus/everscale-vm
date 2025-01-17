@@ -59,7 +59,7 @@ impl ConfigOps {
         store_int_to_builder(&idx, CONFIG_KEY_BITS, true, &mut builder)?;
         let key = builder.as_data_slice();
 
-        let value = dict::dict_get(dict.as_deref(), CONFIG_KEY_BITS, key, &mut st.gas)?;
+        let value = dict::dict_get(dict.as_deref(), CONFIG_KEY_BITS, key, &st.gas)?;
         let param = match value {
             Some(mut value) => Some(value.load_reference_cloned()?),
             None => None,
@@ -107,8 +107,7 @@ impl ConfigOps {
             builder.store_u32(19).unwrap(); // ConfigParam 19 contains global id
             let key = builder.as_data_slice();
 
-            let Some(mut value) =
-                dict::dict_get(Some(config_root), CONFIG_KEY_BITS, key, &mut st.gas)?
+            let Some(mut value) = dict::dict_get(Some(config_root), CONFIG_KEY_BITS, key, &st.gas)?
             else {
                 vm_bail!(Unknown("invalid global id config".to_owned()));
             };
@@ -285,13 +284,13 @@ impl ConfigOps {
     fn exec_set_global_var(st: &mut VmState) -> VmResult<i32> {
         let stack = SafeRc::make_mut(&mut st.stack);
         let args = ok!(stack.pop_smallint_range(0, 254));
-        set_global_common(&mut st.cr, stack, &mut st.gas, args as usize)
+        set_global_common(&mut st.cr, stack, &st.gas, args as usize)
     }
 
     #[op(code = "f8ii @ f861..f880", fmt = "SETGLOB {i}", args(i = args & 31))]
     fn exec_set_global(st: &mut VmState, i: u32) -> VmResult<i32> {
         let stack = SafeRc::make_mut(&mut st.stack);
-        set_global_common(&mut st.cr, stack, &mut st.gas, i as usize)
+        set_global_common(&mut st.cr, stack, &st.gas, i as usize)
     }
 }
 
@@ -330,7 +329,7 @@ fn get_global_common(regs: &mut ControlRegs, stack: &mut Stack, index: usize) ->
 fn set_global_common(
     regs: &mut ControlRegs,
     stack: &mut Stack,
-    gas: &mut GasConsumer,
+    gas: &GasConsumer,
     index: usize,
 ) -> VmResult<i32> {
     let value = ok!(stack.pop());
