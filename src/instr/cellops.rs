@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use anyhow::Result;
 use everscale_types::cell::{
-    Cell, CellBuilder, CellContext, CellFamily, CellSlice, CellType, DynCell, HashBytes, LoadMode,
+    Cell, CellBuilder, CellContext, CellFamily, CellSlice, DynCell, HashBytes, LoadMode,
 };
 use everscale_types::error::Error;
 use num_bigint::{BigInt, Sign};
@@ -1008,55 +1008,57 @@ impl Cellops {
     #[op(code = "d73a", fmt = "XLOAD", args(quiet = false))]
     #[op(code = "d73b", fmt = "XLOADQ", args(quiet = true))]
     fn exec_load_special_cell(st: &mut VmState, quiet: bool) -> VmResult<i32> {
-        let stack = SafeRc::make_mut(&mut st.stack);
-        let cell: SafeRc<Cell> = ok!(stack.pop_cell());
-        if st.version.is_ton(..5) {
-            ok!(stack.push_raw(cell));
+        let handle_error = |stack: &mut Stack, e: Error| {
             if quiet {
-                ok!(stack.push_bool(true));
-            }
-            return Ok(0);
-        }
-
-        let cell = SafeRc::unwrap_or_clone(cell);
-        let loaded_cell_res = st.gas.load_cell(cell, LoadMode::UseGas);
-        let cell = match loaded_cell_res {
-            Err(_) if quiet => {
                 ok!(stack.push_bool(false));
-                return Ok(0);
+                Ok(0)
+            } else {
+                vm_bail!(CellError(e));
             }
-            Err(e) => vm_bail!(CellError(e)),
-            Ok(cell) => cell,
         };
 
-        if cell.is_exotic() {
-            match cell.cell_type() {
-                CellType::LibraryReference => (),
-                _ if quiet => {
-                    ok!(stack.push_bool(false));
-                    return Ok(0);
-                }
-                _ => vm_bail!(CellError(Error::CellUnderflow)),
+        let stack = SafeRc::make_mut(&mut st.stack);
+        let cell = ok!(stack.pop_cell());
+
+        let cell = 'load: {
+            // Do nothing for old VM versions.
+            if st.version.is_ton(..5) {
+                break 'load cell;
             }
 
-            if cell.bit_len() != 8 + 256 {
-                vm_bail!(CellError(Error::InvalidCell))
+            // Consume only cell gas without resolve.
+            st.gas.load_dyn_cell((*cell).as_ref(), LoadMode::UseGas)?;
+
+            let descr = cell.descriptor();
+
+            // Do nothing for ordinary cells.
+            if !descr.is_exotic() {
+                break 'load cell;
             }
 
-            let hash_bytes = HashBytes::from_slice(&cell.data()[1..]);
-
-            match st.gas.load_library(&hash_bytes)? {
-                Some(library) => {
-                    ok!(stack.push_raw(SafeRc::new(library)));
-                    if quiet {
-                        ok!(stack.push_bool(true));
-                    }
-                }
-                None if quiet => {
-                    ok!(stack.push_bool(false));
-                }
-                None => vm_bail!(CellError(Error::CellUnderflow)),
+            // Only library cells can be loaded.
+            if !descr.is_library() {
+                return handle_error(stack, Error::CellUnderflow);
             }
+
+            // Library data structure is enforced by `CellContext::finalize_cell`.
+            debug_assert_eq!(cell.bit_len(), 8 + 256);
+
+            // Find library by hash.
+            let mut library_hash = HashBytes::ZERO;
+            cell.as_slice_allow_pruned()
+                .get_raw(8, &mut library_hash.0, 256)?;
+
+            match st.gas.libraries().find(&library_hash) {
+                Ok(Some(lib)) => SafeRc::new(lib),
+                Ok(None) => return handle_error(stack, Error::CellUnderflow),
+                Err(e) => return handle_error(stack, e),
+            }
+        };
+
+        ok!(stack.push_raw(cell));
+        if quiet {
+            ok!(stack.push_bool(true));
         }
         Ok(0)
     }

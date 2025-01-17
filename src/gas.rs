@@ -5,7 +5,6 @@ use std::sync::Arc;
 use ahash::HashSet;
 use everscale_types::cell::{CellParts, LoadMode};
 use everscale_types::error::Error;
-use everscale_types::error::Error::CellUnderflow;
 use everscale_types::models::{LibDescr, SimpleLib};
 use everscale_types::prelude::*;
 
@@ -260,6 +259,10 @@ impl GasConsumer {
         }
     }
 
+    pub fn libraries(&self) -> &dyn LibraryProvider {
+        self.libraries.as_ref()
+    }
+
     pub fn credit(&self) -> u64 {
         self.gas_credit.get()
     }
@@ -335,30 +338,52 @@ impl GasConsumer {
         }
     }
 
-    fn consume_load_cell(&self, cell: &DynCell, mode: LoadMode) -> Result<(), Error> {
-        if mode.use_gas() {
-            // SAFETY: This is the only place where we borrow `loaded_cells` as mut.
-            let is_new = unsafe { (*self.loaded_cells.get()).insert(*cell.repr_hash()) };
+    fn load_cell_impl<'s: 'a, 'a, T: LoadLibrary<'a>>(
+        &'s self,
+        mut cell: T,
+        mode: LoadMode,
+    ) -> Result<T, Error> {
+        let mut library_loaded = false;
+        loop {
+            if mode.use_gas() {
+                // SAFETY: This is the only place where we borrow `loaded_cells` as mut.
+                let is_new =
+                    unsafe { (*self.loaded_cells.get()).insert(*cell.as_ref().repr_hash()) };
 
-            ok!(self.try_consume(if is_new {
-                GasConsumer::NEW_CELL_GAS
-            } else {
-                GasConsumer::OLD_CELL_GAS
-            }));
+                ok!(self.try_consume(if is_new {
+                    GasConsumer::NEW_CELL_GAS
+                } else {
+                    GasConsumer::OLD_CELL_GAS
+                }));
+            }
+
+            if !mode.resolve() {
+                return Ok(cell);
+            }
+
+            match cell.as_ref().cell_type() {
+                CellType::Ordinary => return Ok(cell),
+                CellType::LibraryReference if !library_loaded => {
+                    // Library data structure is enforced by `CellContext::finalize_cell`.
+                    debug_assert_eq!(cell.as_ref().bit_len(), 8 + 256);
+
+                    // Find library by hash.
+                    let mut library_hash = HashBytes::ZERO;
+                    ok!(cell
+                        .as_ref()
+                        .as_slice_allow_pruned()
+                        .get_raw(8, &mut library_hash.0, 256));
+
+                    let Some(library_cell) = ok!(T::load_library(self, &library_hash)) else {
+                        return Err(Error::CellUnderflow);
+                    };
+
+                    cell = library_cell;
+                    library_loaded = true;
+                }
+                _ => return Err(Error::CellUnderflow),
+            }
         }
-        Ok(())
-    }
-
-    // TODO: Update gas
-    pub fn load_library(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
-        self.libraries.find(library_hash)
-    }
-
-    pub fn load_library_ref<'a>(
-        &'a self,
-        library_hash: &HashBytes,
-    ) -> Result<Option<&'a DynCell>, Error> {
-        self.libraries.find_ref(library_hash)
     }
 }
 
@@ -369,40 +394,7 @@ impl CellContext for GasConsumer {
     }
 
     fn load_cell(&self, cell: Cell, mode: LoadMode) -> Result<Cell, Error> {
-        self.consume_load_cell(cell.as_ref(), mode)?;
-
-        if matches!(cell.cell_type(), CellType::PrunedBranch) {
-            // check virtualizaion and throw an exception if needed
-        }
-
-        if !mode.resolve() {
-            return Ok(cell);
-        }
-
-        match cell.cell_type() {
-            CellType::Ordinary => Ok(cell),
-            CellType::LibraryReference => {
-                if cell.bit_len() != 8 + 256 {
-                    return Err(CellUnderflow);
-                }
-
-                let library_cell = self.load_library(cell.repr_hash())?;
-
-                if let Some(library) = library_cell {
-                    if matches!(library.cell_type(), CellType::LibraryReference) {
-                        return Err(CellUnderflow);
-                    }
-                    Ok(library)
-                } else {
-                    Err(CellUnderflow)
-                }
-            }
-            CellType::PrunedBranch => {
-                // TODO: check virtualizaion and throw an exception if needed
-                Ok(cell)
-            }
-            _ => Err(CellUnderflow),
-        }
+        self.load_cell_impl(cell, mode)
     }
 
     fn load_dyn_cell<'s: 'a, 'a>(
@@ -410,39 +402,30 @@ impl CellContext for GasConsumer {
         cell: &'a DynCell,
         mode: LoadMode,
     ) -> Result<&'a DynCell, Error> {
-        self.consume_load_cell(cell, mode)?;
+        self.load_cell_impl(cell, mode)
+    }
+}
 
-        if matches!(cell.cell_type(), CellType::PrunedBranch) {
-            // check virtualizaion and throw an exception if needed
-        }
+trait LoadLibrary<'a>: AsRef<DynCell> + 'a {
+    fn load_library(gas: &'a GasConsumer, library_hash: &HashBytes) -> Result<Option<Self>, Error>
+    where
+        Self: Sized;
+}
 
-        if !mode.resolve() {
-            return Ok(cell);
-        }
+impl<'a> LoadLibrary<'a> for &'a DynCell {
+    fn load_library(gas: &'a GasConsumer, library_hash: &HashBytes) -> Result<Option<Self>, Error>
+    where
+        Self: Sized,
+    {
+        gas.libraries.find_ref(library_hash)
+    }
+}
 
-        match cell.cell_type() {
-            CellType::Ordinary => Ok(cell),
-            CellType::LibraryReference => {
-                if cell.bit_len() != 8 + 256 {
-                    return Err(CellUnderflow);
-                }
-
-                let library_cell = self.load_library_ref(cell.repr_hash())?;
-
-                if let Some(library) = library_cell {
-                    if matches!(library.cell_type(), CellType::LibraryReference) {
-                        return Err(CellUnderflow);
-                    }
-                    Ok(library)
-                } else {
-                    Err(CellUnderflow)
-                }
-            }
-            CellType::PrunedBranch => {
-                // TODO: check virtualizaion and throw an exception if needed
-                Ok(cell)
-            }
-            _ => Err(CellUnderflow),
-        }
+impl LoadLibrary<'_> for Cell {
+    fn load_library(gas: &'_ GasConsumer, library_hash: &HashBytes) -> Result<Option<Self>, Error>
+    where
+        Self: Sized,
+    {
+        gas.libraries.find(library_hash)
     }
 }
