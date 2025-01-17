@@ -241,6 +241,9 @@ mod __private {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use everscale_types::models::{CurrencyCollection, SimpleLib, StdAddr};
     use everscale_types::prelude::*;
     use tracing_test::traced_test;
 
@@ -336,6 +339,55 @@ mod tests {
             .build();
         let exit_code = !vm.run();
         println!("Exit code: {exit_code}");
+    }
+
+    #[test]
+    #[traced_test]
+    fn library_cells_works() -> anyhow::Result<()> {
+        let library = Boc::decode_base64("te6ccuECDwEAA9EAABoAJAEkAS4CJgL+A5wEVAVSBkoGrgcsB1EHfAeiART/APSkE/S88sgLAQIBYgIDAvjQAdDTAwFxsI5IE18DgCDXIe1E0NMD+gD6QPpA0QTTHwGEDyGCEBeNRRm6AoIQe92X3roSsfL0gEDXIfoAMBKgQBMDyMsDWPoCAc8WAc8Wye1U4PpA+kAx+gAx9AH6ADH6AAExcPg6AtMfASCCEA+KfqW6joUwNFnbPOAzBAUCASANDgHyA9M/AQH6APpAIfpEMMAA8uFN7UTQ0wP6APpA+kDRUwnHBSRxsMAAIbHyrVIrxwVQCrHy4ElRFaEgwv/yr/gqVCWQcFRgBBMVA8jLA1j6AgHPFgHPFskhyMsBE/QAEvQAywDJIPkAcHTIywLKB8v/ydAE+kD0AfoAIAYC0CKCEBeNRRm6joQyWts84DQhghBZXwe8uo6EMQHbPOAyIIIQ7tI207qOLzABgEDXIdMD0e1E0NMD+gD6QPpA0TNRQscF8uBKQDMDyMsDWPoCAc8WAc8Wye1U4GwhghDTchWMutyED/LwCAkBmCDXCwCa10vAAQHAAbDysZEw4siCEBeNRRkByx9QCgHLP1AI+gIjzxYBzxYm+gJQB88WyciAGAHLBVAEzxZw+gJAY3dQA8trzMzJRTcHALQhkXKRceL4OSBuk4EkJ5Eg4iFulDGBKHORAeJQI6gToHOBA6Nw+DygAnD4NhKgAXD4NqBzgQQJghAJZgGAcPg3oLzysASAUPsAWAPIywNY+gIBzxYBzxbJ7VQD9O1E0NMD+gD6QPpA0SNysMAC8m0H0z8BAfoAUUGgBPpA+kBTuscF+CpUZOBwVGAEExUDyMsDWPoCAc8WAc8WySHIywET9AAS9ADLAMn5AHB0yMsCygfL/8nQUAzHBRux8uBKCfoAIZJfBOMNJtcLAcAAs5MwbDPjDVUCCgsMAfLtRNDTA/oA+kD6QNEG0z8BAfoA+kD0AdFRQaFSiMcF8uBJJsL/8q/IghB73ZfeAcsfWAHLPwH6AiHPFljPFsnIgBgBywUmzxZw+gIBcVjLaszJA/g5IG6UMIEWn95xgQLycPg4AXD4NqCBGndw+DagvPKwAoBQ+wADDABgyIIQc2LQnAHLHyUByz9QBPoCWM8WWM8WyciAEAHLBSTPFlj6AgFxWMtqzMmAEfsAAHpQVKH4L6BzgQQJghAJZgGAcPg3tgly+wLIgBABywVQBc8WcPoCcAHLaoIQ1TJ22wHLH1gByz/JgQCC+wBZACADyMsDWPoCAc8WAc8Wye1UACe/2BdqJoaYH9AH0gfSBomfwVIJhAAhvFCPaiaGmB/QB9IH0gaK+Bz+s3AU")?;
+        let libraries = HashMap::from([(
+            "8f452d7a4dfd74066b682365177259ed05734435be76b5fd4bd5d8af2b7c3d68"
+                .parse::<HashBytes>()?,
+            SimpleLib {
+                public: true,
+                root: library,
+            },
+        )]);
+
+        let addr = "0:2626CF30B702BDDED845EFC883EFA45029FF59DEFDACC4CE7B8B0A5966D75002"
+            .parse::<StdAddr>()?;
+
+        let mut code =
+            Boc::decode_base64("te6ccgEBAQEAIwAIQgKPRS16Tf10BmtoI2UXclntBXNENb52tf1L1divK3w9aA==")?;
+
+        let data = Boc::decode_base64("te6ccgEBAQEATAAAkwYKW203ZzmABH9S8yMeP84FtyIBfwh9D44CvZmnNI5D0211guF4CZxwAsROplLUCShZxn2kTkyjrdZWWw4ol9ZAosUb+zcNiHf6")?;
+
+        let smc_info = SmcInfoBase::new()
+            .with_now(1733142533)
+            .with_block_lt(52499545000000)
+            .with_tx_lt(52499545000005)
+            .with_account_balance(CurrencyCollection::new(5981380))
+            .with_account_addr(addr.clone().into())
+            .require_ton_v4();
+
+        if code.is_exotic() {
+            code = CellBuilder::build_from(code)?;
+        }
+
+        let mut vm_state = VmState::builder()
+            .with_smc_info(smc_info)
+            .with_stack(tuple![
+                int 97026, // get_wallet_data
+            ])
+            .with_code(code)
+            .with_data(data)
+            .with_gas(GasParams::getter())
+            .with_debug(TracingOutput::default())
+            .with_libraries(libraries)
+            .build();
+
+        assert_eq!(vm_state.run(), -1);
+        Ok(())
     }
 
     #[derive(Default)]

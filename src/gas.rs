@@ -64,7 +64,11 @@ impl<T: LibraryProvider> LibraryProvider for &'_ T {
     }
 }
 
-impl<T1: LibraryProvider, T2: LibraryProvider> LibraryProvider for (T1, T2) {
+impl<T1, T2> LibraryProvider for (T1, T2)
+where
+    T1: LibraryProvider,
+    T2: LibraryProvider,
+{
     fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
         if let res @ Some(_) = ok!(T1::find(&self.0, library_hash)) {
             return Ok(res);
@@ -80,10 +84,38 @@ impl<T1: LibraryProvider, T2: LibraryProvider> LibraryProvider for (T1, T2) {
     }
 }
 
+impl<T1, T2, T3> LibraryProvider for (T1, T2, T3)
+where
+    T1: LibraryProvider,
+    T2: LibraryProvider,
+    T3: LibraryProvider,
+{
+    fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
+        if let res @ Some(_) = ok!(T1::find(&self.0, library_hash)) {
+            return Ok(res);
+        }
+        if let res @ Some(_) = ok!(T2::find(&self.1, library_hash)) {
+            return Ok(res);
+        }
+        T3::find(&self.2, library_hash)
+    }
+
+    fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
+        if let res @ Some(_) = ok!(T1::find_ref(&self.0, library_hash)) {
+            return Ok(res);
+        }
+        if let res @ Some(_) = ok!(T2::find_ref(&self.1, library_hash)) {
+            return Ok(res);
+        }
+        T3::find_ref(&self.2, library_hash)
+    }
+}
+
 impl<T: LibraryProvider> LibraryProvider for Box<T> {
     fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
         T::find(self, library_hash)
     }
+
     fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
         T::find_ref(self, library_hash)
     }
@@ -93,6 +125,7 @@ impl<T: LibraryProvider> LibraryProvider for Rc<T> {
     fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
         T::find(self, library_hash)
     }
+
     fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
         T::find_ref(self, library_hash)
     }
@@ -133,7 +166,23 @@ impl LibraryProvider for Vec<Dict<HashBytes, SimpleLib>> {
         }
         Ok(None)
     }
+
     fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
+        struct SimpleLibRef<'tlb> {
+            root: &'tlb DynCell,
+        }
+
+        impl<'a> Load<'a> for SimpleLibRef<'a> {
+            fn load_from(slice: &mut CellSlice<'a>) -> Result<Self, Error> {
+                slice.load_bit()?;
+                Ok(Self {
+                    root: slice.load_reference()?,
+                })
+            }
+        }
+
+        impl EquivalentRepr<SimpleLib> for SimpleLibRef<'_> {}
+
         for lib in self {
             match lib
                 .cast_ref::<HashBytes, SimpleLibRef<'_>>()
@@ -186,21 +235,6 @@ impl<S: BuildHasher> LibraryProvider for std::collections::HashMap<HashBytes, Si
         Ok(self.get(library_hash).map(|lib| lib.root.as_ref()))
     }
 }
-
-struct SimpleLibRef<'tlb> {
-    root: &'tlb DynCell,
-}
-
-impl<'a> Load<'a> for SimpleLibRef<'a> {
-    fn load_from(slice: &mut CellSlice<'a>) -> Result<Self, Error> {
-        slice.load_bit()?;
-        Ok(Self {
-            root: slice.load_reference()?,
-        })
-    }
-}
-
-impl EquivalentRepr<SimpleLib> for SimpleLibRef<'_> {}
 
 /// Gas tracking context.
 pub struct GasConsumer {
