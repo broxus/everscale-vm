@@ -390,6 +390,58 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    #[traced_test]
+    fn recursive_libraries() -> anyhow::Result<()> {
+        fn make_lib(code: &DynCell) -> Cell {
+            let mut b = CellBuilder::new();
+            b.set_exotic(true);
+            b.store_u8(CellType::LibraryReference.to_byte()).unwrap();
+            b.store_u256(code.repr_hash()).unwrap();
+            b.build().unwrap()
+        }
+
+        let leaf_lib = Boc::decode(tvmasm!("NOP"))?;
+        let lib1 = make_lib(leaf_lib.as_ref());
+        let lib2 = make_lib(lib1.as_ref());
+
+        let libraries = HashMap::from([
+            (*leaf_lib.repr_hash(), SimpleLib {
+                public: true,
+                root: leaf_lib,
+            }),
+            (*lib1.repr_hash(), SimpleLib {
+                public: true,
+                root: lib1,
+            }),
+            (*lib2.repr_hash(), SimpleLib {
+                public: true,
+                root: lib2.clone(),
+            }),
+        ]);
+
+        let code = CellBuilder::build_from(lib2)?;
+
+        let smc_info = SmcInfoBase::new()
+            .with_now(1733142533)
+            .with_block_lt(52499545000000)
+            .with_tx_lt(52499545000005)
+            .with_account_balance(CurrencyCollection::new(5981380))
+            .with_account_addr(Default::default())
+            .require_ton_v4();
+
+        let mut vm_state = VmState::builder()
+            .with_smc_info(smc_info)
+            .with_code(code)
+            .with_gas(GasParams::getter())
+            .with_debug(TracingOutput::default())
+            .with_libraries(libraries)
+            .build();
+
+        assert_eq!(vm_state.run(), -10); // cell underflow
+        Ok(())
+    }
+
     #[derive(Default)]
     pub struct TracingOutput {
         buffer: String,
