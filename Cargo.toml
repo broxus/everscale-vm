@@ -52,4 +52,4 @@ everscale-types = { version = "0.1.2", default-features = false, features = [
 everscale-asm-macros = { git = "https://github.com/broxus/everscale-asm.git", rev = "81e7aab4a970cea76f48e583e09bf7a1886661fe" }
 
 [patch.crates-io]
-everscale-types = { git = "https://github.com/broxus/everscale-types.git", rev = "34d83b307675cd83cbbb818c8fa0eab92543bcc1" }
+everscale-types = { git = "https://github.com/broxus/everscale-types.git", rev = "d8d573db4054b5343f3d5579b40ae2b99776b222" }

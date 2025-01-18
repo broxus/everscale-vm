@@ -156,11 +156,30 @@ impl LibraryProvider for NoLibraries {
     }
 }
 
+impl LibraryProvider for Dict<HashBytes, SimpleLib> {
+    fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
+        match self.get(library_hash)? {
+            Some(lib) => Ok(Some(lib.root)),
+            None => Ok(None),
+        }
+    }
+
+    fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
+        match self
+            .cast_ref::<HashBytes, SimpleLibRef<'_>>()
+            .get(library_hash)?
+        {
+            Some(lib) => Ok(Some(lib.root)),
+            None => Ok(None),
+        }
+    }
+}
+
 impl LibraryProvider for Vec<Dict<HashBytes, SimpleLib>> {
     fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
         for lib in self {
             match lib.get(library_hash)? {
-                Some(lib) => return Ok(Some(lib.root.clone())),
+                Some(lib) => return Ok(Some(lib.root)),
                 None => continue,
             }
         }
@@ -168,21 +187,6 @@ impl LibraryProvider for Vec<Dict<HashBytes, SimpleLib>> {
     }
 
     fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
-        struct SimpleLibRef<'tlb> {
-            root: &'tlb DynCell,
-        }
-
-        impl<'a> Load<'a> for SimpleLibRef<'a> {
-            fn load_from(slice: &mut CellSlice<'a>) -> Result<Self, Error> {
-                slice.load_bit()?;
-                Ok(Self {
-                    root: slice.load_reference()?,
-                })
-            }
-        }
-
-        impl EquivalentRepr<SimpleLib> for SimpleLibRef<'_> {}
-
         for lib in self {
             match lib
                 .cast_ref::<HashBytes, SimpleLibRef<'_>>()
@@ -235,6 +239,21 @@ impl<S: BuildHasher> LibraryProvider for std::collections::HashMap<HashBytes, Si
         Ok(self.get(library_hash).map(|lib| lib.root.as_ref()))
     }
 }
+
+struct SimpleLibRef<'tlb> {
+    root: &'tlb DynCell,
+}
+
+impl<'a> Load<'a> for SimpleLibRef<'a> {
+    fn load_from(slice: &mut CellSlice<'a>) -> Result<Self, Error> {
+        slice.load_bit()?;
+        Ok(Self {
+            root: slice.load_reference()?,
+        })
+    }
+}
+
+impl EquivalentRepr<SimpleLib> for SimpleLibRef<'_> {}
 
 /// Gas tracking context.
 pub struct GasConsumer<'l> {
@@ -463,5 +482,83 @@ impl LoadLibrary<'_> for Cell {
         Self: Sized,
     {
         gas.libraries.find(library_hash)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_lib_dict_ref() {
+        let lib1 = Boc::decode(tvmasm!("NOP")).unwrap();
+        let lib2 = Boc::decode(tvmasm!("NOP NOP")).unwrap();
+
+        // Dict with SimpleLib
+        let mut libraries = vec![
+            (*lib1.repr_hash(), SimpleLib {
+                public: true,
+                root: lib1.clone(),
+            }),
+            (*lib2.repr_hash(), SimpleLib {
+                public: true,
+                root: lib2.clone(),
+            }),
+        ];
+        libraries.sort_unstable_by(|(l, _), (r, _)| l.cmp(r));
+        let libraries = Dict::<HashBytes, SimpleLib>::try_from_sorted_slice(&libraries).unwrap();
+
+        assert!(libraries.find(&HashBytes::ZERO).unwrap().is_none());
+        assert!(libraries.find_ref(&HashBytes::ZERO).unwrap().is_none());
+
+        assert_eq!(
+            libraries.find(lib1.repr_hash()).unwrap().unwrap().as_ref(),
+            libraries.find_ref(lib1.repr_hash()).unwrap().unwrap()
+        );
+        assert_eq!(
+            libraries.find(lib2.repr_hash()).unwrap().unwrap().as_ref(),
+            libraries.find_ref(lib2.repr_hash()).unwrap().unwrap()
+        );
+
+        // Dict with LibDescr
+        let mut publishers = Dict::new();
+        publishers.add(&HashBytes::ZERO, ()).unwrap();
+
+        {
+            let lib = LibDescr {
+                lib: lib1.clone(),
+                publishers: publishers.clone(),
+            };
+            let c = CellBuilder::build_from(&lib).unwrap();
+            let parsed = c.parse::<LibDescr>().unwrap();
+
+            assert_eq!(lib, parsed);
+        }
+
+        let mut libraries = vec![
+            (*lib1.repr_hash(), LibDescr {
+                lib: lib1.clone(),
+                publishers: publishers.clone(),
+            }),
+            (*lib2.repr_hash(), LibDescr {
+                lib: lib2.clone(),
+                publishers,
+            }),
+        ];
+        libraries.sort_unstable_by(|(l, _), (r, _)| l.cmp(r));
+
+        let libraries = Dict::<HashBytes, LibDescr>::try_from_sorted_slice(&libraries).unwrap();
+
+        assert!(libraries.find(&HashBytes::ZERO).unwrap().is_none());
+        assert!(libraries.find_ref(&HashBytes::ZERO).unwrap().is_none());
+
+        assert_eq!(
+            libraries.find(lib1.repr_hash()).unwrap().unwrap().as_ref(),
+            libraries.find_ref(lib1.repr_hash()).unwrap().unwrap()
+        );
+        assert_eq!(
+            libraries.find(lib2.repr_hash()).unwrap().unwrap().as_ref(),
+            libraries.find_ref(lib2.repr_hash()).unwrap().unwrap()
+        );
     }
 }
