@@ -133,11 +133,13 @@ macro_rules! assert_run_vm {
         $(, exit_code: $exit_code:literal)?
         $(,)?
     ) => {{
+        let mut output = $crate::tests::TracingOutput::default();
         let (exit_code, vm) = $crate::tests::run_vm_with_stack(
             tvmasm!($($code),+),
             $crate::assert_run_vm!(@c7 $($c7_params)?),
             $crate::tuple![$($origin_stack)*],
             $crate::assert_run_vm!(@gas $($gas_limit)?),
+            &mut output,
         );
         $crate::assert_run_vm!(@check_exit_code exit_code $($exit_code)?);
 
@@ -250,23 +252,25 @@ mod tests {
     use super::*;
     use crate::stack::{RcStackValue, Tuple};
 
-    pub fn run_vm_with_stack<I>(
+    pub fn run_vm_with_stack<'a, I>(
         code: &[u8],
         c7_params: Tuple,
         original_stack: I,
         gas_limit: u64,
-    ) -> (i32, VmState)
+        output: &'a mut impl std::fmt::Write,
+    ) -> (i32, VmState<'a>)
     where
         I: IntoIterator<Item = RcStackValue>,
     {
         let code = Boc::decode(code).unwrap();
+
         let mut vm = VmState::builder()
             .with_code(code)
             .with_smc_info(CustomSmcInfo {
                 version: VmState::DEFAULT_VERSION,
                 c7: SafeRc::new(c7_params),
             })
-            .with_debug(TracingOutput::default())
+            .with_debug(output)
             .with_stack(original_stack)
             .with_gas(GasParams {
                 max: gas_limit,
@@ -333,9 +337,10 @@ mod tests {
         ))
         .unwrap();
 
+        let mut output = TracingOutput::default();
         let mut vm = VmState::builder()
             .with_code(code)
-            .with_debug(TracingOutput::default())
+            .with_debug(&mut output)
             .build();
         let exit_code = !vm.run();
         println!("Exit code: {exit_code}");
@@ -374,6 +379,7 @@ mod tests {
             code = CellBuilder::build_from(code)?;
         }
 
+        let mut output = TracingOutput::default();
         let mut vm_state = VmState::builder()
             .with_smc_info(smc_info)
             .with_stack(tuple![
@@ -382,8 +388,8 @@ mod tests {
             .with_code(code)
             .with_data(data)
             .with_gas(GasParams::getter())
-            .with_debug(TracingOutput::default())
-            .with_libraries(libraries)
+            .with_debug(&mut output)
+            .with_libraries(&libraries)
             .build();
 
         assert_eq!(vm_state.run(), -1);
@@ -430,12 +436,13 @@ mod tests {
             .with_account_addr(Default::default())
             .require_ton_v4();
 
+        let mut output = TracingOutput::default();
         let mut vm_state = VmState::builder()
             .with_smc_info(smc_info)
             .with_code(code)
             .with_gas(GasParams::getter())
-            .with_debug(TracingOutput::default())
-            .with_libraries(libraries)
+            .with_debug(&mut output)
+            .with_libraries(&libraries)
             .build();
 
         assert_eq!(vm_state.run(), -10); // cell underflow

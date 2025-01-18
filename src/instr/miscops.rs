@@ -69,16 +69,16 @@ impl Miscops {
     }
 }
 
-struct StorageStatExt<'a, 'c: 'a> {
-    gas: &'c GasConsumer,
+struct StorageStatExt<'a, 'c: 'a, 'l> {
+    gas: &'c GasConsumer<'l>,
     visited: ahash::HashSet<&'a HashBytes>,
     stack: Vec<RefsIter<'a>>,
     stats: CellTreeStatsExt,
     limit: u64,
 }
 
-impl<'a, 'c: 'a> StorageStatExt<'a, 'c> {
-    pub fn with_limit(gas: &'c GasConsumer, limit: u64) -> Self {
+impl<'a, 'c: 'a, 'l> StorageStatExt<'a, 'c, 'l> {
+    pub fn with_limit(gas: &'c GasConsumer<'l>, limit: u64) -> Self {
         Self {
             gas,
             visited: Default::default(),

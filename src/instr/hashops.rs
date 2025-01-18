@@ -183,7 +183,7 @@ macro_rules! define_compute_hash_ext {
             Ok(bytes)
         }
 
-        $(fn $fn(reader: &'_ mut HashInputReader<'_>) -> VmResult<$out> {
+        $(fn $fn(reader: &'_ mut HashInputReader<'_, '_>) -> VmResult<$out> {
             let mut hasher = <$hash>::new();
 
             let mut buffer = HashInputReader::chunk_buffer();
@@ -202,7 +202,7 @@ define_compute_hash_ext! {
     2 => compute_hash_ext_blake2b512(19, blake2::Blake2b512) -> [u8; 64],
 }
 
-struct HashInputReader<'a> {
+struct HashInputReader<'a, 'l> {
     count: usize,
     reverse: bool,
     index: usize,
@@ -211,10 +211,10 @@ struct HashInputReader<'a> {
     rem_bits: u16,
     prev_byte: u8,
     stack: &'a Stack,
-    gas: &'a GasConsumer,
+    gas: &'a GasConsumer<'l>,
 }
 
-impl<'a> HashInputReader<'a> {
+impl<'a> HashInputReader<'a, '_> {
     const fn chunk_buffer() -> ChunkBuffer {
         // First byte for unaligned bits, the rest is for slice data
         [0; 129]

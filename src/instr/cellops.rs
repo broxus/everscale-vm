@@ -1840,7 +1840,11 @@ fn exec_cell_level_op_common(stack: &mut Stack, level: u8, op: LevelOp) -> VmRes
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use everscale_types::boc::Boc;
     use everscale_types::cell::CellBuilder;
+    use everscale_types::models::SimpleLib;
     use tracing_test::traced_test;
 
     use super::*;
@@ -2418,6 +2422,49 @@ mod tests {
         let prefix = make_uint_cell_slice(0b11, 9);
         assert_run_vm!("SDBEGINSX", [slice slice.clone(), slice prefix.clone()] => [int 0], exit_code: 9);
         assert_run_vm!("SDBEGINSXQ", [slice slice.clone(), slice prefix.clone()] => [slice slice.clone(), int 0]);
+    }
+
+    #[test]
+    #[traced_test]
+    fn load_library_cell() {
+        let main_code = Boc::decode(tvmasm! {
+            r#"
+            PUSHREF @{2b698ae42e5cbea6096608a76572ad2fabd5c706a701bedb6369799c0d175c0f}
+            XLOAD
+            BLESS
+            EXECUTE
+            "#
+        })
+        .unwrap();
+
+        let library_code = Boc::decode(tvmasm! {
+            r#"
+            PUSHINT 10
+            PUSHINT 11
+            "#
+        })
+        .unwrap();
+
+        let libraries = HashMap::from([(
+            "2b698ae42e5cbea6096608a76572ad2fabd5c706a701bedb6369799c0d175c0f"
+                .parse::<HashBytes>()
+                .unwrap(),
+            SimpleLib {
+                public: true,
+                root: library_code,
+            },
+        )]);
+
+        let mut output = crate::tests::TracingOutput::default();
+        let mut state = VmState::builder()
+            .with_version(crate::VmVersion::LATEST_TON)
+            .with_code(main_code)
+            .with_libraries(&libraries)
+            .with_debug(&mut output)
+            .build();
+
+        let result = state.run();
+        println!("execution result {:?}", !result);
     }
 
     fn skip_common(slice: &OwnedCellSlice, prefix: &OwnedCellSlice) -> OwnedCellSlice {

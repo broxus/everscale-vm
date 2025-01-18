@@ -550,6 +550,7 @@ mod tests {
             .require_ton_v4()
             .with_code(code.clone());
 
+        let mut output = crate::tests::TracingOutput::default();
         let mut vm_state = VmState::builder()
             .with_smc_info(smc_info)
             .with_stack(tuple![
@@ -562,7 +563,7 @@ mod tests {
             .with_code(code)
             .with_data(data)
             .with_gas(GasParams::getter())
-            .with_debug(TracingOutput::default())
+            .with_debug(&mut output)
             .build();
 
         assert_eq!(vm_state.run(), -1);
@@ -591,6 +592,7 @@ mod tests {
             .require_ton_v4()
             .with_code(code.clone());
 
+        let mut output = crate::tests::TracingOutput::default();
         let mut vm_state = VmState::builder()
             .with_smc_info(smc_info)
             .with_stack(tuple![
@@ -603,7 +605,7 @@ mod tests {
             .with_code(code)
             .with_data(data)
             .with_gas(GasParams::getter())
-            .with_debug(TracingOutput::default())
+            .with_debug(&mut output)
             .build();
 
         assert_eq!(vm_state.run(), -1);
@@ -629,6 +631,7 @@ mod tests {
             .with_account_addr(addr.clone())
             .require_ton_v4();
 
+        let mut output = crate::tests::TracingOutput::default();
         let mut vm_state = VmState::builder()
             .with_smc_info(smc_info)
             .with_stack(tuple![
@@ -638,7 +641,7 @@ mod tests {
             .with_code(code)
             .with_data(data)
             .with_gas(GasParams::getter())
-            .with_debug(TracingOutput::default())
+            .with_debug(&mut output)
             .build();
 
         assert_eq!(vm_state.run(), -1);
@@ -667,6 +670,7 @@ mod tests {
             .with_account_addr(account.address.clone())
             .require_ton_v4();
 
+        let mut output = crate::tests::TracingOutput::default();
         let mut vm_state = VmState::builder()
             .with_smc_info(smc_info)
             .with_stack(tuple![
@@ -679,7 +683,7 @@ mod tests {
             .with_code(code)
             .with_data(data)
             .with_gas(GasParams::getter())
-            .with_debug(TracingOutput::default())
+            .with_debug(&mut output)
             .build();
 
         let result = !vm_state.run();
@@ -708,6 +712,7 @@ mod tests {
             .with_account_addr(account.address.clone())
             .require_ton_v4();
 
+        let mut output = crate::tests::TracingOutput::default();
         let mut vm_state = VmState::builder()
             .with_smc_info(smc_info)
             .with_stack(tuple![
@@ -725,7 +730,7 @@ mod tests {
                 limit: 0,
                 credit: 10000,
             })
-            .with_debug(TracingOutput::default())
+            .with_debug(&mut output)
             .build();
 
         let result = !vm_state.run();
@@ -752,29 +757,5 @@ mod tests {
                 Some(<_>::load_from(s)?)
             },
         }))
-    }
-
-    #[derive(Default)]
-    struct TracingOutput {
-        buffer: String,
-    }
-
-    impl std::fmt::Write for TracingOutput {
-        fn write_str(&mut self, mut s: &str) -> std::fmt::Result {
-            while !s.is_empty() {
-                match s.split_once('\n') {
-                    None => {
-                        self.buffer.push_str(s);
-                        return Ok(());
-                    }
-                    Some((prefix, rest)) => {
-                        tracing::debug!("{}{prefix}", self.buffer);
-                        self.buffer.clear();
-                        s = rest;
-                    }
-                }
-            }
-            Ok(())
-        }
     }
 }

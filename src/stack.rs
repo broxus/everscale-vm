@@ -1426,54 +1426,7 @@ impl_safe_delete! {
 
 #[cfg(test)]
 mod tests {
-    use everscale_types::models::SimpleLib;
-    use tracing_test::traced_test;
-
     use super::*;
-    use crate::{VmState, VmVersion};
-
-    #[test]
-    #[traced_test]
-    fn load_library_cell() {
-        let main_code = Boc::decode(tvmasm! {
-            r#"
-            PUSHREF @{2b698ae42e5cbea6096608a76572ad2fabd5c706a701bedb6369799c0d175c0f}
-            "#
-        })
-        .unwrap();
-
-        let library_code = Boc::decode(tvmasm! {
-            r#"
-            PUSHINT 10
-            PUSHINT 11
-            "#
-        })
-        .unwrap();
-        let binding = library_code.clone();
-        let hash = binding.repr_hash();
-
-        let state_builder = VmState::builder();
-
-        let mut library_provider: Vec<Dict<HashBytes, SimpleLib>> = Vec::new();
-        let lib = SimpleLib {
-            public: true,
-            root: library_code,
-        };
-        let mut dict = Dict::new();
-        dict.set(*hash, lib).unwrap();
-
-        library_provider.push(dict);
-
-        let mut state = state_builder
-            .with_version(VmVersion::Ton(9))
-            .with_code(main_code)
-            .with_libraries(library_provider)
-            .with_debug(crate::tests::TracingOutput::default())
-            .build();
-
-        let result = state.run();
-        println!("execution result {:?}", !result);
-    }
 
     #[test]
     fn stack_store_load_works() {

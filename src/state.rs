@@ -21,25 +21,27 @@ use crate::util::OwnedCellSlice;
 
 /// Execution state builder.
 #[derive(Default)]
-pub struct VmStateBuilder {
+pub struct VmStateBuilder<'a> {
     pub code: OwnedCellSlice,
     pub data: Option<Cell>,
     pub stack: SafeRc<Stack>,
-    pub libraries: Option<Box<dyn LibraryProvider>>,
+    pub libraries: Option<&'a dyn LibraryProvider>,
     pub c7: Option<SafeRc<Vec<RcStackValue>>>,
     pub gas: GasParams,
     pub init_selector: InitSelectorParams,
     pub version: Option<VmVersion>,
     pub modifiers: BehaviourModifiers,
-    pub debug: Option<Box<dyn std::fmt::Write>>,
+    pub debug: Option<&'a mut dyn std::fmt::Write>,
 }
 
-impl VmStateBuilder {
+impl<'a> VmStateBuilder<'a> {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn build(mut self) -> VmState {
+    pub fn build(mut self) -> VmState<'a> {
+        static NO_LIBRARIES: NoLibraries = NoLibraries;
+
         let quit0 = QUIT0.with(SafeRc::clone);
         let quit1 = QUIT1.with(SafeRc::clone);
         let cp = codepage0();
@@ -77,10 +79,7 @@ impl VmStateBuilder {
             steps: 0,
             quit0,
             quit1,
-            gas: GasConsumer::with_libraries(
-                self.gas,
-                self.libraries.unwrap_or_else(|| Box::new(NoLibraries)),
-            ),
+            gas: GasConsumer::with_libraries(self.gas, self.libraries.unwrap_or(&NO_LIBRARIES)),
             cp,
             debug: self.debug,
             modifiers: self.modifiers,
@@ -88,11 +87,8 @@ impl VmStateBuilder {
         }
     }
 
-    pub fn with_libraries<T: LibraryProvider + 'static>(mut self, libraries: T) -> Self {
-        self.libraries = Some(match castaway::cast!(libraries, Box<dyn LibraryProvider>) {
-            Ok(libraries) => libraries,
-            Err(libraries) => Box::new(libraries),
-        });
+    pub fn with_libraries<T: LibraryProvider>(mut self, libraries: &'a T) -> Self {
+        self.libraries = Some(libraries);
         self
     }
 
@@ -101,8 +97,8 @@ impl VmStateBuilder {
         self
     }
 
-    pub fn with_debug<T: std::fmt::Write + 'static>(mut self, stderr: T) -> Self {
-        self.debug = Some(Box::new(stderr));
+    pub fn with_debug<T: std::fmt::Write>(mut self, stderr: &'a mut T) -> Self {
+        self.debug = Some(stderr);
         self
     }
 
@@ -161,7 +157,7 @@ pub enum InitSelectorParams {
 }
 
 /// Full execution state.
-pub struct VmState {
+pub struct VmState<'a> {
     pub code: OwnedCellSlice,
     pub stack: SafeRc<Stack>,
     pub cr: ControlRegs,
@@ -169,14 +165,14 @@ pub struct VmState {
     pub steps: u64,
     pub quit0: SafeRc<QuitCont>,
     pub quit1: SafeRc<QuitCont>,
-    pub gas: GasConsumer,
+    pub gas: GasConsumer<'a>,
     pub cp: &'static DispatchTable,
-    pub debug: Option<Box<dyn std::fmt::Write>>,
+    pub debug: Option<&'a mut dyn std::fmt::Write>,
     pub modifiers: BehaviourModifiers,
     pub version: VmVersion,
 }
 
-impl VmState {
+impl<'a> VmState<'a> {
     pub const DEFAULT_VERSION: VmVersion = VmVersion::LATEST_TON;
 
     pub const MAX_DATA_DEPTH: u16 = 512;
@@ -185,7 +181,7 @@ impl VmState {
         static EMPTY_STACK: SafeRc<Stack> = SafeRc::new(Default::default());
     }
 
-    pub fn builder() -> VmStateBuilder {
+    pub fn builder() -> VmStateBuilder<'a> {
         VmStateBuilder::default()
     }
 

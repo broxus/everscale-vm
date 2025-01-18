@@ -237,7 +237,7 @@ impl<S: BuildHasher> LibraryProvider for std::collections::HashMap<HashBytes, Si
 }
 
 /// Gas tracking context.
-pub struct GasConsumer {
+pub struct GasConsumer<'l> {
     /// Maximum possible value of the `limit`.
     gas_max: u64,
     /// Gas limit for the out-of-gas exception.
@@ -252,13 +252,13 @@ pub struct GasConsumer {
     /// A set of visited cells.
     loaded_cells: std::cell::UnsafeCell<HashSet<HashBytes>>,
     /// Libraries provider.
-    libraries: Box<dyn LibraryProvider>,
+    libraries: &'l dyn LibraryProvider,
 
     /// Number of signature checks.
     chksign_counter: std::cell::Cell<usize>,
 }
 
-impl GasConsumer {
+impl<'l> GasConsumer<'l> {
     pub const BUILD_CELL_GAS: u64 = 500;
     pub const NEW_CELL_GAS: u64 = 100;
     pub const OLD_CELL_GAS: u64 = 25;
@@ -275,10 +275,12 @@ impl GasConsumer {
     pub const EXCEPTION_GAS_PRICE: u64 = 50;
 
     pub fn new(params: GasParams) -> Self {
-        Self::with_libraries(params, Box::new(NoLibraries))
+        static NO_LIBRARIES: NoLibraries = NoLibraries;
+
+        Self::with_libraries(params, &NO_LIBRARIES)
     }
 
-    pub fn with_libraries(params: GasParams, libraries: Box<dyn LibraryProvider>) -> Self {
+    pub fn with_libraries(params: GasParams, libraries: &'l dyn LibraryProvider) -> Self {
         let gas_remaining = params.limit.saturating_add(params.credit);
 
         Self {
@@ -293,8 +295,8 @@ impl GasConsumer {
         }
     }
 
-    pub fn libraries(&self) -> &dyn LibraryProvider {
-        self.libraries.as_ref()
+    pub fn libraries(&self) -> &'l dyn LibraryProvider {
+        self.libraries
     }
 
     pub fn credit(&self) -> u64 {
@@ -421,7 +423,7 @@ impl GasConsumer {
     }
 }
 
-impl CellContext for GasConsumer {
+impl CellContext for GasConsumer<'_> {
     fn finalize_cell(&self, cell: CellParts<'_>) -> Result<Cell, Error> {
         ok!(self.try_consume(GasConsumer::BUILD_CELL_GAS));
         Cell::empty_context().finalize_cell(cell)
