@@ -23,8 +23,9 @@ ahash = "0.8"
 anyhow = "1.0"
 bitflags = "2.4"
 blake2 = "0.10.6"
-bumpalo = "3.14"
 dyn-clone = "1.0"
+everscale-crypto = "0.3.0"
+everscale-types = { version = "0.1.2", default-features = false, features = ["models"] }
 num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
@@ -33,8 +34,6 @@ thiserror = "2.0"
 tracing = { version = "0.1", optional = true }
 
 tycho-vm-proc = { path = "./proc" }
-everscale-types = { version = "0.1.2", default-features = false, features = ["sync", "models"] }
-everscale-crypto = "0.3.0"
 
 [dev-dependencies]
 criterion = "0.5"
@@ -44,7 +43,6 @@ tracing = "0.1"
 tracing-test = "0.2"
 
 everscale-types = { version = "0.1.2", default-features = false, features = [
-    "sync",
     "models",
     "base64",
     "rand",

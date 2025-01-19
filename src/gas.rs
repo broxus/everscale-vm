@@ -275,6 +275,9 @@ pub struct GasConsumer<'l> {
 
     /// Number of signature checks.
     chksign_counter: std::cell::Cell<usize>,
+
+    // Missing library in case of resolving error occured.
+    missing_library: std::cell::Cell<Option<HashBytes>>,
 }
 
 impl<'l> GasConsumer<'l> {
@@ -311,6 +314,7 @@ impl<'l> GasConsumer<'l> {
             loaded_cells: Default::default(),
             libraries,
             chksign_counter: std::cell::Cell::new(0),
+            missing_library: std::cell::Cell::new(None),
         }
     }
 
@@ -393,6 +397,14 @@ impl<'l> GasConsumer<'l> {
         }
     }
 
+    pub fn missing_library(&self) -> Option<HashBytes> {
+        self.missing_library.get()
+    }
+
+    pub fn set_missing_library(&self, hash: &HashBytes) {
+        self.missing_library.set(Some(*hash));
+    }
+
     fn load_cell_impl<'s: 'a, 'a, T: LoadLibrary<'a>>(
         &'s self,
         mut cell: T,
@@ -430,6 +442,7 @@ impl<'l> GasConsumer<'l> {
                         .get_raw(8, &mut library_hash.0, 256));
 
                     let Some(library_cell) = ok!(T::load_library(self, &library_hash)) else {
+                        self.missing_library.set(Some(library_hash));
                         return Err(Error::CellUnderflow);
                     };
 
@@ -522,7 +535,7 @@ mod tests {
 
         // Dict with LibDescr
         let mut publishers = Dict::new();
-        publishers.add(&HashBytes::ZERO, ()).unwrap();
+        publishers.add(HashBytes::ZERO, ()).unwrap();
 
         {
             let lib = LibDescr {

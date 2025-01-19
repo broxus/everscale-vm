@@ -661,7 +661,7 @@ impl Cellops {
 
         let cell = st
             .gas
-            .load_cell(SafeRc::unwrap_or_clone(cell), LoadMode::UseGas)?;
+            .load_cell(SafeRc::unwrap_or_clone(cell), LoadMode::Full)?;
         let cs = OwnedCellSlice::new(cell);
 
         ok!(stack.push(cs));
@@ -710,7 +710,7 @@ impl Cellops {
 
         let mut slice = cs.apply_allow_special();
         let cell = slice.load_reference_cloned()?;
-        let cell = st.gas.load_cell(cell, LoadMode::UseGas)?;
+        let cell = st.gas.load_cell(cell, LoadMode::Full)?;
 
         let range = slice.range();
         SafeRc::make_mut(&mut cs).set_range(range);
@@ -996,6 +996,7 @@ impl Cellops {
         let cell = ok!(stack.pop_cell());
         let is_special = cell.descriptor().is_exotic();
 
+        // NOTE: Do not resolve cell here since we want to return an original.
         let cell = st
             .gas
             .load_cell(SafeRc::unwrap_or_clone(cell), LoadMode::UseGas)?;
@@ -1051,7 +1052,10 @@ impl Cellops {
 
             match st.gas.libraries().find(&library_hash) {
                 Ok(Some(lib)) => SafeRc::new(lib),
-                Ok(None) => return handle_error(stack, Error::CellUnderflow),
+                Ok(None) => {
+                    st.gas.set_missing_library(&library_hash);
+                    return handle_error(stack, Error::CellUnderflow);
+                }
                 Err(e) => return handle_error(stack, e),
             }
         };
@@ -1305,7 +1309,7 @@ fn exec_push_ref_common(
     ok!(match mode {
         PushRefMode::Cell => stack.push(cell),
         PushRefMode::Slice => {
-            let cell = st.gas.load_cell(cell, LoadMode::UseGas)?;
+            let cell = st.gas.load_cell(cell, LoadMode::Full)?;
             stack.push(OwnedCellSlice::new(cell))
         }
         PushRefMode::Cont => {
@@ -1843,7 +1847,8 @@ mod tests {
     use std::collections::HashMap;
 
     use everscale_types::boc::Boc;
-    use everscale_types::cell::CellBuilder;
+    use everscale_types::cell::{CellBuilder, CellType};
+    use everscale_types::merkle::{MerkleProof, MerkleUpdate};
     use everscale_types::models::SimpleLib;
     use tracing_test::traced_test;
 
@@ -2465,6 +2470,71 @@ mod tests {
 
         let result = state.run();
         println!("execution result {:?}", !result);
+    }
+
+    #[test]
+    #[traced_test]
+    fn load_exotic_cells() -> anyhow::Result<()> {
+        // Ordinary
+        let cell = Cell::default();
+        assert_run_vm!("CTOS", [cell cell.clone()] => [slice cell.clone()]);
+        assert_run_vm!("XCTOS", [cell cell.clone()] => [slice cell.clone(), int 0]);
+        assert_run_vm!("XLOAD", [cell cell.clone()] => [cell cell.clone()]);
+        assert_run_vm!("XLOADQ", [cell cell.clone()] => [cell cell.clone(), int -1]);
+
+        // Pruned branch
+        let pruned_branch = everscale_types::merkle::make_pruned_branch(
+            Cell::empty_cell_ref(),
+            0,
+            Cell::empty_context(),
+        )?;
+        assert_run_vm!("CTOS", [cell pruned_branch.clone()] => [int 0], exit_code: 9);
+        assert_run_vm!("XCTOS", [cell pruned_branch.clone()] => [slice pruned_branch.clone(), int -1]);
+        assert_run_vm!("XLOAD", [cell pruned_branch.clone()] => [int 0], exit_code: 9);
+        assert_run_vm!("XLOADQ", [cell pruned_branch.clone()] => [int 0]);
+
+        // Merkle proof
+        let merkle_proof = CellBuilder::build_from(MerkleProof::default())?;
+        assert_run_vm!("CTOS", [cell merkle_proof.clone()] => [int 0], exit_code: 9);
+        assert_run_vm!("XCTOS", [cell merkle_proof.clone()] => [slice merkle_proof.clone(), int -1]);
+        assert_run_vm!("XLOAD", [cell merkle_proof.clone()] => [int 0], exit_code: 9);
+        assert_run_vm!("XLOADQ", [cell merkle_proof.clone()] => [int 0]);
+
+        // Merkle update
+        let merkle_update = CellBuilder::build_from(MerkleUpdate::default())?;
+        assert_run_vm!("CTOS", [cell merkle_update.clone()] => [int 0], exit_code: 9);
+        assert_run_vm!("XCTOS", [cell merkle_update.clone()] => [slice merkle_update.clone(), int -1]);
+        assert_run_vm!("XLOAD", [cell merkle_update.clone()] => [int 0], exit_code: 9);
+        assert_run_vm!("XLOADQ", [cell merkle_update.clone()] => [int 0]);
+
+        // Library
+        let library_code = Boc::decode(tvmasm!("NOP"))?;
+        let library = {
+            let mut b = CellBuilder::new();
+            b.set_exotic(true);
+            b.store_u8(CellType::LibraryReference.to_byte())?;
+            b.store_u256(library_code.repr_hash())?;
+            b.build()?
+        };
+
+        // - unregistered
+        assert_run_vm!("CTOS", [cell library.clone()] => [int 0], exit_code: 9);
+        assert_run_vm!("XCTOS", [cell library.clone()] => [slice library.clone(), int -1]);
+        assert_run_vm!("XLOAD", [cell library.clone()] => [int 0], exit_code: 9);
+        assert_run_vm!("XLOADQ", [cell library.clone()] => [int 0]);
+
+        // - registered
+        let libs = HashMap::from([(*library_code.repr_hash(), SimpleLib {
+            public: true,
+            root: library_code.clone(),
+        })]);
+
+        assert_run_vm!("CTOS", libs: libs.clone(), [cell library.clone()] => [slice library_code.clone()]);
+        assert_run_vm!("XCTOS", libs: libs.clone(), [cell library.clone()] => [slice library.clone(), int -1]);
+        assert_run_vm!("XLOAD", libs: libs.clone(), [cell library.clone()] => [cell library_code.clone()]);
+        assert_run_vm!("XLOADQ", libs: libs.clone(), [cell library.clone()] => [cell library_code.clone(), int -1]);
+
+        Ok(())
     }
 
     fn skip_common(slice: &OwnedCellSlice, prefix: &OwnedCellSlice) -> OwnedCellSlice {

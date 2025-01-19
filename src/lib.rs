@@ -129,16 +129,19 @@ macro_rules! assert_run_vm {
         $($code:literal),+,
         $(c7: $c7_params:expr,)?
         $(gas: $gas_limit:expr,)?
+        $(libs: $libs:expr,)?
         [$($origin_stack:tt)*] => [$($expected_stack:tt)*]
         $(, exit_code: $exit_code:literal)?
         $(,)?
     ) => {{
+        let libs = $crate::assert_run_vm!(@libs $($libs)?);
         let mut output = $crate::tests::TracingOutput::default();
         let (exit_code, vm) = $crate::tests::run_vm_with_stack(
             tvmasm!($($code),+),
             $crate::assert_run_vm!(@c7 $($c7_params)?),
             $crate::tuple![$($origin_stack)*],
             $crate::assert_run_vm!(@gas $($gas_limit)?),
+            &libs,
             &mut output,
         );
         $crate::assert_run_vm!(@check_exit_code exit_code $($exit_code)?);
@@ -168,6 +171,12 @@ macro_rules! assert_run_vm {
     };
     (@gas $gas_limit:expr) => {
         $gas_limit
+    };
+    (@libs) => {
+        $crate::NoLibraries
+    };
+    (@libs $libs:expr) => {
+        $libs
     };
 }
 
@@ -257,6 +266,7 @@ mod tests {
         c7_params: Tuple,
         original_stack: I,
         gas_limit: u64,
+        libs: &'a impl LibraryProvider,
         output: &'a mut impl std::fmt::Write,
     ) -> (i32, VmState<'a>)
     where
@@ -266,6 +276,7 @@ mod tests {
 
         let mut vm = VmState::builder()
             .with_code(code)
+            .with_libraries(libs)
             .with_smc_info(CustomSmcInfo {
                 version: VmState::DEFAULT_VERSION,
                 c7: SafeRc::new(c7_params),

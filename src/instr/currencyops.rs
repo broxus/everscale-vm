@@ -184,6 +184,7 @@ fn rewrite_addr_var(
     cb.store_slice(pfx)?;
     cb.store_slice(cs)?;
     let cell = cb.build_ext(gas)?;
+    // NOTE: Consume gas without resolving (we already know that it's ordinary).
     let cell = gas.load_cell(cell, LoadMode::UseGas)?;
     Ok(OwnedCellSlice::from(cell))
 }
