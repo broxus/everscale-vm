@@ -1,52 +1,37 @@
-[package]
-name = "tycho-vm"
-version = "0.1.0"
+[workspace.package]
 edition = "2021"
+authors = ["Rexagon <i.kalinin@dexpa.io>", "MrWad3r <s.eliseev@dexpa.io>"]
+rust-version = "1.81.0"
+repository = "https://github.com/broxus/tycho-vm"
+license = "MIT OR Apache-2.0"
 
 [workspace]
-members = ["proc"]
+resolver = "2"
+members = ["executor", "vm", "vm-proc"]
 
-[[bench]]
-name = "ever_wallet"
-harness = false
-
-[[bench]]
-name = "jetton"
-harness = false
-
-[[bench]]
-name = "dex_pair"
-harness = false
-
-[dependencies]
+[workspace.dependencies]
 ahash = "0.8"
 anyhow = "1.0"
 bitflags = "2.4"
 blake2 = "0.10.6"
+criterion = "0.5"
+darling = "0.20"
 dyn-clone = "1.0"
 everscale-crypto = "0.3.0"
-everscale-types = { version = "0.1.2", default-features = false, features = ["models"] }
+everscale-types = { version = "0.1.2", default-features = false }
+hex = "0.4.3"
 num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
-sha2 = "0.10.8"
-thiserror = "2.0"
-tracing = { version = "0.1", optional = true }
-
-tycho-vm-proc = { path = "./proc" }
-
-[dev-dependencies]
-criterion = "0.5"
-hex = "0.4.3"
+proc-macro2 = "1.0"
+quote = "1.0"
 rand = "0.8"
+sha2 = "0.10.8"
+syn = "2.0"
+thiserror = "2.0"
 tracing = "0.1"
 tracing-test = "0.2"
 
-everscale-types = { version = "0.1.2", default-features = false, features = [
-    "models",
-    "base64",
-    "rand",
-] }
 everscale-asm-macros = { git = "https://github.com/broxus/everscale-asm.git", rev = "81e7aab4a970cea76f48e583e09bf7a1886661fe" }
 
 [patch.crates-io]
