@@ -192,7 +192,7 @@ pub use self::gas::{GasConsumer, GasParams, LibraryProvider, NoLibraries};
 pub use self::instr::{codepage, codepage0};
 pub use self::saferc::{SafeDelete, SafeRc, SafeRcMakeMut};
 pub use self::smc_info::{
-    CustomSmcInfo, SmcInfo, SmcInfoBase, SmcInfoTonV4, SmcInfoTonV6, VmVersion,
+    CustomSmcInfo, SmcInfo, SmcInfoBase, SmcInfoTonV4, SmcInfoTonV6, UnpackedConfig, VmVersion,
 };
 pub use self::stack::{
     NaN, RcStackValue, Stack, StackValue, StackValueType, StaticStackValue, Tuple, TupleExt,

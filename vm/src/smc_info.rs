@@ -1,7 +1,6 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use everscale_types::dict::DictKey;
 use everscale_types::error::Error;
 use everscale_types::models::{BlockchainConfigParams, CurrencyCollection, IntAddr};
 use everscale_types::num::Tokens;
@@ -11,7 +10,7 @@ use sha2::Digest;
 
 use crate::error::VmResult;
 use crate::saferc::{SafeDelete, SafeRc};
-use crate::stack::{Stack, Tuple};
+use crate::stack::{RcStackValue, Stack, Tuple};
 use crate::util::OwnedCellSlice;
 
 /// Version of a VM context.
@@ -356,20 +355,6 @@ impl SmcInfoTonV6 {
         params: &BlockchainConfigParams,
         now: u32,
     ) -> Result<SafeRc<Tuple>, Error> {
-        let mut storage_prices = None;
-        {
-            let prices = RawDict::<32>::from(params.get_storage_prices()?.into_root());
-            for item in prices.iter_owned().reversed() {
-                let (key, value) = item?;
-                let utime_since = <u32 as DictKey>::from_raw_data(key.raw_data()).unwrap();
-                if now >= utime_since {
-                    storage_prices = Some(value);
-                } else {
-                    break;
-                }
-            }
-        }
-
         let get_param = |id| {
             let Some(value) = params.as_dict().get(id)? else {
                 return Ok(Stack::make_null());
@@ -378,7 +363,7 @@ impl SmcInfoTonV6 {
         };
 
         Ok(SafeRc::new(vec![
-            match storage_prices {
+            match Self::find_storage_prices(params, now)? {
                 None => Stack::make_null(),
                 Some(prices) => SafeRc::new_dyn_value(OwnedCellSlice::from(prices)),
             }, // storage_prices
@@ -389,6 +374,41 @@ impl SmcInfoTonV6 {
             get_param(25)?, // config_fwd_prices
             get_param(43)?, // size_limits_config
         ]))
+    }
+
+    pub fn unpack_config_partial(
+        params: &BlockchainConfigParams,
+        now: u32,
+    ) -> Result<UnpackedConfig, Error> {
+        let get_param = |id| params.as_dict().get(id);
+
+        Ok(UnpackedConfig {
+            latest_storage_prices: Self::find_storage_prices(params, now)?,
+            global_id: get_param(19)?,
+            mc_gas_prices: get_param(20)?,
+            gas_prices: get_param(21)?,
+            mc_fwd_prices: get_param(24)?,
+            fwd_prices: get_param(25)?,
+            size_limits_config: get_param(43)?,
+        })
+    }
+
+    fn find_storage_prices(
+        params: &BlockchainConfigParams,
+        now: u32,
+    ) -> Result<Option<CellSliceParts>, Error> {
+        let prices = RawDict::<32>::from(params.get_storage_prices()?.into_root());
+        for value in prices.values_owned().reversed() {
+            let value = value?;
+
+            // First 32 bits of value is unix timestamp.
+            let utime_since = value.1.apply_allow_special(&value.0).load_u32()?;
+            if now < utime_since {
+                continue;
+            }
+            return Ok(Some(value));
+        }
+        Ok(None)
     }
 
     pub fn with_unpacked_config(mut self, config: SafeRc<Tuple>) -> Self {
@@ -435,6 +455,49 @@ impl SmcInfo for SmcInfoTonV6 {
         let mut t1 = Vec::with_capacity(Self::C7_ITEM_COUNT);
         self.write_items(&mut t1);
         SafeRc::new(vec![SafeRc::new_dyn_value(t1)])
+    }
+}
+
+/// Unpacked config params, ready to be used in [`SmcInfoTonV6::with_unpacked_config`].
+///
+/// A `Send + Sync` alternative of C7 [`SafeRc<Tuple>`] at the cost of vec allocation.
+/// Can be shared between execution groups in multiple threads.
+#[derive(Clone)]
+pub struct UnpackedConfig {
+    pub latest_storage_prices: Option<CellSliceParts>,
+    pub global_id: Option<Cell>,
+    pub mc_gas_prices: Option<Cell>,
+    pub gas_prices: Option<Cell>,
+    pub mc_fwd_prices: Option<Cell>,
+    pub fwd_prices: Option<Cell>,
+    pub size_limits_config: Option<Cell>,
+}
+
+impl UnpackedConfig {
+    pub fn into_tuple(self) -> SafeRc<Tuple> {
+        SafeRc::new(vec![
+            Self::slice_or_null(self.latest_storage_prices),
+            Self::slice_or_null(self.global_id),
+            Self::slice_or_null(self.mc_gas_prices),
+            Self::slice_or_null(self.gas_prices),
+            Self::slice_or_null(self.mc_fwd_prices),
+            Self::slice_or_null(self.fwd_prices),
+            Self::slice_or_null(self.size_limits_config),
+        ])
+    }
+
+    pub fn as_tuple(&self) -> SafeRc<Tuple> {
+        self.clone().into_tuple()
+    }
+
+    fn slice_or_null<T>(slice: Option<T>) -> RcStackValue
+    where
+        OwnedCellSlice: From<T>,
+    {
+        match slice {
+            None => Stack::make_null(),
+            Some(slice) => SafeRc::new_dyn_value(OwnedCellSlice::from(slice)),
+        }
     }
 }
 
