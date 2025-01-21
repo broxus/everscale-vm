@@ -7,7 +7,7 @@ use everscale_types::models::{
 };
 use everscale_types::num::Tokens;
 use everscale_types::prelude::*;
-use tycho_vm::UnpackedConfig;
+use tycho_vm::{GasParams, UnpackedConfig};
 
 use crate::util::shift_ceil_price;
 
@@ -100,6 +100,14 @@ impl ParsedConfig {
         })
     }
 
+    pub fn fwd_prices(&self, is_masterchain: bool) -> &MsgForwardPrices {
+        if is_masterchain {
+            &self.mc_fwd_prices
+        } else {
+            &self.fwd_prices
+        }
+    }
+
     pub fn gas_prices(&self, is_masterchain: bool) -> &GasLimitsPrices {
         if is_masterchain {
             &self.mc_gas_prices
@@ -112,7 +120,7 @@ impl ParsedConfig {
     /// since `storage_stat.last_paid` and up until `now`.
     ///
     /// NOTE: These fees don't include `due_payment`.
-    pub fn compoute_storage_fees(
+    pub fn compute_storage_fees(
         &self,
         storage_stat: &StorageInfo,
         now: u32,
@@ -171,5 +179,76 @@ impl ParsedConfig {
 
         // Convert from fixed point int.
         Tokens::new(shift_ceil_price(total))
+    }
+
+    /// Computes gas credit and limits bought for the provided balances.
+    pub fn compute_gas_params(
+        &self,
+        account_balance: &Tokens,
+        msg_balance_remaining: &Tokens,
+        is_special: bool,
+        is_masterchain: bool,
+        is_tx_ordinary: bool,
+        is_in_msg_external: bool,
+    ) -> GasParams {
+        let prices = self.gas_prices(is_masterchain);
+
+        let gas_max = if is_special {
+            prices.special_gas_limit
+        } else {
+            gas_bought_for(prices, account_balance)
+        };
+
+        let gas_limit = if !is_tx_ordinary || is_special {
+            // May use all gas that can be bought using remaining balance.
+            gas_max
+        } else {
+            // Use only gas bought using remaining message balance.
+            // If the message is "accepted" by the smart contract,
+            // the gas limit will be set to `gas_max`.
+            std::cmp::min(gas_bought_for(prices, msg_balance_remaining), gas_max)
+        };
+
+        let gas_credit = if is_tx_ordinary && is_in_msg_external {
+            // External messages carry no balance,
+            // give them some credit to check whether they are accepted.
+            std::cmp::min(prices.gas_credit, gas_max)
+        } else {
+            0
+        };
+
+        GasParams {
+            max: gas_max,
+            limit: gas_limit,
+            credit: gas_credit,
+        }
+    }
+}
+
+fn gas_bought_for(prices: &GasLimitsPrices, balance: &Tokens) -> u64 {
+    let balance = balance.into_inner();
+    if balance == 0 || balance < prices.flat_gas_price as u128 {
+        return 0;
+    }
+
+    let max_gas_threshold = if prices.gas_limit > prices.flat_gas_limit {
+        shift_ceil_price(
+            (prices.gas_price as u128) * (prices.gas_limit - prices.flat_gas_limit) as u128,
+        )
+        .saturating_add(prices.flat_gas_price as u128)
+    } else {
+        prices.flat_gas_price as u128
+    };
+
+    if balance >= max_gas_threshold || prices.gas_price == 0 {
+        return prices.gas_limit;
+    }
+
+    let mut res = ((balance - prices.flat_gas_price as u128) << 16) / (prices.gas_price as u128);
+    res = res.saturating_add(prices.flat_gas_limit as u128);
+
+    match res.try_into() {
+        Ok(limit) => limit,
+        Err(_) => u64::MAX,
     }
 }

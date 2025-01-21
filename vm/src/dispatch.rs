@@ -324,6 +324,7 @@ mod tests {
 
         let mut state = VmState {
             code: Default::default(),
+            throw_on_code_access: false,
             stack: Default::default(),
             cr: Default::default(),
             commited_state: Default::default(),

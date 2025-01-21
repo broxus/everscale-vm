@@ -153,6 +153,10 @@ impl Stack {
         })
     }
 
+    pub fn with_items(items: Vec<RcStackValue>) -> Self {
+        Self { items }
+    }
+
     pub fn depth(&self) -> usize {
         self.items.len()
     }
@@ -424,6 +428,12 @@ impl Stack {
         let depth = self.depth();
         vm_ensure!(idx < depth, StackUnderflow(idx));
         Ok(&self.items[depth - idx - 1])
+    }
+
+    pub fn get_exit_arg(&self) -> Option<i32> {
+        let last = self.items.last()?;
+        let last = last.as_int()?;
+        last.to_i32()
     }
 }
 

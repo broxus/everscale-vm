@@ -22,7 +22,7 @@ use crate::util::OwnedCellSlice;
 /// Execution state builder.
 #[derive(Default)]
 pub struct VmStateBuilder<'a> {
-    pub code: OwnedCellSlice,
+    pub code: Option<OwnedCellSlice>,
     pub data: Option<Cell>,
     pub stack: SafeRc<Stack>,
     pub libraries: Option<&'a dyn LibraryProvider>,
@@ -46,6 +46,11 @@ impl<'a> VmStateBuilder<'a> {
         let quit1 = QUIT1.with(SafeRc::clone);
         let cp = codepage0();
 
+        let (code, throw_on_code_access) = match self.code {
+            Some(code) => (code, false),
+            None => (Default::default(), true),
+        };
+
         let c3 = match self.init_selector {
             InitSelectorParams::None => RcCont::from(QuitCont { exit_code: 11 }),
             InitSelectorParams::UseCode { push0 } => {
@@ -55,7 +60,7 @@ impl<'a> VmStateBuilder<'a> {
                         .items
                         .push(Stack::make_zero());
                 }
-                SafeRc::from(OrdCont::simple(self.code.clone(), cp.id()))
+                SafeRc::from(OrdCont::simple(code.clone(), cp.id()))
             }
         };
 
@@ -73,7 +78,8 @@ impl<'a> VmStateBuilder<'a> {
                 ],
                 c7: Some(self.c7.unwrap_or_default()),
             },
-            code: self.code,
+            code,
+            throw_on_code_access,
             stack: self.stack,
             commited_state: None,
             steps: 0,
@@ -103,7 +109,12 @@ impl<'a> VmStateBuilder<'a> {
     }
 
     pub fn with_code<T: Into<OwnedCellSlice>>(mut self, code: T) -> Self {
-        self.code = code.into();
+        self.code = Some(code.into());
+        self
+    }
+
+    pub fn with_code_opt<T: Into<OwnedCellSlice>>(mut self, code: Option<T>) -> Self {
+        self.code = code.map(Into::into);
         self
     }
 
@@ -159,6 +170,7 @@ pub enum InitSelectorParams {
 /// Full execution state.
 pub struct VmState<'a> {
     pub code: OwnedCellSlice,
+    pub throw_on_code_access: bool,
     pub stack: SafeRc<Stack>,
     pub cr: ControlRegs,
     pub commited_state: Option<CommitedState>,
@@ -217,6 +229,11 @@ impl<'a> VmState<'a> {
     }
 
     pub fn run(&mut self) -> i32 {
+        if self.throw_on_code_access {
+            // No negation for unhandled exceptions (to make their faking impossible).
+            return VmException::Fatal as u8 as i32;
+        }
+
         let mut res = 0;
         while res == 0 {
             res = match self.step() {

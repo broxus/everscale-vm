@@ -35,4 +35,4 @@ tracing-test = "0.2"
 everscale-asm-macros = { git = "https://github.com/broxus/everscale-asm.git", rev = "81e7aab4a970cea76f48e583e09bf7a1886661fe" }
 
 [patch.crates-io]
-everscale-types = { git = "https://github.com/broxus/everscale-types.git", rev = "ce0ca3ee8294ee36b5136d7504acc116c8fbeb9f" }
+everscale-types = { git = "https://github.com/broxus/everscale-types.git", rev = "7128872475df48255355d8448949614936c84ca6" }

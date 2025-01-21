@@ -18,7 +18,7 @@ use crate::saferc::SafeRc;
 use crate::smc_info::{SmcInfoBase, SmcInfoTonV4, SmcInfoTonV6, VmVersion};
 use crate::stack::{Stack, Tuple, TupleExt};
 use crate::state::VmState;
-use crate::util::{load_uint_leq, MsgForwardPricesExt, OwnedCellSlice};
+use crate::util::{load_uint_leq, OwnedCellSlice};
 
 pub struct MessageOps;
 

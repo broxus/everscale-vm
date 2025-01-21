@@ -14,10 +14,7 @@ use crate::saferc::SafeRc;
 use crate::smc_info::{SmcInfoBase, SmcInfoTonV4, SmcInfoTonV6};
 use crate::stack::{RcStackValue, Stack, TupleExt};
 use crate::state::VmState;
-use crate::util::{
-    shift_ceil_price, store_int_to_builder, GasLimitsPricesExt, MsgForwardPricesExt,
-    OwnedCellSlice, StoragePricesExt,
-};
+use crate::util::{shift_ceil_price, store_int_to_builder, OwnedCellSlice};
 
 pub struct ConfigOps;
 

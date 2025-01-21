@@ -1,10 +1,7 @@
 use std::borrow::Cow;
 
-use everscale_types::cell::CellTreeStats;
 use everscale_types::dict::DictKey;
 use everscale_types::error::Error;
-use everscale_types::models::{GasLimitsPrices, MsgForwardPrices, StoragePrices};
-use everscale_types::num::Tokens;
 use everscale_types::prelude::*;
 use num_bigint::{BigInt, Sign};
 use num_traits::{ToPrimitive, Zero};
@@ -119,59 +116,6 @@ impl Load<'_> for Uint4 {
     #[inline]
     fn load_from(slice: &mut CellSlice<'_>) -> Result<Self, Error> {
         Ok(Self(ok!(slice.load_small_uint(4)) as usize))
-    }
-}
-
-pub trait GasLimitsPricesExt {
-    fn compute_gas_fee(&self, gas_used: u64) -> Tokens;
-}
-
-impl GasLimitsPricesExt for GasLimitsPrices {
-    fn compute_gas_fee(&self, gas_used: u64) -> Tokens {
-        let mut res = self.flat_gas_price as u128;
-        if let Some(extra_gas) = gas_used.checked_sub(self.flat_gas_limit) {
-            res = res.saturating_add(shift_ceil_price(self.gas_price as u128 * extra_gas as u128));
-        }
-        Tokens::new(res)
-    }
-}
-
-pub trait StoragePricesExt {
-    fn compute_storage_fee(&self, is_masterchain: bool, delta: u64, stats: CellTreeStats)
-        -> Tokens;
-}
-
-impl StoragePricesExt for StoragePrices {
-    fn compute_storage_fee(
-        &self,
-        is_masterchain: bool,
-        delta: u64,
-        stats: CellTreeStats,
-    ) -> Tokens {
-        let mut res = if is_masterchain {
-            (stats.cell_count as u128 * self.mc_cell_price_ps as u128)
-                .saturating_add(stats.bit_count as u128 * self.mc_bit_price_ps as u128)
-        } else {
-            (stats.cell_count as u128 * self.cell_price_ps as u128)
-                .saturating_add(stats.bit_count as u128 * self.bit_price_ps as u128)
-        };
-        res = res.saturating_mul(delta as u128);
-        Tokens::new(shift_ceil_price(res))
-    }
-}
-
-pub trait MsgForwardPricesExt {
-    fn compute_fwd_fee(&self, stats: CellTreeStats) -> Tokens;
-}
-
-impl MsgForwardPricesExt for MsgForwardPrices {
-    fn compute_fwd_fee(&self, stats: CellTreeStats) -> Tokens {
-        let lump = self.lump_price as u128;
-        let extra = shift_ceil_price(
-            (stats.cell_count as u128 * self.cell_price as u128)
-                .saturating_add(stats.bit_count as u128 * self.bit_price as u128),
-        );
-        Tokens::new(lump.saturating_add(extra))
     }
 }
 

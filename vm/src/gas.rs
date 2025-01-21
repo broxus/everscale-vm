@@ -64,6 +64,22 @@ impl<T: LibraryProvider> LibraryProvider for &'_ T {
     }
 }
 
+impl<T: LibraryProvider> LibraryProvider for Option<T> {
+    fn find(&self, library_hash: &HashBytes) -> Result<Option<Cell>, Error> {
+        match self {
+            Some(this) => T::find(this, library_hash),
+            None => Ok(None),
+        }
+    }
+
+    fn find_ref<'a>(&'a self, library_hash: &HashBytes) -> Result<Option<&'a DynCell>, Error> {
+        match self {
+            Some(this) => T::find_ref(this, library_hash),
+            None => Ok(None),
+        }
+    }
+}
+
 impl<T1, T2> LibraryProvider for (T1, T2)
 where
     T1: LibraryProvider,
