@@ -458,7 +458,7 @@ impl Contops {
     fn exec_repeat_end(st: &mut VmState, brk: bool) -> VmResult<i32> {
         let n = ok!(SafeRc::make_mut(&mut st.stack).pop_smallint_signed_range(i32::MIN, i32::MAX));
         if n <= 0 {
-            return Ok(0);
+            return st.ret();
         }
         let body = ok!(st.extract_cc(SaveCr::NONE, None, None));
         let Some(c0) = st.cr.c[0].clone() else {
@@ -1947,6 +1947,24 @@ mod tests {
                 REPEATEND
                 BLKPUSH 15, 0
                 TUPLE 15
+            }
+            CALLXARGS 0, 0
+            "#,
+            [] => [],
+        );
+    }
+
+    #[test]
+    #[traced_test]
+    fn empty_stack_on_exit() {
+        assert_run_vm!(
+            r#"
+            PUSHCONT {
+                PUSHINT 7
+                REPEATEND
+
+                PUSHINT 1
+                DUMPSTK
             }
             CALLXARGS 0, 0
             "#,

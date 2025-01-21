@@ -321,7 +321,7 @@ pub trait Cont: Store + SafeDelete + dyn_clone::DynClone + std::fmt::Debug {
 
     fn as_stack_value(&self) -> &dyn StackValue;
 
-    fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32>;
+    fn jump(self: Rc<Self>, state: &mut VmState, exit_code: &mut i32) -> VmResult<Option<RcCont>>;
 
     fn get_control_data(&self) -> Option<&ControlData> {
         None
@@ -470,8 +470,9 @@ impl Cont for QuitCont {
         feature = "tracing",
         instrument(level = "trace", name = "quit_cont", skip_all)
     )]
-    fn jump(self: Rc<Self>, _: &mut VmState) -> VmResult<i32> {
-        Ok(!self.exit_code)
+    fn jump(self: Rc<Self>, _: &mut VmState, exit_code: &mut i32) -> VmResult<Option<RcCont>> {
+        *exit_code = !self.exit_code;
+        Ok(None)
     }
 }
 
@@ -523,12 +524,13 @@ impl Cont for ExcQuitCont {
         feature = "tracing",
         instrument(level = "trace", name = "exc_quit_cont", skip_all)
     )]
-    fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
+    fn jump(self: Rc<Self>, state: &mut VmState, exit_code: &mut i32) -> VmResult<Option<RcCont>> {
         let n = SafeRc::make_mut(&mut state.stack)
             .pop_smallint_range(0, 0xffff)
             .unwrap_or_else(|e| e.as_exception() as u32);
         vm_log_trace!(n, "terminating vm in the default exception handler");
-        Ok(!(n as i32))
+        *exit_code = !(n as i32);
+        Ok(None)
     }
 }
 
@@ -586,12 +588,12 @@ impl Cont for PushIntCont {
             skip_all,
         )
     )]
-    fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
+    fn jump(self: Rc<Self>, state: &mut VmState, _: &mut i32) -> VmResult<Option<RcCont>> {
         ok!(SafeRc::make_mut(&mut state.stack).push_int(self.value));
-        state.jump(match Rc::try_unwrap(self) {
+        Ok(Some(match Rc::try_unwrap(self) {
             Ok(this) => this.next,
             Err(this) => this.next.clone(),
-        })
+        }))
     }
 }
 
@@ -660,12 +662,12 @@ impl Cont for RepeatCont {
             skip_all,
         )
     )]
-    fn jump(mut self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
+    fn jump(mut self: Rc<Self>, state: &mut VmState, _: &mut i32) -> VmResult<Option<RcCont>> {
         if self.count == 0 {
-            return state.jump(self.after.clone());
+            return Ok(Some(self.after.clone()));
         }
         if self.body.has_c0() {
-            return state.jump(self.body.clone());
+            return Ok(Some(self.body.clone()));
         }
 
         let body = self.body.clone();
@@ -681,7 +683,7 @@ impl Cont for RepeatCont {
             })),
         }
 
-        state.jump(body)
+        Ok(Some(body))
     }
 }
 
@@ -749,11 +751,11 @@ impl Cont for AgainCont {
         feature = "tracing",
         instrument(level = "trace", name = "again_cont", skip_all)
     )]
-    fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
+    fn jump(self: Rc<Self>, state: &mut VmState, _: &mut i32) -> VmResult<Option<RcCont>> {
         if !self.body.has_c0() {
             state.set_c0(SafeRc::from(self.clone()))
         }
-        state.jump(self.body.clone())
+        Ok(Some(self.body.clone()))
     }
 }
 
@@ -812,17 +814,17 @@ impl Cont for UntilCont {
         feature = "tracing",
         instrument(level = "trace", name = "until_cont", skip_all)
     )]
-    fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
+    fn jump(self: Rc<Self>, state: &mut VmState, _: &mut i32) -> VmResult<Option<RcCont>> {
         vm_log_trace!("until loop condition end");
         let terminated = ok!(SafeRc::make_mut(&mut state.stack).pop_bool());
         if terminated {
             vm_log_trace!("until loop terminated");
-            return state.jump(self.after.clone());
+            return Ok(Some(self.after.clone()));
         }
         if !self.body.has_c0() {
             state.set_c0(RcCont::from(self.clone()));
         }
-        state.jump(self.body.clone())
+        Ok(Some(self.body.clone()))
     }
 }
 
@@ -890,12 +892,12 @@ impl Cont for WhileCont {
             skip_all,
         )
     )]
-    fn jump(mut self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
+    fn jump(mut self: Rc<Self>, state: &mut VmState, _: &mut i32) -> VmResult<Option<RcCont>> {
         let next = if self.check_cond {
             vm_log_trace!("while loop condition end");
             if !ok!(SafeRc::make_mut(&mut state.stack).pop_bool()) {
                 vm_log_trace!("while loop terminated");
-                return state.jump(self.after.clone());
+                return Ok(Some(self.after.clone()));
             }
             self.body.clone()
         } else {
@@ -918,7 +920,7 @@ impl Cont for WhileCont {
             }
         }
 
-        state.jump(next)
+        Ok(Some(next))
     }
 }
 
@@ -983,17 +985,16 @@ impl Cont for ArgContExt {
         feature = "tracing",
         instrument(level = "trace", name = "arg_cont", skip_all)
     )]
-    fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
+    fn jump(self: Rc<Self>, state: &mut VmState, _: &mut i32) -> VmResult<Option<RcCont>> {
         state.adjust_cr(&self.data.save);
         if let Some(cp) = self.data.cp {
             ok!(state.force_cp(cp));
         }
 
-        let ext = match Rc::try_unwrap(self) {
+        Ok(Some(match Rc::try_unwrap(self) {
             Ok(this) => this.ext,
             Err(this) => this.ext.clone(),
-        };
-        SafeRc::into_inner(ext).jump(state)
+        }))
     }
 
     fn get_control_data(&self) -> Option<&ControlData> {
@@ -1071,13 +1072,13 @@ impl Cont for OrdCont {
         feature = "tracing",
         instrument(level = "trace", name = "ord_cont", skip_all)
     )]
-    fn jump(self: Rc<Self>, state: &mut VmState) -> VmResult<i32> {
+    fn jump(self: Rc<Self>, state: &mut VmState, _: &mut i32) -> VmResult<Option<RcCont>> {
         state.adjust_cr(&self.data.save);
         let Some(cp) = self.data.cp else {
             vm_bail!(InvalidOpcode);
         };
         ok!(state.set_code(self.code.clone(), cp));
-        Ok(0)
+        Ok(None)
     }
 
     fn get_control_data(&self) -> Option<&ControlData> {

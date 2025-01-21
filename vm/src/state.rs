@@ -445,7 +445,7 @@ impl<'a> VmState<'a> {
         self.cr.c[0] = Some(SafeRc::from(ret));
 
         // NOTE: cont.data.save.c[0] must not be set
-        SafeRc::into_inner(cont).jump(self)
+        self.do_jump_to(cont)
     }
 
     pub fn call_ext(
@@ -457,7 +457,7 @@ impl<'a> VmState<'a> {
         let (new_stack, c0) = if let Some(control_data) = cont.get_control_data() {
             if control_data.save.c[0].is_some() {
                 // If cont has c0 then call reduces to a jump
-                return self.jump(cont);
+                return self.jump_ext(cont, pass_args);
             }
 
             let current_depth = self.stack.depth();
@@ -496,22 +496,25 @@ impl<'a> VmState<'a> {
             };
 
             let new_stack = match new_stack {
-                Some(mut stack) if !stack.items.is_empty() => {
+                Some(mut new_stack) if !new_stack.items.is_empty() => {
                     let copy = copy.unwrap_or(current_depth);
 
                     let current_stack = SafeRc::make_mut(&mut self.stack);
-                    ok!(SafeRc::make_mut(&mut stack).move_from_stack(current_stack, copy));
+                    ok!(SafeRc::make_mut(&mut new_stack).move_from_stack(current_stack, copy));
                     ok!(current_stack.pop_many(skip));
-                    self.gas.try_consume_stack_gas(Some(&self.stack))?;
 
-                    stack
+                    self.gas.try_consume_stack_gas(Some(&new_stack))?;
+
+                    new_stack
                 }
                 _ => {
                     if let Some(copy) = copy {
-                        let stack =
+                        let new_stack =
                             ok!(SafeRc::make_mut(&mut self.stack).split_top_ext(copy, skip));
-                        self.gas.try_consume_stack_gas(Some(&stack))?;
-                        stack
+
+                        self.gas.try_consume_stack_gas(Some(&new_stack))?;
+
+                        new_stack
                     } else {
                         self.take_stack()
                     }
@@ -522,9 +525,9 @@ impl<'a> VmState<'a> {
         } else {
             // Simple case without continuation data
             let new_stack = if let Some(pass_args) = pass_args {
-                let stack = ok!(SafeRc::make_mut(&mut self.stack).split_top(pass_args as _));
-                self.gas.try_consume_stack_gas(Some(&stack))?;
-                stack
+                let new_stack = ok!(SafeRc::make_mut(&mut self.stack).split_top(pass_args as _));
+                self.gas.try_consume_stack_gas(Some(&new_stack))?;
+                new_stack
             } else {
                 self.take_stack()
             };
@@ -545,7 +548,7 @@ impl<'a> VmState<'a> {
         ret.data.save.c[0] = c0;
         self.cr.c[0] = Some(SafeRc::from(ret));
 
-        SafeRc::into_inner(cont).jump(self)
+        self.do_jump_to(cont)
     }
 
     pub fn jump(&mut self, cont: RcCont) -> VmResult<i32> {
@@ -561,14 +564,20 @@ impl<'a> VmState<'a> {
         // - `nargs` is not specified so it expects the full current stack
         //
         // So, we don't need to change anything to call it
-        SafeRc::into_inner(cont).jump(self)
+        self.do_jump_to(cont)
     }
 
-    pub fn jump_ext(&mut self, mut cont: RcCont, pass_args: Option<u16>) -> VmResult<i32> {
+    pub fn jump_ext(&mut self, cont: RcCont, pass_args: Option<u16>) -> VmResult<i32> {
         // Either all values or the top n values in the current stack are
         // moved to the stack of the continuation, and only then is the
         // remainder of the current stack discarded.
+        let cont = ok!(self.adjust_jump_cont(cont, pass_args));
 
+        // Proceed to the continuation
+        self.do_jump_to(cont)
+    }
+
+    fn adjust_jump_cont(&mut self, mut cont: RcCont, pass_args: Option<u16>) -> VmResult<RcCont> {
         if let Some(control_data) = cont.get_control_data() {
             // n = self.stack.depth()
             // if has nargs:
@@ -652,8 +661,30 @@ impl<'a> VmState<'a> {
             }
         }
 
-        // Proceed to the continuation
-        SafeRc::into_inner(cont).jump(self)
+        Ok(cont)
+    }
+
+    fn do_jump_to(&mut self, mut cont: RcCont) -> VmResult<i32> {
+        let mut exit_code = 0;
+        let mut count = 0;
+        while let Some(next) = ok!(SafeRc::into_inner(cont).jump(self, &mut exit_code)) {
+            cont = next;
+            count += 1;
+
+            // TODO: Check version >= 9?
+            if count > GasConsumer::FREE_NESTED_CONT_JUMP {
+                self.gas.try_consume(1)?;
+            }
+
+            if let Some(cont_data) = cont.get_control_data() {
+                if cont_data.stack.is_some() || cont_data.nargs.is_some() {
+                    // Cont has a non-empty stack or expects a fixed number of arguments
+                    cont = ok!(self.adjust_jump_cont(cont, None));
+                }
+            }
+        }
+
+        Ok(exit_code)
     }
 
     pub fn ret(&mut self) -> VmResult<i32> {

@@ -287,6 +287,7 @@ impl<'l> GasConsumer<'l> {
 
     pub const FREE_STACK_DEPTH: usize = 32;
     pub const FREE_SIGNATURE_CHECKS: usize = 10;
+    pub const FREE_NESTED_CONT_JUMP: usize = 8;
 
     pub const STACK_VALUE_GAS_PRICE: u64 = 1;
     pub const TUPLE_ENTRY_GAS_PRICE: u64 = 1;
