@@ -1,4 +1,6 @@
-use everscale_types::models::{Account, CurrencyCollection, LibDescr, StateInit, TickTock};
+use everscale_types::models::{
+    Account, CurrencyCollection, LibDescr, SimpleLib, StateInit, TickTock,
+};
 use everscale_types::num::Tokens;
 use everscale_types::prelude::*;
 use tycho_vm::BehaviourModifiers;
@@ -26,6 +28,7 @@ pub struct ExecutorState<'a> {
     pub msg_state_init: Option<MsgStateInit>,
     pub new_code: Option<Cell>,
     pub new_data: Option<Cell>,
+    pub new_libraries: Dict<HashBytes, SimpleLib>,
     pub actions: Option<Cell>,
     pub account_activated: bool,
 

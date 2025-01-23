@@ -20,6 +20,16 @@ pub struct ExtStorageStat<'a> {
 }
 
 impl<'a> ExtStorageStat<'a> {
+    pub fn with_limits(max_merkle_depth: u8, limits: CellTreeStats) -> Self {
+        Self {
+            visited: ahash::HashMap::default(),
+            limits,
+            max_merkle_depth,
+            cells: 0,
+            bits: 0,
+        }
+    }
+
     pub fn compute_for_slice(
         cs: &CellSlice<'a>,
         max_merkle_depth: u8,
@@ -34,7 +44,7 @@ impl<'a> ExtStorageStat<'a> {
         };
 
         for cell in cs.references() {
-            state.add_cell(cell)?;
+            state.add_cell_impl(cell)?;
         }
 
         Some(CellTreeStats {
@@ -43,7 +53,18 @@ impl<'a> ExtStorageStat<'a> {
         })
     }
 
-    fn add_cell(&mut self, cell: &'a DynCell) -> Option<u8> {
+    pub fn stats(&self) -> CellTreeStats {
+        CellTreeStats {
+            bit_count: self.bits,
+            cell_count: self.cells,
+        }
+    }
+
+    pub fn add_cell(&mut self, cell: &'a DynCell) -> bool {
+        self.add_cell_impl(cell).is_some()
+    }
+
+    fn add_cell_impl(&mut self, cell: &'a DynCell) -> Option<u8> {
         if let Some(merkle_depth) = self.visited.get(cell.repr_hash()).copied() {
             return Some(merkle_depth);
         }
@@ -57,10 +78,11 @@ impl<'a> ExtStorageStat<'a> {
 
         let mut max_merkle_depth = 0u8;
         for cell in cell.references() {
-            max_merkle_depth = std::cmp::max(self.add_cell(cell)?, max_merkle_depth);
+            max_merkle_depth = std::cmp::max(self.add_cell_impl(cell)?, max_merkle_depth);
         }
         max_merkle_depth = max_merkle_depth.saturating_add(cell.cell_type().is_merkle() as u8);
 
+        self.visited.insert(cell.repr_hash(), max_merkle_depth);
         (max_merkle_depth <= self.max_merkle_depth).then_some(max_merkle_depth)
     }
 }

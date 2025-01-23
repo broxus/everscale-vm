@@ -1,9 +1,11 @@
 use anyhow::Result;
 use everscale_types::cell::{Cell, CellBuilder, CellSliceRange, CellTreeStats, HashBytes, Load};
+use everscale_types::dict::Dict;
 use everscale_types::models::{
-    AccountState, AccountStatusChange, ComputePhase, ComputePhaseSkipReason, CreditPhase,
-    CurrencyCollection, ExecutedComputePhase, MsgInfo, SkippedComputePhase, StateInit, StdAddr,
-    StoragePhase, TickTock,
+    AccountState, AccountStatusChange, ActionPhase, ChangeLibraryMode, ComputePhase,
+    ComputePhaseSkipReason, CreditPhase, CurrencyCollection, ExecutedComputePhase, LibRef, MsgInfo,
+    OutAction, ReserveCurrencyFlags, SendMsgFlags, SimpleLib, SizeLimitsConfig,
+    SkippedComputePhase, StateInit, StdAddr, StoragePhase, StorageUsedShort, TickTock,
 };
 use everscale_types::num::{Tokens, VarUint24, VarUint56};
 use num_bigint::{BigInt, Sign};
@@ -12,12 +14,35 @@ use tycho_vm::{tuple, SafeRc, SmcInfoBase, Stack, VmState};
 use crate::util::{is_masterchain, ExtStorageStat};
 use crate::{ExecutorState, ExtMsgRejected, ExtMsgRejectedReason, MsgStateInit, TransactionInput};
 
+#[repr(i32)]
+#[derive(Debug, thiserror::Error)]
+enum ResultCode {
+    #[error("invalid action list")]
+    ActionListInvalid = 32,
+    #[error("too many actions")]
+    TooManyActions = 33,
+    #[error("invalid or unsupported action")]
+    ActionInvalid = 34,
+    #[error("not enough balance (base currency)")]
+    NotEnoughBalance = 37,
+    #[error("not enough balance (extra currency)")]
+    NotEnoughExtraBalance = 38,
+    #[error("library code not found")]
+    NoLibCode = 41,
+    #[error("failed to change libraries dict")]
+    InvalidLibrariesDict = 42,
+    #[error("too many library cells")]
+    LibOutOfLimits = 43,
+    #[error("state exceeds limits")]
+    StateOutOfLimits = 50,
+}
+
+const MAX_ALLOWED_MERKLE_DEPTH: u8 = 2;
+
 impl ExecutorState<'_> {
     // === Receive Inbound Message ===
 
     pub fn receive_in_msg(&mut self, msg_root: Cell) -> Result<()> {
-        const MAX_ALLOWED_MERKLE_DEPTH: u8 = 2;
-
         let is_masterchain = is_masterchain(self.workchain);
 
         // Process message header.
@@ -324,10 +349,38 @@ impl ExecutorState<'_> {
                     }));
                 }
 
-                // Use state from message.
-                self.new_code = from_msg.parsed.code.clone();
-                self.new_data = from_msg.parsed.data.clone();
-                // TODO: Check size limits (with `max_acc_public_libraries`)
+                // Use state from the message.
+                let old_code = std::mem::replace(&mut self.new_code, from_msg.parsed.code.clone());
+                let old_data = std::mem::replace(&mut self.new_data, from_msg.parsed.data.clone());
+                let old_libs =
+                    std::mem::replace(&mut self.new_libraries, from_msg.parsed.libraries.clone());
+
+                // Check if we can use this new state.
+                let mut limits = self.config.size_limits.clone();
+                if is_masterchain && matches!(&self.account.state, AccountState::Uninit) {
+                    // Forbid public libraries when deploying, allow for unfreezing.
+                    limits.max_acc_public_libraries = 0;
+                }
+
+                if matches!(
+                    check_state_limits(
+                        &self.account.state,
+                        &self.new_code,
+                        &self.new_data,
+                        &self.new_libraries,
+                        &limits
+                    ),
+                    StateLimitsResult::Exceeds
+                ) {
+                    self.new_code = old_code;
+                    self.new_data = old_data;
+                    self.new_libraries = old_libs;
+                    return Ok(ComputePhase::Skipped(SkippedComputePhase {
+                        reason: ComputePhaseSkipReason::BadState,
+                    }));
+                }
+
+                // Use state
                 from_msg.used = true;
 
                 // Use libraries.
@@ -335,16 +388,16 @@ impl ExecutorState<'_> {
                 msg_libs = Some(from_msg.parsed.libraries.clone());
             }
             (Some(from_msg), AccountState::Active(StateInit { libraries, .. })) => {
+                // Check if a state from the external message has the correct hash.
+                if self.is_in_msg_external && from_msg.hash != addr.address {
+                    return Ok(ComputePhase::Skipped(SkippedComputePhase {
+                        reason: ComputePhaseSkipReason::BadState,
+                    }));
+                }
+
+                // Use libraries.
                 state_libs = Some(libraries);
                 msg_libs = Some(from_msg.parsed.libraries.clone());
-            }
-        }
-
-        if let Some(from_msg) = &self.msg_state_init {
-            if self.is_in_msg_external && from_msg.hash != addr.address {
-                return Ok(ComputePhase::Skipped(SkippedComputePhase {
-                    reason: ComputePhaseSkipReason::BadState,
-                }));
             }
         }
 
@@ -472,8 +525,414 @@ impl ExecutorState<'_> {
             }
         }))
     }
+
+    // === Action Phase ===
+
+    pub fn action_phase(&mut self, mut actions: Cell) -> Result<ActionPhase> {
+        const MAX_ACTIONS: u16 = 255;
+
+        let mut needs_bounce = false;
+        let mut phase = ActionPhase {
+            success: false,
+            valid: false,
+            no_funds: false,
+            status_change: AccountStatusChange::Unchanged,
+            total_fwd_fees: None,
+            total_action_fees: None,
+            result_code: -1,
+            result_arg: None,
+            total_actions: 0,
+            special_actions: 0,
+            skipped_actions: 0,
+            messages_created: 0,
+            action_list_hash: *actions.repr_hash(),
+            total_message_size: StorageUsedShort::ZERO,
+        };
+
+        let old_code = self.new_code.as_ref();
+        let old_data = self.new_data.as_ref();
+        let old_libx = self.new_libraries.root().as_ref();
+
+        // Unpack actions list.
+        let mut action_idx = 0u16;
+
+        let mut list = Vec::new();
+        let mut actions = actions.as_ref();
+        loop {
+            if actions.is_exotic() {
+                // Actions list item must be an ordinary cell.
+                phase.result_code = ResultCode::ActionListInvalid as i32;
+                phase.result_arg = Some(action_idx as _);
+                phase.valid = false;
+                return Ok(phase);
+            }
+
+            list.push(actions);
+
+            // NOTE: We have checked that this cell is an ordinary.
+            let mut cs = actions.as_slice_allow_pruned();
+            if cs.is_empty() {
+                // Actions list terminates with an empty cell.
+                break;
+            }
+
+            actions = match cs.load_reference() {
+                Ok(child) => child,
+                Err(_) => {
+                    // Each action must contain at least one reference.
+                    phase.result_code = ResultCode::ActionListInvalid as i32;
+                    phase.result_arg = Some(action_idx as _);
+                    phase.valid = false;
+                    return Ok(phase);
+                }
+            };
+
+            action_idx += 1;
+            if action_idx > MAX_ACTIONS {
+                // There can be at most N actions.
+                phase.result_code = ResultCode::TooManyActions as i32;
+                phase.result_arg = Some(action_idx as _);
+                phase.valid = false;
+                return Ok(phase);
+            }
+        }
+
+        phase.total_actions = action_idx;
+
+        // Parse actions.
+        let mut parsed_list = Vec::with_capacity(list.len());
+        for (action_idx, item) in list.into_iter().rev().enumerate() {
+            let mut cs = item.as_slice_allow_pruned();
+            cs.load_reference().ok(); // Skip first reference.
+
+            // Try to parse one action.
+            let mut cs_parsed = cs.clone();
+            if let Ok(item) = OutAction::load_from(&mut cs_parsed) {
+                if cs_parsed.is_empty() {
+                    // Add this action if slices contained it exclusively.
+                    parsed_list.push(Some(item));
+                    continue;
+                }
+            }
+
+            // Special brhaviour for `SendMsg` action when we can at least parse its flags.
+            if cs.size_bits() >= 40 && cs.load_u32()? == OutAction::TAG_SEND_MSG {
+                let mode = SendMsgFlags::from_bits_retain(cs.load_u8()?);
+                if mode.contains(SendMsgFlags::IGNORE_ERROR) {
+                    // "IGNORE_ERROR" flag means that we can just skip this action.
+                    phase.skipped_actions += 1;
+                    parsed_list.push(None);
+                    continue;
+                } else if mode.contains(SendMsgFlags::BOUNCE_ON_ERROR) {
+                    // "BOUNCE_ON_ERROR" flag means that we fail the action phase,
+                    // but require a bounce phase to run afterwards.
+                    needs_bounce = true;
+                }
+            }
+
+            phase.result_code = ResultCode::ActionInvalid as i32;
+            phase.result_arg = Some(action_idx as _);
+            phase.valid = false;
+            return Ok(phase);
+        }
+
+        // Action list itself is ok.
+        phase.valid = true;
+
+        // Execute actions.
+        let mut remaining_balance = self.account.balance.clone();
+        let mut reserved_balance = CurrencyCollection::ZERO;
+        let mut new_code = None;
+        let mut new_libs = self.new_libraries.clone();
+
+        for (action_idx, action) in parsed_list.into_iter().enumerate() {
+            let Some(action) = action else {
+                continue;
+            };
+
+            phase.result_arg = Some(action_idx as _);
+
+            let mut ctx = ActionContext {
+                need_bounce_on_fail: false,
+                remaining_balance: &mut remaining_balance,
+                reserved_balance: &mut reserved_balance,
+                new_code: &mut new_code,
+                new_libs: &mut new_libs,
+                result_code: None,
+                special_actions: &mut phase.special_actions,
+            };
+
+            let res = match action {
+                OutAction::SendMsg { mode, out_msg } => todo!(),
+                OutAction::SetCode { new_code } => self.do_set_code(new_code, &mut ctx),
+                OutAction::ReserveCurrency { mode, value } => {
+                    self.do_reserve_currency(mode, value, &mut ctx)
+                }
+                OutAction::ChangeLibrary { mode, lib } => {
+                    self.do_change_library(mode, lib, &mut ctx)
+                }
+                OutAction::CopyLeft { license, address } => todo!(),
+            };
+        }
+
+        Ok(())
+    }
+
+    /// `SetCode` action.
+    fn do_set_code(&self, new_code: Cell, ctx: &mut ActionContext<'_>) -> Result<(), ActionFailed> {
+        // Update context.
+        *ctx.new_code = Some(new_code);
+        *ctx.special_actions += 1;
+
+        // Done
+        Ok(())
+    }
+
+    /// `ReserveCurrency` action.
+    fn do_reserve_currency(
+        &self,
+        mode: ReserveCurrencyFlags,
+        mut reserve: CurrencyCollection,
+        ctx: &mut ActionContext<'_>,
+    ) -> Result<(), ActionFailed> {
+        const MASK: u8 = ReserveCurrencyFlags::all().bits();
+
+        // Check and apply mode flags.
+        if mode.contains(ReserveCurrencyFlags::BOUNCE_ON_ERROR) {
+            ctx.need_bounce_on_fail = true;
+        }
+
+        if mode.bits() & !MASK != 0 {
+            // Invalid mode.
+            return Err(ActionFailed);
+        }
+
+        if mode.contains(ReserveCurrencyFlags::WITH_ORIGINAL_BALANCE) {
+            if mode.contains(ReserveCurrencyFlags::REVERSE) {
+                reserve = self.original_balance.checked_sub(&reserve)?;
+            } else {
+                reserve.try_add_assign(&self.original_balance)?;
+            }
+        } else if mode.contains(ReserveCurrencyFlags::REVERSE) {
+            // Invalid mode.
+            return Err(ActionFailed);
+        }
+
+        if mode.contains(ReserveCurrencyFlags::IGNORE_ERROR) {
+            // Clamp balance.
+            reserve = reserve.checked_clamp(ctx.remaining_balance)?;
+        }
+
+        // Reserve balance.
+        let mut new_balance = CurrencyCollection {
+            tokens: match ctx.remaining_balance.tokens.checked_sub(reserve.tokens) {
+                Some(tokens) => tokens,
+                None => {
+                    ctx.result_code = Some(ResultCode::NotEnoughBalance);
+                    return Err(ActionFailed);
+                }
+            },
+            other: match ctx.remaining_balance.other.checked_sub(&reserve.other) {
+                Ok(other) => other,
+                Err(_) => {
+                    ctx.result_code = Some(ResultCode::NotEnoughExtraBalance);
+                    return Err(ActionFailed);
+                }
+            },
+        };
+
+        // Apply "ALL_BUT" flag. Leave only "new_balance", reserve everything else.
+        if mode.contains(ReserveCurrencyFlags::ALL_BUT) {
+            std::mem::swap(&mut new_balance, &mut reserve);
+        }
+
+        // Update context.
+        *ctx.remaining_balance = new_balance;
+        ctx.reserved_balance.try_add_assign(&reserve)?;
+        *ctx.special_actions += 1;
+
+        // Done
+        Ok(())
+    }
+
+    /// `ChangeLibrary` action.
+    fn do_change_library(
+        &self,
+        mode: ChangeLibraryMode,
+        lib: LibRef,
+        ctx: &mut ActionContext<'_>,
+    ) -> Result<(), ActionFailed> {
+        // Having both "ADD_PRIVATE" and "ADD_PUBLIC" flags is invalid.
+        const INVALID_MODE: ChangeLibraryMode = ChangeLibraryMode::from_bits_retain(
+            ChangeLibraryMode::ADD_PRIVATE.bits() | ChangeLibraryMode::ADD_PUBLIC.bits(),
+        );
+
+        // Check and apply mode flags.
+        if mode.contains(ChangeLibraryMode::BOUNCE_ON_ERROR) {
+            ctx.need_bounce_on_fail = true;
+        }
+
+        if mode.contains(INVALID_MODE) {
+            return Err(ActionFailed);
+        }
+
+        let hash = match &lib {
+            LibRef::Cell(cell) => cell.repr_hash(),
+            LibRef::Hash(hash) => hash,
+        };
+
+        let add_public = mode.contains(ChangeLibraryMode::ADD_PUBLIC);
+        if add_public || mode.contains(ChangeLibraryMode::ADD_PRIVATE) {
+            // Add new library.
+            if let Ok(Some(prev)) = ctx.new_libs.get(hash) {
+                if prev.public == add_public {
+                    // Do nothing if library already exists with the same `public` flag.
+                    *ctx.special_actions += 1;
+                    return Ok(());
+                }
+            }
+
+            let LibRef::Cell(root) = lib else {
+                ctx.result_code = Some(ResultCode::NoLibCode);
+                return Err(ActionFailed);
+            };
+
+            let mut stats = ExtStorageStat::with_limits(MAX_ALLOWED_MERKLE_DEPTH, CellTreeStats {
+                bit_count: u64::MAX,
+                cell_count: self.config.size_limits.max_library_cells as u64,
+            });
+            if !stats.add_cell(root.as_ref()) {
+                ctx.result_code = Some(ResultCode::LibOutOfLimits);
+                return Err(ActionFailed);
+            }
+
+            // Add library.
+            if ctx
+                .new_libs
+                .set(*root.repr_hash(), SimpleLib {
+                    public: add_public,
+                    root,
+                })
+                .is_err()
+            {
+                ctx.result_code = Some(ResultCode::InvalidLibrariesDict);
+                return Err(ActionFailed);
+            }
+        } else {
+            // Remove library.
+            if ctx.new_libs.remove(hash).is_err() {
+                ctx.result_code = Some(ResultCode::InvalidLibrariesDict);
+                return Err(ActionFailed);
+            }
+        }
+
+        // Update context.
+        *ctx.special_actions += 1;
+
+        // Done
+        Ok(())
+    }
+}
+
+struct ActionContext<'a> {
+    need_bounce_on_fail: bool,
+    remaining_balance: &'a mut CurrencyCollection,
+    reserved_balance: &'a mut CurrencyCollection,
+    new_code: &'a mut Option<Cell>,
+    new_libs: &'a mut Dict<HashBytes, SimpleLib>,
+    result_code: Option<ResultCode>,
+    special_actions: &'a mut u16,
+}
+
+struct ActionFailed;
+
+impl From<anyhow::Error> for ActionFailed {
+    #[inline]
+    fn from(_: anyhow::Error) -> Self {
+        Self
+    }
+}
+
+impl From<everscale_types::error::Error> for ActionFailed {
+    #[inline]
+    fn from(_: everscale_types::error::Error) -> Self {
+        Self
+    }
+}
+
+enum StateLimitsResult {
+    Unchanged,
+    Exceeds,
+    Fits,
 }
 
 fn new_varuint56_truncate(value: u64) -> VarUint56 {
     VarUint56::new(std::cmp::min(value, VarUint56::MAX.into_inner()))
+}
+
+fn check_state_limits(
+    state: &AccountState,
+    new_code: &Option<Cell>,
+    new_data: &Option<Cell>,
+    new_libs: &Dict<HashBytes, SimpleLib>,
+    limits: &SizeLimitsConfig,
+) -> StateLimitsResult {
+    let (old_code, old_data, old_libs) = match state {
+        AccountState::Active(state) => (
+            state.code.as_ref(),
+            state.data.as_ref(),
+            state.libraries.root().as_ref(),
+        ),
+        AccountState::Uninit | AccountState::Frozen(..) => (None, None, None),
+    };
+
+    // Early exit if nothing changed.
+    if old_code == new_code.as_ref()
+        && old_data == new_data.as_ref()
+        && old_libs == new_libs.root().as_ref()
+    {
+        return StateLimitsResult::Unchanged;
+    }
+
+    // Compute storage stats.
+    let mut stats = ExtStorageStat::with_limits(MAX_ALLOWED_MERKLE_DEPTH, CellTreeStats {
+        bit_count: limits.max_acc_state_bits as u64,
+        cell_count: limits.max_acc_state_cells as u64,
+    });
+
+    if let Some(code) = new_code {
+        if !stats.add_cell(code.as_ref()) {
+            return StateLimitsResult::Exceeds;
+        }
+    }
+
+    if let Some(data) = new_data {
+        if !stats.add_cell(data.as_ref()) {
+            return StateLimitsResult::Exceeds;
+        }
+    }
+
+    if let Some(libs) = new_libs.root() {
+        if !stats.add_cell(libs.as_ref()) {
+            return StateLimitsResult::Exceeds;
+        }
+    }
+
+    // Check public libraries.
+    if old_libs != new_libs.root().as_ref() {
+        let mut public_libs_count = 0;
+        for lib in new_libs.values() {
+            let Ok(lib) = lib else {
+                return StateLimitsResult::Exceeds;
+            };
+
+            public_libs_count += lib.public as usize;
+            if public_libs_count > limits.max_acc_public_libraries as usize {
+                return StateLimitsResult::Exceeds;
+            }
+        }
+    }
+
+    // Ok
+    StateLimitsResult::Fits
 }
