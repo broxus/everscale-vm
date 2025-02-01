@@ -729,6 +729,7 @@ mod tests {
                 max: u64::MAX,
                 limit: 0,
                 credit: 10000,
+                price: 1000 << 16,
             })
             .with_debug(&mut output)
             .build();

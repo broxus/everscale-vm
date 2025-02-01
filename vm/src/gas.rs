@@ -1,4 +1,5 @@
 use std::hash::BuildHasher;
+use std::num::NonZeroU64;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -20,14 +21,19 @@ pub struct GasParams {
     pub limit: u64,
     /// Free gas (e.g. for external messages without any balance).
     pub credit: u64,
+    /// Gas price (fixed point with 16 bits for fractional part).
+    pub price: u64,
 }
 
 impl GasParams {
+    const STUB_GAS_PRICE: u64 = 1000 << 16;
+
     pub const fn unlimited() -> Self {
         Self {
             max: u64::MAX,
             limit: u64::MAX,
             credit: 0,
+            price: Self::STUB_GAS_PRICE,
         }
     }
 
@@ -36,6 +42,7 @@ impl GasParams {
             max: 1000000,
             limit: 1000000,
             credit: 0,
+            price: Self::STUB_GAS_PRICE,
         }
     }
 }
@@ -283,6 +290,8 @@ pub struct GasConsumer<'l> {
     gas_base: std::cell::Cell<u64>,
     /// Remaining gas available.
     gas_remaining: std::cell::Cell<u64>,
+    /// Gas price (fixed point with 16 bits for fractional part).
+    gas_price: NonZeroU64,
 
     /// A set of visited cells.
     loaded_cells: std::cell::UnsafeCell<HashSet<HashBytes>>,
@@ -328,6 +337,7 @@ impl<'l> GasConsumer<'l> {
             gas_credit: std::cell::Cell::new(params.credit),
             gas_base: std::cell::Cell::new(gas_remaining),
             gas_remaining: std::cell::Cell::new(gas_remaining),
+            gas_price: NonZeroU64::new(params.price).unwrap_or(NonZeroU64::MIN),
             loaded_cells: Default::default(),
             libraries,
             chksign_counter: std::cell::Cell::new(0),
@@ -347,6 +357,10 @@ impl<'l> GasConsumer<'l> {
         self.gas_base.get() - self.gas_remaining.get()
     }
 
+    pub fn base(&self) -> u64 {
+        self.gas_base.get()
+    }
+
     pub fn limit(&self) -> u64 {
         self.gas_limit.get()
     }
@@ -361,9 +375,20 @@ impl<'l> GasConsumer<'l> {
     }
 
     fn set_base(&self, base: u64) {
-        let base_diff = base - self.gas_base.get();
-        self.gas_remaining.set(self.gas_remaining.get() + base_diff);
+        let prev_base = self.gas_base.get();
+        let prev_remaining = self.gas_remaining.get();
+        self.gas_remaining.set(if base >= prev_base {
+            let base_diff = base - prev_base;
+            prev_remaining + base_diff
+        } else {
+            let base_diff = prev_base - base;
+            prev_remaining - base_diff
+        });
         self.gas_base.set(base);
+    }
+
+    pub fn price(&self) -> u64 {
+        self.gas_price.get()
     }
 
     pub fn try_consume_exception_gas(&self) -> Result<(), Error> {

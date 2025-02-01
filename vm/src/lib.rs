@@ -287,6 +287,7 @@ mod tests {
                 max: gas_limit,
                 limit: gas_limit,
                 credit: 0,
+                ..GasParams::getter()
             })
             .build();
 

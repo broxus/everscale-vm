@@ -221,6 +221,7 @@ impl ParsedConfig {
             max: gas_max,
             limit: gas_limit,
             credit: gas_credit,
+            price: prices.gas_price,
         }
     }
 }
