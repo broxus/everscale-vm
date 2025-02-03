@@ -32,7 +32,7 @@ thiserror = "2.0"
 tracing = "0.1"
 tracing-test = "0.2"
 
-everscale-asm-macros = { git = "https://github.com/broxus/everscale-asm.git", rev = "81e7aab4a970cea76f48e583e09bf7a1886661fe" }
+everscale-asm-macros = { git = "https://github.com/broxus/everscale-asm.git", rev = "799ae29a96ccd98db84882e7fe5fb20beba656a7" }
 
 [patch.crates-io]
 everscale-types = { git = "https://github.com/broxus/everscale-types.git", rev = "7128872475df48255355d8448949614936c84ca6" }
