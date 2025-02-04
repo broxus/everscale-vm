@@ -752,11 +752,6 @@ mod tests {
             last_trans_lt: <_>::load_from(s)?,
             balance: <_>::load_from(s)?,
             state: <_>::load_from(s)?,
-            init_code_hash: if s.is_data_empty() {
-                None
-            } else {
-                Some(<_>::load_from(s)?)
-            },
         }))
     }
 }
