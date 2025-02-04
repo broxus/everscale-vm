@@ -1,9 +1,9 @@
 use anyhow::Result;
-use everscale_types::models::{CurrencyCollection, MsgInfo, StateInit};
+use everscale_types::models::{CurrencyCollection, IntAddr, MsgInfo, StateInit};
 use everscale_types::prelude::*;
 
-use crate::state::ExecutorState;
 use crate::util::{ExtStorageStat, StorageStatLimits};
+use crate::ExecutorState;
 
 impl ExecutorState<'_> {
     /// "Pre" phase of ordinary transactions.
@@ -30,23 +30,27 @@ impl ExecutorState<'_> {
         let mut slice = msg_root.as_slice_allow_pruned();
         match MsgInfo::load_from(&mut slice)? {
             // Handle internal message.
-            MsgInfo::Int(int) => {
+            MsgInfo::Int(info) => {
+                self.check_message_dst(&info.dst)?;
+
                 // Update flags.
                 is_external = false;
-                bounce_enabled = int.bounce;
+                bounce_enabled = info.bounce;
 
                 // Update message balance
-                msg_balance_remaining = int.value;
-                msg_balance_remaining.try_add_assign_tokens(int.ihr_fee)?;
+                msg_balance_remaining = info.value;
+                msg_balance_remaining.try_add_assign_tokens(info.ihr_fee)?;
 
                 // Adjust LT range.
-                if int.created_lt >= self.start_lt {
-                    self.start_lt = int.created_lt + 1;
+                if info.created_lt >= self.start_lt {
+                    self.start_lt = info.created_lt + 1;
                     self.end_lt = self.start_lt + 1;
                 }
             }
             // Handle external (in) message.
-            MsgInfo::ExtIn(_) => {
+            MsgInfo::ExtIn(info) => {
+                self.check_message_dst(&info.dst)?;
+
                 // Update flags.
                 is_external = true;
                 bounce_enabled = false;
@@ -144,8 +148,20 @@ impl ExecutorState<'_> {
             balance_remaining: msg_balance_remaining,
         })
     }
+
+    fn check_message_dst(&self, dst: &IntAddr) -> Result<()> {
+        match dst {
+            IntAddr::Std(dst) => {
+                anyhow::ensure!(dst.anycast.is_none(), "anycast is not supported");
+                anyhow::ensure!(*dst == self.address, "message destination address mismatch");
+                Ok(())
+            }
+            IntAddr::Var(_) => anyhow::bail!("`addr_var` is not supported"),
+        }
+    }
 }
 
+/// Parsed inbound message.
 #[derive(Debug, Clone)]
 pub struct ReceivedMessage {
     /// Message root cell.
@@ -165,6 +181,7 @@ pub struct ReceivedMessage {
     pub balance_remaining: CurrencyCollection,
 }
 
+/// Message state init.
 #[derive(Debug, Clone)]
 pub struct MsgStateInit {
     /// [`StateInit`] hash.

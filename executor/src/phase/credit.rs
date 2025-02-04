@@ -1,8 +1,8 @@
 use anyhow::Result;
 use everscale_types::models::CreditPhase;
 
-use crate::state::receive::ReceivedMessage;
-use crate::state::ExecutorState;
+use crate::phase::receive::ReceivedMessage;
+use crate::ExecutorState;
 
 impl ExecutorState<'_> {
     /// Credit phase of ordinary transactions.

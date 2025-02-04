@@ -10,15 +10,17 @@ use everscale_types::models::{
 use everscale_types::num::{Tokens, VarUint56};
 use everscale_types::prelude::*;
 
-use crate::state::{ExecutorState, TransactionInput};
+use crate::phase::receive::ReceivedMessage;
 use crate::util::{
     check_rewrite_dst_addr, check_rewrite_src_addr, check_state_limits, check_state_limits_diff,
     ExtStorageStat, StateLimitsResult, StorageStatLimits,
 };
+use crate::ExecutorState;
 
+/// Action phase input context.
 pub struct ActionPhaseContext<'a> {
-    /// Parsed transaction input.
-    pub input: &'a mut TransactionInput,
+    /// Received message (external or internal).
+    pub received_message: Option<&'a mut ReceivedMessage>,
     /// Original account balance before the compute phase.
     pub original_balance: CurrencyCollection,
     /// New account state to apply.
@@ -29,11 +31,10 @@ pub struct ActionPhaseContext<'a> {
     pub compute_phase: &'a ExecutedComputePhase,
 }
 
+/// Executed action phase with additional info.
 pub struct ActionPhaseFull {
     /// Resulting action phase.
     pub action_phase: ActionPhase,
-    /// Resulting account status.
-    pub account_status: AccountStatus,
     /// Additional fee in case of failure.
     pub action_fine: Tokens,
     /// Whether state can't be updated due to limits.
@@ -45,6 +46,12 @@ pub struct ActionPhaseFull {
 impl ExecutorState<'_> {
     pub fn action_phase(&mut self, mut ctx: ActionPhaseContext<'_>) -> Result<ActionPhaseFull> {
         const MAX_ACTIONS: u16 = 255;
+
+        debug_assert_eq!(
+            self.end_status,
+            AccountStatus::Active,
+            "action phase can only be executed on an active account"
+        );
 
         let mut res = ActionPhaseFull {
             action_phase: ActionPhase {
@@ -63,8 +70,6 @@ impl ExecutorState<'_> {
                 action_list_hash: *ctx.actions.repr_hash(),
                 total_message_size: StorageUsedShort::ZERO,
             },
-            // NOTE: Action phase can only be executed on an active account.
-            account_status: AccountStatus::Active,
             action_fine: Tokens::ZERO,
             state_exceeds_limits: false,
             bounce: false,
@@ -159,7 +164,7 @@ impl ExecutorState<'_> {
         // Execute actions.
         let mut action_ctx = ActionContext {
             need_bounce_on_fail: false,
-            input: ctx.input,
+            received_message: ctx.received_message,
             original_balance: &ctx.original_balance,
             remaining_balance: self.balance.clone(),
             reserved_balance: CurrencyCollection::ZERO,
@@ -218,8 +223,8 @@ impl ExecutorState<'_> {
                 // implementation works.
 
                 // Compute the resulting action fine (it must not be greater than the account balance).
+                *action_ctx.action_fine = (*action_ctx.action_fine).min(self.balance.tokens);
                 let fine = *action_ctx.action_fine;
-                *action_ctx.action_fine = std::cmp::min(fine, self.balance.tokens);
 
                 // Charge the account balance for the action fine.
                 action_ctx.action_phase.total_action_fees = Some(fine).filter(|t| !t.is_zero());
@@ -281,6 +286,7 @@ impl ExecutorState<'_> {
 
         if action_ctx.delete_account {
             action_ctx.action_phase.status_change = AccountStatusChange::Deleted;
+            self.end_status = AccountStatus::NotExists;
         }
 
         if let Some(fees) = action_ctx.action_phase.total_action_fees {
@@ -447,9 +453,9 @@ impl ExecutorState<'_> {
 
                     if mode.contains(SendMsgFlags::WITH_REMAINING_BALANCE) {
                         if (|| {
-                            let msg_balance_remaining = match ctx.input {
-                                TransactionInput::Ordinary(msg) => msg.balance_remaining.tokens,
-                                TransactionInput::TickTock(_) => Tokens::ZERO,
+                            let msg_balance_remaining = match &ctx.received_message {
+                                Some(msg) => msg.balance_remaining.tokens,
+                                None => Tokens::ZERO,
                             };
                             new_funds.try_add_assign(msg_balance_remaining)?;
                             new_funds.try_sub_assign(ctx.compute_phase.gas_fees)?;
@@ -568,7 +574,7 @@ impl ExecutorState<'_> {
                 };
 
                 // Clear message balance if it was used.
-                if let TransactionInput::Ordinary(msg) = ctx.input {
+                if let Some(msg) = &mut ctx.received_message {
                     if mode.contains(SendMsgFlags::ALL_BALANCE)
                         || mode.contains(SendMsgFlags::WITH_REMAINING_BALANCE)
                     {
@@ -782,7 +788,7 @@ impl ExecutorState<'_> {
 
 struct ActionContext<'a> {
     need_bounce_on_fail: bool,
-    input: &'a mut TransactionInput,
+    received_message: Option<&'a mut ReceivedMessage>,
     original_balance: &'a CurrencyCollection,
     remaining_balance: CurrencyCollection,
     reserved_balance: CurrencyCollection,
@@ -810,7 +816,7 @@ impl ActionContext<'_> {
             // Pay fees from the attached value.
             mode.remove(SendMsgFlags::PAY_FEE_SEPARATELY);
         } else if mode.contains(SendMsgFlags::WITH_REMAINING_BALANCE) {
-            if let TransactionInput::Ordinary(msg) = self.input {
+            if let Some(msg) = &self.received_message {
                 // Attach all remaining balance of the inbound message.
                 // (in addition to the original value).
                 value.try_add_assign(&msg.balance_remaining)?;

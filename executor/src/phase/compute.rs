@@ -8,25 +8,58 @@ use everscale_types::prelude::*;
 use num_bigint::{BigInt, Sign};
 use tycho_vm::{tuple, SafeRc, SmcInfoBase, Stack, VmState};
 
-use crate::state::{ExecutorState, TransactionInput};
+use crate::phase::receive::{MsgStateInit, ReceivedMessage};
 use crate::util::{
     check_state_limits_diff, new_varuint24_truncate, new_varuint56_truncate, StateLimitsResult,
 };
+use crate::ExecutorState;
 
+/// Compute phase input context.
 pub struct ComputePhaseContext<'a> {
     /// Parsed transaction input.
-    pub input: &'a TransactionInput,
+    pub input: TransactionInput<'a>,
 }
 
+/// Parsed transaction input.
+#[derive(Debug, Clone, Copy)]
+pub enum TransactionInput<'a> {
+    Ordinary(&'a ReceivedMessage),
+    TickTock(TickTock),
+}
+
+impl<'a> TransactionInput<'a> {
+    const fn is_ordinary(&self) -> bool {
+        matches!(self, Self::Ordinary(_))
+    }
+
+    fn in_msg(&self) -> Option<&'a ReceivedMessage> {
+        match self {
+            Self::Ordinary(msg) => Some(msg),
+            Self::TickTock(_) => None,
+        }
+    }
+
+    fn in_msg_init(&self) -> Option<&'a MsgStateInit> {
+        match self {
+            Self::Ordinary(msg) => msg.init.as_ref(),
+            Self::TickTock(_) => None,
+        }
+    }
+}
+
+/// Executed compute phase with additional info.
 pub struct ComputePhaseFull {
     /// Resulting comput phase.
     pub compute_phase: ComputePhase,
+    /// Whether the inbound message was accepted.
+    ///
+    /// NOTE: Message can be accepted even without a commited state,
+    /// so we can't use [`ExecutedComputePhase::success`].
+    pub accepted: bool,
     /// Original account balance before this phase.
     pub original_balance: CurrencyCollection,
     /// New account state.
     pub new_state: StateInit,
-    /// Resulting account status.
-    pub account_status: AccountStatus,
     /// Resulting actions list.
     pub actions: Cell,
 }
@@ -57,19 +90,19 @@ impl ExecutorState<'_> {
         }
 
         // Prepare full phase output.
-        let (new_state, account_status) = match &self.state {
-            AccountState::Active(current) => (current.clone(), AccountStatus::Active),
-            AccountState::Frozen(..) => (StateInit::default(), AccountStatus::Frozen),
-            AccountState::Uninit => (StateInit::default(), AccountStatus::Uninit),
+        let new_state = if let AccountState::Active(current) = &self.state {
+            current.clone()
+        } else {
+            Default::default()
         };
 
         let mut res = ComputePhaseFull {
             compute_phase: ComputePhase::Skipped(SkippedComputePhase {
                 reason: ComputePhaseSkipReason::NoGas,
             }),
+            accepted: false,
             original_balance,
             new_state,
-            account_status,
             actions: Cell::empty_cell(),
         };
 
@@ -233,11 +266,16 @@ impl ExecutorState<'_> {
         let exit_code = !vm.run();
 
         // Parse VM state.
-        let accepted = vm.gas.credit() == 0;
-        let success = accepted && vm.commited_state.is_some();
+        res.accepted = vm.gas.credit() == 0;
+        debug_assert!(
+            is_external || res.accepted,
+            "internal messages must be accepted"
+        );
+
+        let success = res.accepted && vm.commited_state.is_some();
 
         let gas_used = std::cmp::min(vm.gas.consumed(), vm.gas.limit());
-        let gas_fees = if accepted && !self.is_special {
+        let gas_fees = if res.accepted && !self.is_special {
             self.config
                 .gas_prices(is_masterchain)
                 .compute_gas_fee(gas_used)
@@ -247,13 +285,13 @@ impl ExecutorState<'_> {
         };
 
         let mut account_activated = false;
-        if accepted && msg_state_used {
-            account_activated = res.account_status != AccountStatus::Active;
-            res.account_status = AccountStatus::Active;
+        if res.accepted && msg_state_used {
+            account_activated = self.orig_status != AccountStatus::Active;
+            self.end_status = AccountStatus::Active;
         }
 
         if let Some(commited) = vm.commited_state {
-            if accepted {
+            if res.accepted {
                 res.new_state.data = Some(commited.c4);
                 res.actions = commited.c5;
             }
@@ -284,7 +322,7 @@ impl ExecutorState<'_> {
         Ok(res)
     }
 
-    fn prepare_vm_stack(&self, input: &TransactionInput) -> SafeRc<Stack> {
+    fn prepare_vm_stack(&self, input: TransactionInput<'_>) -> SafeRc<Stack> {
         SafeRc::new(Stack::with_items(match input {
             TransactionInput::Ordinary(msg) => {
                 tuple![

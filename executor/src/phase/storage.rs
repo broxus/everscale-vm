@@ -2,15 +2,11 @@ use anyhow::Result;
 use everscale_types::models::{AccountState, AccountStatusChange, StoragePhase};
 use everscale_types::num::Tokens;
 
-use crate::state::receive::ReceivedMessage;
-use crate::state::ExecutorState;
+use crate::phase::receive::ReceivedMessage;
+use crate::ExecutorState;
 
+/// Storage phase input context.
 pub struct StoragePhaseContext<'a> {
-    /// Whether to delete frozen accounts who can't pay
-    /// the required sum ([`delete_due_limit`]).
-    ///
-    /// [`delete_due_limit`]: everscale_types::models::GasLimitsPrices::delete_due_limit
-    pub allow_delete_frozen_accounts: bool,
     /// Whether to adjust remaining message balance
     /// if it becomes greater than the account balance.
     pub adjust_msg_balance: bool,
@@ -106,7 +102,7 @@ impl ExecutorState<'_> {
                 // Try to delete account.
                 AccountState::Uninit | AccountState::Frozen { .. }
                     if (matches!(&self.state, AccountState::Uninit)
-                        || ctx.allow_delete_frozen_accounts)
+                        || self.params.allow_delete_frozen_accounts)
                         && fees_due.into_inner() > config.delete_due_limit as u128
                         && !self.balance.other.is_empty() =>
                 {

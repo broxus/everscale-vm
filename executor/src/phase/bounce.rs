@@ -5,12 +5,13 @@ use everscale_types::models::{
 };
 use everscale_types::num::Tokens;
 
-use super::receive::ReceivedMessage;
-use crate::state::ExecutorState;
+use crate::phase::receive::ReceivedMessage;
 use crate::util::{
     check_rewrite_dst_addr, new_varuint56_truncate, ExtStorageStat, StorageStatLimits,
 };
+use crate::ExecutorState;
 
+/// Bounce phase input context.
 pub struct BouncePhaseContext<'a> {
     /// Gas fees from the compute phase (if any).
     pub gas_fees: Tokens,
@@ -33,6 +34,8 @@ impl ExecutorState<'_> {
     /// Fails if the origin workchain of the message doesn't exist or
     /// disabled. Can also fail on [`total_fees`] overflow, but this should
     /// not happen on networks with valid value flow.
+    ///
+    /// [`total_fees`]: Self::total_fees
     pub fn bounce_phase(&mut self, ctx: BouncePhaseContext<'_>) -> Result<BouncePhase> {
         let mut info = ctx.received_message.root.parse::<MsgInfo>()?;
         let MsgInfo::Int(int_msg_info) = &mut info else {
