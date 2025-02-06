@@ -1,7 +1,7 @@
 [workspace.package]
 edition = "2021"
 authors = ["Rexagon <i.kalinin@dexpa.io>", "MrWad3r <s.eliseev@dexpa.io>"]
-rust-version = "1.81.0"
+rust-version = "1.83.0"
 repository = "https://github.com/broxus/tycho-vm"
 license = "MIT OR Apache-2.0"
 
@@ -35,4 +35,4 @@ tracing-test = "0.2"
 everscale-asm-macros = { git = "https://github.com/broxus/everscale-asm.git", rev = "799ae29a96ccd98db84882e7fe5fb20beba656a7" }
 
 [patch.crates-io]
-everscale-types = { git = "https://github.com/broxus/everscale-types.git", rev = "38fbd366d2097d9d3e31c3582c69f3cd7880d86a" }
+everscale-types = { git = "https://github.com/broxus/everscale-types.git", rev = "f0d46607c19c9657b90360b4bc5c229a56540ffa" }

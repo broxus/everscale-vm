@@ -1,5 +1,5 @@
 use anyhow::Result;
-use everscale_types::models::{AccountState, AccountStatusChange, StoragePhase};
+use everscale_types::models::{AccountState, AccountStatus, AccountStatusChange, StoragePhase};
 use everscale_types::num::Tokens;
 
 use crate::phase::receive::ReceivedMessage;
@@ -116,7 +116,6 @@ impl ExecutorState<'_> {
                 AccountState::Active { .. }
                     if fees_due.into_inner() > config.freeze_due_limit as u128 =>
                 {
-                    // NOTE: We are not changing the account state yet.
                     AccountStatusChange::Frozen
                 }
                 // Do nothing if `fees_due` is not big enough.
@@ -128,6 +127,18 @@ impl ExecutorState<'_> {
                 self.storage_stat.due_payment = storage_fees_due;
             }
         };
+
+        // Apply status change.
+        match status_change {
+            AccountStatusChange::Unchanged => {}
+            AccountStatusChange::Frozen => {
+                // NOTE: We are not changing the account state yet, just updating status.
+                self.end_status = AccountStatus::Frozen;
+            }
+            AccountStatusChange::Deleted => {
+                self.end_status = AccountStatus::NotExists;
+            }
+        }
 
         // Adjust message value.
         if let Some(msg) = ctx.received_message {

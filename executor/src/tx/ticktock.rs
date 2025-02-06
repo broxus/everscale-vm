@@ -38,6 +38,7 @@ impl ExecutorState<'_> {
 
         // Run action phase only if compute phase succeeded.
         let mut aborted = true;
+        let mut destroyed = false;
         let mut action_phase = None;
         if let ComputePhase::Executed(compute_phase) = &compute_phase {
             if compute_phase.success {
@@ -52,6 +53,7 @@ impl ExecutorState<'_> {
                     .context("action phase failed")?;
 
                 aborted = !res.action_phase.success;
+                destroyed = self.end_status == AccountStatus::NotExists;
                 action_phase = Some(res.action_phase);
             }
         }
@@ -63,7 +65,7 @@ impl ExecutorState<'_> {
             compute_phase,
             action_phase,
             aborted,
-            destroyed: self.end_status == AccountStatus::NotExists,
+            destroyed,
         })
     }
 }

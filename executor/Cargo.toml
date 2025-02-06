@@ -15,3 +15,6 @@ num-bigint = { workspace = true }
 thiserror = { workspace = true }
 
 tycho-vm = { path = "../vm" }
+
+[dev-dependencies]
+everscale-types = { workspace = true, features = ["models", "base64"] }

@@ -107,7 +107,7 @@ impl ExecutorState<'_> {
                 }
             } else {
                 // Inline state init.
-                let mut state_init_cs = slice.clone();
+                let mut state_init_cs = slice;
 
                 // Read StateInit.
                 let parsed = StateInit::load_from(&mut slice)?;

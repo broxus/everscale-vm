@@ -47,12 +47,6 @@ impl ExecutorState<'_> {
     pub fn action_phase(&mut self, mut ctx: ActionPhaseContext<'_>) -> Result<ActionPhaseFull> {
         const MAX_ACTIONS: u16 = 255;
 
-        debug_assert_eq!(
-            self.end_status,
-            AccountStatus::Active,
-            "action phase can only be executed on an active account"
-        );
-
         let mut res = ActionPhaseFull {
             action_phase: ActionPhase {
                 success: false,
@@ -89,14 +83,14 @@ impl ExecutorState<'_> {
                 return Ok(res);
             }
 
-            list.push(actions);
-
             // NOTE: We have checked that this cell is an ordinary.
             let mut cs = actions.as_slice_allow_pruned();
             if cs.is_empty() {
                 // Actions list terminates with an empty cell.
                 break;
             }
+
+            list.push(actions);
 
             actions = match cs.load_reference() {
                 Ok(child) => child,
@@ -128,7 +122,7 @@ impl ExecutorState<'_> {
             cs.load_reference().ok(); // Skip first reference.
 
             // Try to parse one action.
-            let mut cs_parsed = cs.clone();
+            let mut cs_parsed = cs;
             if let Ok(item) = OutAction::load_from(&mut cs_parsed) {
                 if cs_parsed.is_empty() {
                     // Add this action if slices contained it exclusively.
@@ -451,8 +445,8 @@ impl ExecutorState<'_> {
                 {
                     let mut new_funds = info.value.tokens;
 
-                    if mode.contains(SendMsgFlags::WITH_REMAINING_BALANCE) {
-                        if (|| {
+                    if mode.contains(SendMsgFlags::WITH_REMAINING_BALANCE)
+                        && (|| {
                             let msg_balance_remaining = match &ctx.received_message {
                                 Some(msg) => msg.balance_remaining.tokens,
                                 None => Tokens::ZERO,
@@ -464,9 +458,8 @@ impl ExecutorState<'_> {
                             Ok::<_, everscale_types::error::Error>(())
                         })()
                         .is_err()
-                        {
-                            return check_skip_invalid(ResultCode::NotEnoughBalance, ctx);
-                        }
+                    {
+                        return check_skip_invalid(ResultCode::NotEnoughBalance, ctx);
                     }
 
                     funds = std::cmp::min(funds, new_funds);
@@ -881,7 +874,7 @@ impl MessageRewrite {
 }
 
 fn load_state_init_as_slice<'a>(cs: &mut CellSlice<'a>) -> Result<CellSlice<'a>, Error> {
-    let mut res_cs = cs.clone();
+    let mut res_cs = *cs;
 
     // (Maybe (Either StateInit ^StateInit))
     if cs.load_bit()? {
@@ -914,7 +907,7 @@ fn load_state_init_as_slice<'a>(cs: &mut CellSlice<'a>) -> Result<CellSlice<'a>,
 }
 
 fn load_body_as_slice<'a>(cs: &mut CellSlice<'a>) -> Result<CellSlice<'a>, Error> {
-    let res_cs = cs.clone();
+    let res_cs = *cs;
 
     if cs.load_bit()? {
         // right$1 ^X

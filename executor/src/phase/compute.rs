@@ -200,6 +200,7 @@ impl ExecutorState<'_> {
 
                 // Use state
                 res.new_state = from_msg.parsed.clone();
+                self.state = AccountState::Active(res.new_state.clone());
                 msg_state_used = true;
 
                 // Use libraries.

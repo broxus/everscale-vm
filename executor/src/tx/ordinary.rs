@@ -89,6 +89,7 @@ impl ExecutorState<'_> {
         let mut state_exceeds_limits = false;
         let mut bounce_required = false;
         let mut action_fine = Tokens::ZERO;
+        let mut destroyed = false;
 
         let mut action_phase = None;
         if let ComputePhase::Executed(compute_phase) = &compute_phase {
@@ -107,6 +108,7 @@ impl ExecutorState<'_> {
                 state_exceeds_limits = res.state_exceeds_limits;
                 bounce_required = res.bounce;
                 action_fine = res.action_fine;
+                destroyed = self.end_status == AccountStatus::NotExists;
 
                 action_phase = Some(res.action_phase);
             }
@@ -145,7 +147,7 @@ impl ExecutorState<'_> {
             action_phase,
             aborted,
             bounce_phase,
-            destroyed: self.end_status == AccountStatus::NotExists,
+            destroyed,
         })
     }
 }
