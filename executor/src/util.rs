@@ -1,3 +1,5 @@
+use std::mem::ManuallyDrop;
+
 use ahash::HashMap;
 use everscale_types::cell::CellTreeStats;
 use everscale_types::models::{
@@ -13,10 +15,54 @@ pub struct StorageStatLimits {
     pub cell_count: u32,
 }
 
+pub struct OwnedExtStorageStat {
+    cells: Vec<Cell>,
+    inner: ManuallyDrop<ExtStorageStat<'static>>,
+}
+
+impl OwnedExtStorageStat {
+    pub fn with_limits(limits: StorageStatLimits) -> Self {
+        Self {
+            cells: Vec::new(),
+            inner: ManuallyDrop::new(ExtStorageStat::with_limits(limits)),
+        }
+    }
+
+    pub fn add_cell(&mut self, cell: Cell) -> bool {
+        if self.inner.visited.contains_key(cell.repr_hash()) {
+            return true;
+        }
+
+        // SAFETY: We will store the cell afterwards so the lifetime of its hash
+        //         will outlive the `inner` object.
+        let cell_ref = unsafe { std::mem::transmute::<&DynCell, &'static DynCell>(cell.as_ref()) };
+        let res = self.inner.add_cell(cell_ref);
+        self.cells.push(cell);
+        res
+    }
+
+    pub fn clear(&mut self) {
+        self.inner.visited.clear();
+        self.inner.cells = 0;
+        self.inner.bits = 0;
+
+        // NOTE: We can clear the cells vector only after clearing the `visited` map.
+        self.cells.clear();
+    }
+}
+
+impl Drop for OwnedExtStorageStat {
+    fn drop(&mut self) {
+        // We must ensure that `inner` is dropped before `cells`.
+        // SAFETY: This is the only place where `inner` is dropped.
+        unsafe { ManuallyDrop::drop(&mut self.inner) };
+    }
+}
+
 #[derive(Default)]
 pub struct ExtStorageStat<'a> {
-    pub visited: ahash::HashMap<&'a HashBytes, u8>,
-    pub limits: StorageStatLimits,
+    visited: ahash::HashMap<&'a HashBytes, u8>,
+    limits: StorageStatLimits,
     pub cells: u32,
     pub bits: u32,
 }
@@ -197,11 +243,13 @@ pub enum StateLimitsResult {
     Fits,
 }
 
+/// NOTE: `stats_cache` is updated only when `StateLimitsResult::Fits` is returned.
 pub fn check_state_limits_diff(
     old_state: &StateInit,
     new_state: &StateInit,
     limits: &SizeLimitsConfig,
     is_masterchain: bool,
+    stats_cache: &mut Option<OwnedExtStorageStat>,
 ) -> StateLimitsResult {
     /// Returns (code, data, libs)
     fn unpack_state(state: &StateInit) -> (Option<&'_ Cell>, Option<&'_ Cell>, &'_ StateLibs) {
@@ -221,7 +269,14 @@ pub fn check_state_limits_diff(
     // public libraries are ignored and not tracked).
     let check_public_libs = is_masterchain && libs_changed;
 
-    check_state_limits(new_code, new_data, new_libs, limits, check_public_libs)
+    check_state_limits(
+        new_code,
+        new_data,
+        new_libs,
+        limits,
+        check_public_libs,
+        stats_cache,
+    )
 }
 
 pub fn check_state_limits(
@@ -230,27 +285,28 @@ pub fn check_state_limits(
     libs: &StateLibs,
     limits: &SizeLimitsConfig,
     check_public_libs: bool,
+    stats_cache: &mut Option<OwnedExtStorageStat>,
 ) -> StateLimitsResult {
     // Compute storage stats.
-    let mut stats = ExtStorageStat::with_limits(StorageStatLimits {
+    let mut stats = OwnedExtStorageStat::with_limits(StorageStatLimits {
         bit_count: limits.max_acc_state_bits,
         cell_count: limits.max_acc_state_cells,
     });
 
     if let Some(code) = code {
-        if !stats.add_cell(code.as_ref()) {
+        if !stats.add_cell(code.clone()) {
             return StateLimitsResult::Exceeds;
         }
     }
 
     if let Some(data) = data {
-        if !stats.add_cell(data.as_ref()) {
+        if !stats.add_cell(data.clone()) {
             return StateLimitsResult::Exceeds;
         }
     }
 
     if let Some(libs) = libs.root() {
-        if !stats.add_cell(libs.as_ref()) {
+        if !stats.add_cell(libs.clone()) {
             return StateLimitsResult::Exceeds;
         }
     }
@@ -272,6 +328,7 @@ pub fn check_state_limits(
     }
 
     // Ok
+    *stats_cache = Some(stats);
     StateLimitsResult::Fits
 }
 
@@ -280,4 +337,59 @@ type StateLibs = Dict<HashBytes, SimpleLib>;
 pub const fn shift_ceil_price(value: u128) -> u128 {
     let r = value & 0xffff != 0;
     (value >> 16) + r as u128
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn miri_check() {
+        // Drop is ok.
+        let mut owned = OwnedExtStorageStat::with_limits(StorageStatLimits {
+            bit_count: 1000,
+            cell_count: 1000,
+        });
+
+        fn fill(owned: &mut OwnedExtStorageStat) {
+            let res = owned.add_cell(Cell::empty_cell());
+            assert!(res);
+            assert_eq!(owned.inner.bits, 0);
+            assert_eq!(owned.inner.cells, 1);
+
+            let res = owned.add_cell({
+                let mut b = CellBuilder::new();
+                b.store_u32(123).unwrap();
+                b.store_reference(Cell::empty_cell()).unwrap();
+                b.build().unwrap()
+            });
+            assert!(res);
+            assert_eq!(owned.inner.bits, 32);
+            assert_eq!(owned.inner.cells, 2);
+
+            // Create the same cell as above to possibly trigger a dangling pointer access.
+            let res = owned.add_cell({
+                let mut b = CellBuilder::new();
+                b.store_u32(123).unwrap();
+                b.store_reference(Cell::empty_cell()).unwrap();
+                b.build().unwrap()
+            });
+            assert!(res);
+            assert_eq!(owned.inner.bits, 32);
+            assert_eq!(owned.inner.cells, 2);
+        }
+
+        fill(&mut owned);
+        drop(owned);
+
+        // Clear is ok.
+        let mut owned = OwnedExtStorageStat::with_limits(StorageStatLimits {
+            bit_count: 1000,
+            cell_count: 1000,
+        });
+
+        fill(&mut owned);
+        owned.clear();
+        fill(&mut owned);
+    }
 }

@@ -11,6 +11,7 @@ use everscale_types::prelude::*;
 
 pub use self::config::ParsedConfig;
 pub use self::error::{TxError, TxResult};
+pub use self::util::{ExtStorageStat, OwnedExtStorageStat, StorageStatLimits};
 
 mod config;
 mod error;
@@ -164,6 +165,7 @@ impl<'a> Executor<'a> {
             end_lt: start_lt + 1,
             out_msgs: Vec::new(),
             total_fees: Tokens::ZERO,
+            cached_storage_stat: None,
         })
     }
 }
@@ -187,6 +189,8 @@ pub struct ExecutorState<'a> {
 
     pub out_msgs: Vec<Lazy<OwnedMessage>>,
     pub total_fees: Tokens,
+
+    pub cached_storage_stat: Option<OwnedExtStorageStat>,
 }
 
 /// Executor configuration parameters.

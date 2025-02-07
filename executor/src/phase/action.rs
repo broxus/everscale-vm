@@ -252,6 +252,7 @@ impl ExecutorState<'_> {
                     action_ctx.new_state,
                     limits,
                     is_masterchain,
+                    &mut self.cached_storage_stat,
                 ),
                 AccountState::Uninit | AccountState::Frozen(_) => check_state_limits(
                     action_ctx.new_state.code.as_ref(),
@@ -259,15 +260,19 @@ impl ExecutorState<'_> {
                     &action_ctx.new_state.libraries,
                     limits,
                     is_masterchain,
+                    &mut self.cached_storage_stat,
                 ),
             };
 
-            // TODO: Save the resulting `ExtStorageStat` to use it later.
             if matches!(check, StateLimitsResult::Exceeds) {
                 res.action_phase.result_code = ResultCode::StateOutOfLimits as i32;
                 res.state_exceeds_limits = true;
                 return Ok(res);
             }
+
+            // NOTE: At this point if the state was successfully updated
+            // (`check_state_limits[_diff]` returned `StateLimitsResult::Fits`)
+            // cached storage stat will contain all visited cells for it.
         }
 
         action_ctx
@@ -281,6 +286,7 @@ impl ExecutorState<'_> {
         if action_ctx.delete_account {
             action_ctx.action_phase.status_change = AccountStatusChange::Deleted;
             self.end_status = AccountStatus::NotExists;
+            self.cached_storage_stat = None;
         }
 
         if let Some(fees) = action_ctx.action_phase.total_action_fees {

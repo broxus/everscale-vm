@@ -191,6 +191,7 @@ impl ExecutorState<'_> {
                         &from_msg.parsed,
                         &limits,
                         is_masterchain,
+                        &mut self.cached_storage_stat,
                     ),
                     StateLimitsResult::Exceeds
                 ) {
@@ -199,6 +200,10 @@ impl ExecutorState<'_> {
                     });
                     return Ok(res);
                 }
+
+                // NOTE: At this point the `cached_storage_stat` will always contain
+                // visited cells because previous state was not active and we
+                // handled a case when check overflowed.
 
                 // Use state
                 res.new_state = from_msg.parsed.clone();
