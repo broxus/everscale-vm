@@ -15,17 +15,36 @@ pub struct StorageStatLimits {
     pub cell_count: u32,
 }
 
+impl StorageStatLimits {
+    pub const UNLIMITED: Self = Self {
+        bit_count: u32::MAX,
+        cell_count: u32::MAX,
+    };
+}
+
 pub struct OwnedExtStorageStat {
     cells: Vec<Cell>,
     inner: ManuallyDrop<ExtStorageStat<'static>>,
 }
 
 impl OwnedExtStorageStat {
+    pub fn unlimited() -> Self {
+        Self::with_limits(StorageStatLimits::UNLIMITED)
+    }
+
     pub fn with_limits(limits: StorageStatLimits) -> Self {
         Self {
             cells: Vec::new(),
             inner: ManuallyDrop::new(ExtStorageStat::with_limits(limits)),
         }
+    }
+
+    pub fn set_unlimited(&mut self) {
+        self.inner.limits = StorageStatLimits::UNLIMITED;
+    }
+
+    pub fn stats(&self) -> CellTreeStats {
+        self.inner.stats()
     }
 
     pub fn add_cell(&mut self, cell: Cell) -> bool {

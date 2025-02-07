@@ -2,15 +2,16 @@ use anyhow::{Context, Result};
 use everscale_types::dict;
 use everscale_types::error::Error;
 use everscale_types::models::{
-    Account, AccountState, AccountStatus, CurrencyCollection, HashUpdate, IntAddr, Lazy, LibDescr,
-    Message, OptionalAccount, OwnedMessage, ShardAccount, SimpleLib, StdAddr, StorageInfo,
-    StorageUsed, TickTock, Transaction, TxInfo,
+    AccountState, AccountStatus, CurrencyCollection, HashUpdate, IntAddr, Lazy, LibDescr, Message,
+    OwnedMessage, ShardAccount, SimpleLib, StdAddr, StorageInfo, StorageUsed, TickTock,
+    Transaction, TxInfo,
 };
-use everscale_types::num::{Tokens, Uint15};
+use everscale_types::num::{Tokens, Uint15, VarUint56};
 use everscale_types::prelude::*;
 
 pub use self::config::ParsedConfig;
 pub use self::error::{TxError, TxResult};
+use self::util::new_varuint56_truncate;
 pub use self::util::{ExtStorageStat, OwnedExtStorageStat, StorageStatLimits};
 
 mod config;
@@ -267,40 +268,83 @@ impl<'a, 's> UncommitedTransaction<'a, 's> {
     }
 
     /// Creates a final transaction and a new contract state.
-    pub fn commit(self) -> Result<ExecutorOutput> {
-        // Finalize account state.
-        let account_state = self.build_state()?;
-
-        // Collect brief account state info.
+    pub fn commit(mut self) -> Result<ExecutorOutput> {
+        // Collect brief account state info and build new account state.
+        let account_state;
         let new_state_meta;
-        let end_status = match &account_state {
+        let end_status = match self.build_account_state()? {
             None => {
+                // TODO: Replace with a constant?
+                account_state = CellBuilder::build_from(false)?;
+
+                // Brief meta.
                 new_state_meta = AccountMeta {
                     balance: CurrencyCollection::ZERO,
                     libraries: Dict::new(),
                     exists: false,
                 };
 
+                // Done
                 AccountStatus::NotExists
             }
-            Some(account) => {
-                let libraries = match &account.state {
+            Some(state) => {
+                // Load previous account storage info.
+                let prev_account_storage = 'prev: {
+                    let mut cs = self.original.account.inner().as_slice_allow_pruned();
+                    if !cs.load_bit()? {
+                        // account_none$0
+                        break 'prev None;
+                    }
+                    // account$1
+                    // addr:MsgAddressInt
+                    IntAddr::load_from(&mut cs)?;
+                    // storage_stat:StorageInfo
+                    let storage_info = StorageInfo::load_from(&mut cs)?;
+                    // storage:AccountStorage
+                    Some((storage_info.used, cs))
+                };
+
+                // Serialize part of the new account state to compute new storage stats.
+                let mut account_storage = CellBuilder::new();
+                // last_trans_lt:uint64
+                account_storage.store_u64(self.exec.end_lt)?;
+                // balance:CurrencyCollection
+                self.exec
+                    .balance
+                    .store_into(&mut account_storage, Cell::empty_context())?;
+                // state:AccountState
+                state.store_into(&mut account_storage, Cell::empty_context())?;
+
+                // Update storage info.
+                self.exec.storage_stat.used = compute_storage_used(
+                    &prev_account_storage,
+                    account_storage.as_full_slice(),
+                    &mut self.exec.cached_storage_stat,
+                )?;
+
+                // Build new account state.
+                account_state = CellBuilder::build_from((
+                    true,                            // account$1
+                    &self.exec.address,              // addr:MsgAddressInt
+                    &self.exec.storage_stat,         // storage_stat:StorageInfo
+                    account_storage.as_full_slice(), // storage:AccountStorage
+                ))?;
+
+                // Brief meta.
+                let libraries = match &state {
                     AccountState::Active(state) => state.libraries.clone(),
                     AccountState::Frozen(..) | AccountState::Uninit => Dict::new(),
                 };
-
                 new_state_meta = AccountMeta {
-                    balance: account.balance.clone(),
+                    balance: self.exec.balance.clone(),
                     libraries,
                     exists: true,
                 };
 
-                account.state.status()
+                // Done
+                state.status()
             }
         };
-
-        // Serialize account state.
-        let account_state = CellBuilder::build_from(OptionalAccount(account_state))?;
 
         // Serialize transaction.
         let state_update = Lazy::new(&HashUpdate {
@@ -336,25 +380,18 @@ impl<'a, 's> UncommitedTransaction<'a, 's> {
         })
     }
 
-    fn build_state(&self) -> Result<Option<Account>> {
-        if self.exec.end_status == AccountStatus::NotExists
-            || self.exec.end_status == AccountStatus::Uninit && self.exec.balance.is_zero()
-        {
-            // NOTE: Uninit accounts with zero balance are deleted.
-            return Ok(None);
-        }
-
-        let state = match self.exec.end_status {
+    fn build_account_state(&self) -> Result<Option<AccountState>> {
+        Ok(match self.exec.end_status {
             // Account was deleted.
-            AccountStatus::NotExists => return Ok(None),
+            AccountStatus::NotExists => None,
             // Uninit account we zero balance is also treated as deleted.
-            AccountStatus::Uninit if self.exec.balance.is_zero() => return Ok(None),
+            AccountStatus::Uninit if self.exec.balance.is_zero() => None,
             // Uninit account stays the same.
-            AccountStatus::Uninit => AccountState::Uninit,
+            AccountStatus::Uninit => Some(AccountState::Uninit),
             // Active account must have a known active state.
             AccountStatus::Active => {
                 debug_assert!(matches!(self.exec.state, AccountState::Active(_)));
-                self.exec.state.clone()
+                Some(self.exec.state.clone())
             }
             // Normalize frozen state.
             AccountStatus::Frozen => {
@@ -374,25 +411,13 @@ impl<'a, 's> UncommitedTransaction<'a, 's> {
                 };
 
                 // Normalize account state.
-                if frozen_hash == &self.exec.address.address {
+                Some(if frozen_hash == &self.exec.address.address {
                     AccountState::Uninit
                 } else {
                     AccountState::Frozen(*frozen_hash)
-                }
+                })
             }
-        };
-
-        let account = Account {
-            address: self.exec.address.clone().into(),
-            storage_stat: self.exec.storage_stat.clone(),
-            last_trans_lt: self.exec.end_lt,
-            balance: self.exec.balance.clone(),
-            state,
-        };
-
-        // TODO: Update storage stat.
-
-        Ok(Some(account))
+        })
     }
 
     fn build_transaction(
@@ -416,6 +441,65 @@ impl<'a, 's> UncommitedTransaction<'a, 's> {
             info: self.info.clone(),
         })
     }
+}
+
+fn compute_storage_used(
+    prev: &Option<(StorageUsed, CellSlice<'_>)>,
+    new_storage: CellSlice<'_>,
+    cache: &mut Option<OwnedExtStorageStat>,
+) -> Result<StorageUsed> {
+    // Try to reuse previous storage stats if no cells were changed.
+    if let Some((prev_used, prev_storage)) = prev {
+        'reuse: {
+            // Always recompute when previous stats are invalid.
+            if prev_used.cells.is_zero()
+                || prev_used.bits.into_inner() < prev_storage.size_bits() as u64
+            {
+                break 'reuse;
+            }
+
+            // Simple check that some cells were changed.
+            if prev_storage.size_refs() != new_storage.size_refs() {
+                break 'reuse;
+            }
+
+            // Compare each cell.
+            for (prev, new) in prev_storage.references().zip(new_storage.references()) {
+                if prev != new {
+                    break 'reuse;
+                }
+            }
+
+            // Adjust bit size of the root slice.
+            return Ok(StorageUsed {
+                // Compute the truncated difference of the previous storage root and a new one.
+                bits: new_varuint56_truncate(
+                    (prev_used.bits.into_inner() - prev_storage.size_bits() as u64)
+                        .saturating_add(new_storage.size_bits() as u64),
+                ),
+                // All other stats are unchanged.
+                cells: prev_used.cells,
+                public_cells: prev_used.public_cells,
+            });
+        }
+    }
+
+    // Init cache.
+    let cache = cache.get_or_insert_with(OwnedExtStorageStat::unlimited);
+    cache.set_unlimited();
+
+    // Compute stats for childern.
+    for cell in new_storage.references().cloned() {
+        cache.add_cell(cell);
+    }
+    let stats = cache.stats();
+
+    // Done.
+    Ok(StorageUsed {
+        cells: new_varuint56_truncate(stats.cell_count.saturating_add(1)),
+        bits: new_varuint56_truncate(stats.bit_count.saturating_add(new_storage.size_bits() as _)),
+        public_cells: VarUint56::ZERO,
+    })
 }
 
 /// Commited transaction output.
