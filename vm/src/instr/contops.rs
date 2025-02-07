@@ -9,10 +9,10 @@ use crate::saferc::SafeRc;
 use crate::stack::{Stack, StackValueType};
 use crate::state::{SaveCr, VmState};
 
-pub struct Contops;
+pub struct ContOps;
 
 #[vm_module]
-impl Contops {
+impl ContOps {
     // === Jump ops ===
 
     #[op(code = "d8", fmt = "EXECUTE")]

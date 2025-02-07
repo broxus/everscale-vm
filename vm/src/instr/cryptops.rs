@@ -13,10 +13,10 @@ use crate::saferc::SafeRc;
 use crate::stack::{Stack, StackValueType, Tuple};
 use crate::state::VmState;
 
-pub struct Hashops;
+pub struct CryptOps;
 
 #[vm_module]
-impl Hashops {
+impl CryptOps {
     #[op(code = "f900", fmt = "HASHCU", args(src = HashSource::Cell))]
     #[op(code = "f901", fmt = "HASHSU", args(src = HashSource::Slice))]
     fn exec_compute_hash(st: &mut VmState, src: HashSource) -> VmResult<i32> {

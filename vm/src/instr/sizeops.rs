@@ -10,10 +10,10 @@ use crate::stack::StackValueType;
 use crate::state::VmState;
 use crate::GasConsumer;
 
-pub struct Miscops;
+pub struct SizeOps;
 
 #[vm_module]
-impl Miscops {
+impl SizeOps {
     #[op(code = "f940", fmt = "CDATASIZEQ", args(is_slice = false, q = true))]
     #[op(code = "f941", fmt = "CDATASIZE", args(is_slice = false, q = false))]
     #[op(code = "f942", fmt = "SDATASIZEQ", args(is_slice = true, q = true))]

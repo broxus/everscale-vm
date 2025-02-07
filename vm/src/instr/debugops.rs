@@ -6,12 +6,12 @@ use crate::error::VmResult;
 use crate::state::VmState;
 use crate::util::remove_trailing;
 
-pub struct Debugops;
+pub struct DebugOps;
 
 // TODO: Decide whether to panic on debug write errors
 
 #[vm_module]
-impl Debugops {
+impl DebugOps {
     #[op(code = "fe00", fmt = "DUMPSTK")]
     fn exec_dump_stack(st: &mut VmState) -> VmResult<i32> {
         let Some(debug) = &mut st.debug else {

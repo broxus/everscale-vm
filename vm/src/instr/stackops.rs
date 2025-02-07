@@ -6,10 +6,10 @@ use crate::smc_info::VmVersion;
 use crate::stack::Stack;
 use crate::state::VmState;
 
-pub struct Stackops;
+pub struct StackOps;
 
 #[vm_module]
-impl Stackops {
+impl StackOps {
     #[op(code = "00", fmt = "NOP")]
     fn exec_nop(_: &mut VmState) -> VmResult<i32> {
         Ok(0)

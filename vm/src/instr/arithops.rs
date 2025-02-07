@@ -12,10 +12,10 @@ use crate::saferc::SafeRc;
 use crate::state::VmState;
 use crate::util::load_int_from_slice;
 
-pub struct Arithops;
+pub struct ArithOps;
 
 #[vm_module]
-impl Arithops {
+impl ArithOps {
     // === Int constants ===
 
     #[init]

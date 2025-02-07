@@ -16,10 +16,10 @@ use crate::util::{
     store_int_to_builder_unchecked, OwnedCellSlice,
 };
 
-pub struct Dictops;
+pub struct DictOps;
 
 #[vm_module]
-impl Dictops {
+impl DictOps {
     #[init]
     fn init_dict_const(&self, t: &mut Opcodes) -> anyhow::Result<()> {
         t.add_ext_range(0xf4a400, 0xf4a800, 24, exec_push_const_dict)?;

@@ -7,10 +7,10 @@ use crate::saferc::SafeRc;
 use crate::stack::{RcStackValue, Stack, StackValue, StackValueType};
 use crate::state::VmState;
 
-pub struct Tupleops;
+pub struct TupleOps;
 
 #[vm_module]
-impl Tupleops {
+impl TupleOps {
     #[op(code = "6d", fmt = "PUSHNULL")]
     fn exec_push_null(st: &mut VmState) -> VmResult<i32> {
         let stack = SafeRc::make_mut(&mut st.stack);

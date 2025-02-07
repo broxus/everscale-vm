@@ -2,22 +2,22 @@ use std::sync::OnceLock;
 
 use anyhow::Result;
 
-use self::arithops::Arithops;
-use self::cellops::Cellops;
+use self::arithops::ArithOps;
+use self::cellops::CellOps;
 use self::cmpops::CmpOps;
 use self::configops::ConfigOps;
-use self::contops::Contops;
+use self::contops::ContOps;
+use self::cryptops::CryptOps;
 use self::currencyops::CurrencyOps;
-use self::debugops::Debugops;
-use self::dictops::Dictops;
+use self::debugops::DebugOps;
+use self::dictops::DictOps;
 use self::gasops::GasOps;
-use self::hashops::Hashops;
 use self::logicops::LogicOps;
 use self::messageops::MessageOps;
-use self::miscops::Miscops;
 use self::randops::RandOps;
-use self::stackops::Stackops;
-use self::tupleops::Tupleops;
+use self::sizeops::SizeOps;
+use self::stackops::StackOps;
+use self::tupleops::TupleOps;
 use crate::dispatch::{DispatchTable, Opcodes};
 
 mod arithops;
@@ -25,15 +25,15 @@ mod cellops;
 mod cmpops;
 mod configops;
 mod contops;
+mod cryptops;
 mod currencyops;
 mod debugops;
 mod dictops;
 mod gasops;
-mod hashops;
 mod logicops;
 mod messageops;
-mod miscops;
 mod randops;
+mod sizeops;
 mod stackops;
 mod tupleops;
 
@@ -49,22 +49,22 @@ pub fn codepage(n: u16) -> Option<&'static DispatchTable> {
 pub fn codepage0() -> &'static DispatchTable {
     fn build() -> Result<DispatchTable> {
         let mut cp = DispatchTable::builder(0);
-        Arithops.init(&mut cp)?;
+        ArithOps.init(&mut cp)?;
         CmpOps.init(&mut cp)?;
         LogicOps.init(&mut cp)?;
-        Cellops.init(&mut cp)?;
-        Contops.init(&mut cp)?;
-        Stackops.init(&mut cp)?;
-        Tupleops.init(&mut cp)?;
-        Debugops.init(&mut cp)?;
-        Dictops.init(&mut cp)?;
+        CellOps.init(&mut cp)?;
+        ContOps.init(&mut cp)?;
+        StackOps.init(&mut cp)?;
+        TupleOps.init(&mut cp)?;
+        DebugOps.init(&mut cp)?;
+        DictOps.init(&mut cp)?;
         GasOps.init(&mut cp)?;
         RandOps.init(&mut cp)?;
         ConfigOps.init(&mut cp)?;
         MessageOps.init(&mut cp)?;
-        Hashops.init(&mut cp)?;
+        CryptOps.init(&mut cp)?;
         CurrencyOps.init(&mut cp)?;
-        Miscops.init(&mut cp)?;
+        SizeOps.init(&mut cp)?;
         Ok(cp.build())
     }
 

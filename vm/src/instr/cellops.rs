@@ -17,10 +17,10 @@ use crate::stack::{Stack, StackValue};
 use crate::state::VmState;
 use crate::util::{bitsize, load_int_from_slice, remove_trailing, OwnedCellSlice};
 
-pub struct Cellops;
+pub struct CellOps;
 
 #[vm_module]
-impl Cellops {
+impl CellOps {
     // === Const ops ===
 
     #[init]
