@@ -143,11 +143,42 @@ impl CryptOps {
                 break 'valid false;
             };
 
-            pubkey.verify_raw(&data[..data_len], &signature)
+            pubkey.verify(
+                ToSign {
+                    signature_id: st.modifiers.signature_with_id,
+                    data: &data[..data_len],
+                },
+                &signature,
+            )
         };
 
         ok!(stack.push_bool(is_valid || st.modifiers.chksig_always_succeed));
         Ok(0)
+    }
+}
+
+struct ToSign<'a> {
+    signature_id: Option<i32>,
+    data: &'a [u8],
+}
+
+impl tl_proto::TlWrite for ToSign<'_> {
+    type Repr = tl_proto::Bare;
+
+    #[inline]
+    fn max_size_hint(&self) -> usize {
+        (if self.signature_id.is_some() { 4 } else { 0 }) + self.data.len()
+    }
+
+    #[inline]
+    fn write_to<P>(&self, packet: &mut P)
+    where
+        P: tl_proto::TlPacket,
+    {
+        if let Some(id) = self.signature_id {
+            packet.write_raw_slice(&id.to_be_bytes());
+        }
+        packet.write_raw_slice(self.data);
     }
 }
 

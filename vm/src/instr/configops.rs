@@ -91,11 +91,13 @@ impl ConfigOps {
     fn exec_get_global_id(st: &mut VmState) -> VmResult<i32> {
         ok!(st.version.require_ton(4..));
 
-        let global_id = if st.version.is_ton(6..) {
+        let global_id = if let Some(global_id) = st.modifiers.signature_with_id {
+            global_id
+        } else if st.version.is_ton(6..) {
             let t2 = ok!(get_parsed_config(&st.cr));
             ok!(t2.try_get_ref::<OwnedCellSlice>(1))
                 .apply()?
-                .load_u32()?
+                .load_u32()? as i32
         } else {
             let t1 = ok!(st.cr.get_c7_params());
             let config_root = ok!(t1.try_get_ref::<Cell>(SmcInfoBase::CONFIG_IDX));
@@ -112,7 +114,7 @@ impl ConfigOps {
             let param = value.load_reference()?;
             st.gas
                 .load_dyn_cell(param, LoadMode::Full)?
-                .parse::<u32>()?
+                .parse::<u32>()? as i32
         };
 
         ok!(SafeRc::make_mut(&mut st.stack).push_int(global_id));

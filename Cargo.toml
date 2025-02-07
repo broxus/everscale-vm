@@ -29,6 +29,7 @@ rand = "0.8"
 sha2 = "0.10.8"
 syn = "2.0"
 thiserror = "2.0"
+tl-proto = "0.5.2"
 tracing = "0.1"
 tracing-test = "0.2"
 

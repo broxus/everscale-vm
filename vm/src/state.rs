@@ -812,6 +812,7 @@ impl<'a> VmState<'a> {
 pub struct BehaviourModifiers {
     pub stop_on_accept: bool,
     pub chksig_always_succeed: bool,
+    pub signature_with_id: Option<i32>,
 }
 
 /// Execution effects.
