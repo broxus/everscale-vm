@@ -18,6 +18,8 @@ use crate::ExecutorState;
 pub struct ComputePhaseContext<'a> {
     /// Parsed transaction input.
     pub input: TransactionInput<'a>,
+    /// Fees collected during the storage phase.
+    pub storage_fee: Tokens,
 }
 
 /// Parsed transaction input.
@@ -241,9 +243,10 @@ impl ExecutorState<'_> {
             .require_ton_v4()
             .with_code(code.clone().unwrap_or_default())
             .with_message_balance(msg_balance_remaining.clone())
-            .with_storage_fees(self.total_fees) // TODO: Replace with storage fees
+            .with_storage_fees(ctx.storage_fee)
             .require_ton_v6()
-            .with_unpacked_config(self.config.unpacked.as_tuple());
+            .with_unpacked_config(self.config.unpacked.as_tuple())
+            .require_ton_v9();
 
         // Special case for library cells as code root.
         if let Some(code) = &mut code {

@@ -33,6 +33,7 @@ impl ExecutorState<'_> {
         } = self
             .compute_phase(ComputePhaseContext {
                 input: TransactionInput::TickTock(kind),
+                storage_fee: storage_phase.storage_fees_collected,
             })
             .context("compute phase failed")?;
 

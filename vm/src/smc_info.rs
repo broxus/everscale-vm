@@ -429,6 +429,10 @@ impl SmcInfoTonV6 {
         self
     }
 
+    pub fn require_ton_v9(self) -> SmcInfoTonV9 {
+        SmcInfoTonV9 { base: self }
+    }
+
     fn write_items(&self, items: &mut Tuple) {
         // ..base:SmartContractInfoV4
         self.base.write_items(items);
@@ -449,6 +453,36 @@ impl SmcInfoTonV6 {
 impl SmcInfo for SmcInfoTonV6 {
     fn version(&self) -> VmVersion {
         VmVersion::Ton(6)
+    }
+
+    fn build_c7(&self) -> SafeRc<Tuple> {
+        let mut t1 = Vec::with_capacity(Self::C7_ITEM_COUNT);
+        self.write_items(&mut t1);
+        SafeRc::new(vec![SafeRc::new_dyn_value(t1)])
+    }
+}
+
+/// Extended smart contract info for TVM since version 9.
+#[derive(Default, Debug, Clone)]
+#[repr(transparent)]
+pub struct SmcInfoTonV9 {
+    /// Base values.
+    pub base: SmcInfoTonV6,
+}
+
+impl SmcInfoTonV9 {
+    const C7_ITEM_COUNT: usize = SmcInfoTonV6::C7_ITEM_COUNT;
+
+    #[inline]
+    fn write_items(&self, items: &mut Tuple) {
+        // ..base:SmcInfoTonV6
+        self.base.write_items(items);
+    }
+}
+
+impl SmcInfo for SmcInfoTonV9 {
+    fn version(&self) -> VmVersion {
+        VmVersion::Ton(9)
     }
 
     fn build_c7(&self) -> SafeRc<Tuple> {
