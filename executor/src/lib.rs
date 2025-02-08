@@ -194,6 +194,45 @@ pub struct ExecutorState<'a> {
     pub cached_storage_stat: Option<OwnedExtStorageStat>,
 }
 
+impl<'a> ExecutorState<'a> {
+    #[cfg(test)]
+    pub(crate) fn new_non_existent(
+        params: &'a ExecutorParams,
+        config: &'a impl AsRef<ParsedConfig>,
+        address: &StdAddr,
+    ) -> Self {
+        Self {
+            params,
+            config: config.as_ref(),
+            is_special: false,
+            address: address.clone(),
+            storage_stat: Default::default(),
+            balance: CurrencyCollection::ZERO,
+            state: AccountState::Uninit,
+            orig_status: AccountStatus::NotExists,
+            end_status: AccountStatus::Uninit,
+            start_lt: 0,
+            end_lt: 1,
+            out_msgs: Vec::new(),
+            total_fees: Tokens::ZERO,
+            cached_storage_stat: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_uninit(
+        params: &'a ExecutorParams,
+        config: &'a impl AsRef<ParsedConfig>,
+        address: &StdAddr,
+        balance: impl Into<CurrencyCollection>,
+    ) -> Self {
+        let mut res = Self::new_non_existent(params, config, address);
+        res.balance = balance.into();
+        res.orig_status = AccountStatus::Uninit;
+        res
+    }
+}
+
 /// Executor configuration parameters.
 #[derive(Default)]
 pub struct ExecutorParams {
@@ -620,6 +659,18 @@ mod tests {
         PARSED_CONFIG.with(Clone::clone)
     }
 
+    pub fn make_default_params() -> ExecutorParams {
+        ExecutorParams {
+            block_unixtime: 1738799198,
+            full_body_in_bounce: false,
+            vm_modifiers: tycho_vm::BehaviourModifiers {
+                chksig_always_succeed: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
     pub fn make_uninit_with_balance<T: Into<CurrencyCollection>>(
         address: &StdAddr,
         balance: T,
@@ -638,24 +689,45 @@ mod tests {
         }
     }
 
-    pub fn make_owned_body(builder: CellBuilder) -> CellSliceParts {
-        let cell = builder.build().unwrap();
-        let range = CellSliceRange::full(cell.as_ref());
-        (cell, range)
+    pub fn make_message(
+        info: impl Into<MsgInfo>,
+        init: Option<StateInit>,
+        body: Option<CellBuilder>,
+    ) -> Cell {
+        let body = match &body {
+            None => Cell::empty_cell_ref().as_slice_allow_pruned(),
+            Some(cell) => cell.as_full_slice(),
+        };
+        CellBuilder::build_from(Message {
+            info: info.into(),
+            init,
+            body,
+            layout: None,
+        })
+        .unwrap()
+    }
+
+    pub fn make_big_tree(depth: u8, count: &mut u16, target: u16) -> Cell {
+        *count += 1;
+
+        if depth == 0 {
+            CellBuilder::build_from(*count).unwrap()
+        } else {
+            let mut b = CellBuilder::new();
+            for _ in 0..4 {
+                if *count < target {
+                    b.store_reference(make_big_tree(depth - 1, count, target))
+                        .unwrap();
+                }
+            }
+            b.build().unwrap()
+        }
     }
 
     #[test]
     fn ever_wallet_deploys() -> anyhow::Result<()> {
         let config = make_default_config();
-        let params = ExecutorParams {
-            block_unixtime: 1738799198,
-            full_body_in_bounce: false,
-            vm_modifiers: tycho_vm::BehaviourModifiers {
-                chksig_always_succeed: true,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let params = make_default_params();
 
         let code = Boc::decode_base64("te6cckEBBgEA/AABFP8A9KQT9LzyyAsBAgEgAgMABNIwAubycdcBAcAA8nqDCNcY7UTQgwfXAdcLP8j4KM8WI88WyfkAA3HXAQHDAJqDB9cBURO68uBk3oBA1wGAINcBgCDXAVQWdfkQ8qj4I7vyeWa++COBBwiggQPoqFIgvLHydAIgghBM7mRsuuMPAcjL/8s/ye1UBAUAmDAC10zQ+kCDBtcBcdcBeNcB10z4AHCAEASqAhSxyMsFUAXPFlAD+gLLaSLQIc8xIddJoIQJuZgzcAHLAFjPFpcwcQHLABLM4skB+wAAPoIQFp4+EbqOEfgAApMg10qXeNcB1AL7AOjRkzLyPOI+zYS/")?;
         let data = CellBuilder::build_from((HashBytes::ZERO, 0u64))?;
@@ -669,14 +741,14 @@ mod tests {
         };
         let address = StdAddr::new(0, *CellBuilder::build_from(&state_init)?.repr_hash());
 
-        let msg = OwnedMessage {
-            info: MsgInfo::ExtIn(ExtInMsgInfo {
+        let msg = make_message(
+            ExtInMsgInfo {
                 src: None,
                 dst: address.clone().into(),
                 import_fee: Tokens::ZERO,
-            }),
-            init: Some(state_init),
-            body: make_owned_body({
+            },
+            Some(state_init),
+            Some({
                 let mut b = CellBuilder::new();
                 // just$1 Signature
                 b.store_bit_one()?;
@@ -710,16 +782,20 @@ mod tests {
                 //
                 b
             }),
-            layout: None,
-        };
+        );
 
         let state = make_uninit_with_balance(&address, CurrencyCollection::new(1_000_000_000));
 
-        let tx = Executor::new(&params, config.as_ref())
+        let output = Executor::new(&params, config.as_ref())
             .begin_ordinary(&address, true, &msg, &state)?
-            .build_uncommited()?;
-        println!("TX: {:#?}", tx);
+            .commit()?;
 
+        println!("SHARD_STATE: {:#?}", output.new_state);
+        let account = output.new_state.load_account()?;
+        println!("ACCOUNT: {:#?}", account);
+
+        let tx = output.transaction.load()?;
+        println!("TX: {tx:#?}");
         let info = tx.load_info()?;
         println!("INFO: {info:#?}");
 
