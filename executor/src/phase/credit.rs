@@ -33,3 +33,52 @@ impl ExecutorState<'_> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use everscale_types::cell::Cell;
+    use everscale_types::models::CurrencyCollection;
+    use everscale_types::num::Tokens;
+
+    use super::*;
+    use crate::tests::{make_default_config, make_default_params};
+
+    #[test]
+    fn credit_phase_works() {
+        let params = make_default_params();
+        let config = make_default_config();
+
+        let mut state = ExecutorState::new_uninit(
+            &params,
+            &config,
+            &Default::default(),
+            Tokens::new(1_000_000_000),
+        );
+        let prev_balance = state.balance.clone();
+        let prev_total_fees = state.total_fees;
+
+        let msg_balance = CurrencyCollection::from(Tokens::new(123_000_000_000));
+        let credit_phase = state
+            .credit_phase(&ReceivedMessage {
+                root: Cell::default(),
+                init: None,
+                body: Default::default(),
+                is_external: false,
+                bounce_enabled: false,
+                balance_remaining: msg_balance.clone(),
+            })
+            .unwrap();
+
+        // No due fees must be collected on the credit phase.
+        assert!(credit_phase.due_fees_collected.is_none());
+        // Credit must be the same as message balance.
+        assert_eq!(credit_phase.credit, msg_balance);
+        // Account balance must receive the message balance.
+        assert_eq!(
+            state.balance,
+            prev_balance.checked_add(&msg_balance).unwrap()
+        );
+        // No fees must be collected on the credit phase.
+        assert_eq!(state.total_fees, prev_total_fees);
+    }
+}

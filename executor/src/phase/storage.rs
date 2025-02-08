@@ -158,3 +158,223 @@ impl ExecutorState<'_> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use everscale_types::cell::HashBytes;
+    use everscale_types::models::{CurrencyCollection, StdAddr, StorageInfo, StorageUsed};
+    use everscale_types::num::VarUint56;
+
+    use super::*;
+    use crate::tests::{make_default_config, make_default_params};
+    use crate::util::shift_ceil_price;
+    use crate::ParsedConfig;
+
+    const STUB_ADDR: StdAddr = StdAddr::new(0, HashBytes::ZERO);
+
+    fn fee_for_storing(used: StorageUsed, delta: u32, config: &ParsedConfig) -> Tokens {
+        let prices = config.storage_prices.last().unwrap();
+        let fee = (prices.bit_price_ps as u128)
+            .saturating_mul(used.bits.into_inner() as u128)
+            .saturating_add(
+                (prices.cell_price_ps as u128).saturating_mul(used.cells.into_inner() as u128),
+            )
+            .saturating_mul(delta as _);
+        Tokens::new(shift_ceil_price(fee))
+    }
+
+    #[test]
+    fn account_has_enough_balance() {
+        let mut params = make_default_params();
+        let config = make_default_config();
+
+        params.block_unixtime = 2000;
+
+        let mut state =
+            ExecutorState::new_uninit(&params, &config, &STUB_ADDR, Tokens::new(1_000_000_000));
+        state.storage_stat = StorageInfo {
+            used: StorageUsed {
+                bits: VarUint56::new(1000),
+                cells: VarUint56::new(10),
+                ..Default::default()
+            },
+            last_paid: 1000,
+            due_payment: None,
+        };
+
+        let prev_storage_stat = state.storage_stat.clone();
+        let prev_balance = state.balance.clone();
+        let prev_status = state.end_status;
+        let prev_total_fees = state.total_fees;
+
+        let storage_phase = state
+            .storage_phase(StoragePhaseContext {
+                adjust_msg_balance: false,
+                received_message: None,
+            })
+            .unwrap();
+
+        // Account status must not change.
+        assert_eq!(state.end_status, prev_status);
+        assert_eq!(storage_phase.status_change, AccountStatusChange::Unchanged);
+        // No extra fees must be taken.
+        assert_eq!(state.balance.other, prev_balance.other);
+        assert_eq!(
+            state.balance.tokens,
+            prev_balance.tokens - storage_phase.storage_fees_collected
+        );
+        assert_eq!(
+            state.total_fees,
+            prev_total_fees + storage_phase.storage_fees_collected
+        );
+        // Expect account to pay for storing 1000 bits and 10 cells for 1000 seconds.
+        assert_eq!(
+            storage_phase.storage_fees_collected,
+            fee_for_storing(prev_storage_stat.used.clone(), 1000, &config)
+        );
+        // All fees must be paid.
+        assert!(storage_phase.storage_fees_due.is_none());
+        // Storage stat must be updated.
+        assert_eq!(state.storage_stat.used, prev_storage_stat.used);
+        assert_eq!(state.storage_stat.last_paid, params.block_unixtime);
+        assert!(state.storage_stat.due_payment.is_none());
+    }
+
+    #[test]
+    fn account_does_not_have_enough_balance() {
+        let mut params = make_default_params();
+        let config = make_default_config();
+
+        let mut balance = CurrencyCollection::from(Tokens::new(1));
+        let mut storage_stat = StorageInfo {
+            used: StorageUsed {
+                bits: VarUint56::new(1000),
+                cells: VarUint56::new(10),
+                ..Default::default()
+            },
+            last_paid: 1000,
+            due_payment: None,
+        };
+
+        for time in [2000, 3000, 4000] {
+            params.block_unixtime = time;
+
+            let mut state = ExecutorState::new_uninit(&params, &config, &STUB_ADDR, balance);
+            state.storage_stat = storage_stat.clone();
+
+            let prev_storage_stat = state.storage_stat.clone();
+            let prev_balance = state.balance.clone();
+            let prev_status = state.end_status;
+            let prev_total_fees = state.total_fees;
+
+            let storage_phase = state
+                .storage_phase(StoragePhaseContext {
+                    adjust_msg_balance: false,
+                    received_message: None,
+                })
+                .unwrap();
+
+            // Account status must not change.
+            assert_eq!(state.end_status, prev_status);
+            assert_eq!(storage_phase.status_change, AccountStatusChange::Unchanged);
+            // Account balance in tokens must be empty.
+            assert_eq!(state.balance.tokens, Tokens::ZERO);
+            // No extra fees must be taken.
+            assert_eq!(state.balance.other, prev_balance.other);
+            assert_eq!(
+                state.balance.tokens,
+                prev_balance.tokens - storage_phase.storage_fees_collected
+            );
+            assert_eq!(
+                state.total_fees,
+                prev_total_fees + storage_phase.storage_fees_collected
+            );
+            // Expect account to pay for storing 1000 bits and 10 cells for 1000 seconds.
+            let delta = params.block_unixtime - prev_storage_stat.last_paid;
+            let prev_due = prev_storage_stat.due_payment.unwrap_or_default();
+            let target_fee = fee_for_storing(prev_storage_stat.used.clone(), delta, &config);
+            assert_eq!(storage_phase.storage_fees_collected, prev_balance.tokens);
+            // All fees must be paid.
+            assert_eq!(
+                storage_phase.storage_fees_due,
+                Some(prev_due + target_fee - prev_balance.tokens)
+            );
+            // Storage stat must be updated.
+            assert_eq!(state.storage_stat.used, prev_storage_stat.used);
+            assert_eq!(state.storage_stat.last_paid, params.block_unixtime);
+            assert_eq!(
+                state.storage_stat.due_payment,
+                Some(prev_due + target_fee - prev_balance.tokens)
+            );
+
+            balance = state.balance;
+            storage_stat = state.storage_stat;
+            println!("storage_stat: {storage_stat:#?}");
+        }
+    }
+
+    #[test]
+    fn account_freezes_with_storage_due() {
+        let mut params = make_default_params();
+        let config = make_default_config();
+
+        params.block_unixtime = 2000;
+
+        let mut state = ExecutorState::new_uninit(&params, &config, &STUB_ADDR, Tokens::ZERO);
+        state.state = AccountState::Active(Default::default());
+        state.end_status = AccountStatus::Active; // Only active accounts can be frozen.
+        state.storage_stat = StorageInfo {
+            used: StorageUsed {
+                bits: VarUint56::new(1000),
+                cells: VarUint56::new(10),
+                ..Default::default()
+            },
+            last_paid: 1000,
+            due_payment: Some(Tokens::new(config.gas_prices.freeze_due_limit as u128 - 50)),
+        };
+
+        let prev_storage_stat = state.storage_stat.clone();
+        let prev_balance = state.balance.clone();
+        let prev_total_fees = state.total_fees;
+
+        let storage_phase = state
+            .storage_phase(StoragePhaseContext {
+                adjust_msg_balance: false,
+                received_message: None,
+            })
+            .unwrap();
+
+        // Account status must not change.
+        assert_eq!(state.end_status, AccountStatus::Frozen);
+        assert_eq!(storage_phase.status_change, AccountStatusChange::Frozen);
+        // Account balance in tokens must be empty.
+        assert_eq!(state.balance.tokens, Tokens::ZERO);
+        // No extra fees must be taken.
+        assert_eq!(state.balance.other, prev_balance.other);
+        assert_eq!(
+            state.balance.tokens,
+            prev_balance.tokens - storage_phase.storage_fees_collected
+        );
+        assert_eq!(
+            state.total_fees,
+            prev_total_fees + storage_phase.storage_fees_collected
+        );
+        // Expect account to pay for storing 1000 bits and 10 cells for 1000 seconds.
+        let delta = params.block_unixtime - prev_storage_stat.last_paid;
+        let prev_due = prev_storage_stat.due_payment.unwrap_or_default();
+        let target_fee = fee_for_storing(prev_storage_stat.used.clone(), delta, &config);
+        assert_eq!(storage_phase.storage_fees_collected, prev_balance.tokens);
+        // All fees must be paid.
+        assert_eq!(
+            storage_phase.storage_fees_due,
+            Some(prev_due + target_fee - prev_balance.tokens)
+        );
+        // Storage stat must be updated.
+        assert_eq!(state.storage_stat.used, prev_storage_stat.used);
+        assert_eq!(state.storage_stat.last_paid, params.block_unixtime);
+        assert_eq!(
+            state.storage_stat.due_payment,
+            Some(prev_due + target_fee - prev_balance.tokens)
+        );
+    }
+}
