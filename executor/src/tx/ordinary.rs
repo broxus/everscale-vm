@@ -79,9 +79,7 @@ impl ExecutorState<'_> {
             })
             .context("compute phase failed")?;
 
-        if !accepted {
-            debug_assert!(is_external);
-            // Not accepted external message can be safely ignored.
+        if is_external && !accepted {
             return Err(TxError::Skipped);
         }
 
