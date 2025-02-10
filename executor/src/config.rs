@@ -1,9 +1,9 @@
-use ahash::HashMap;
+use ahash::{HashMap, HashSet};
 use anyhow::Result;
 use everscale_types::error::Error;
 use everscale_types::models::{
     BlockchainConfigParams, GasLimitsPrices, GlobalVersion, MsgForwardPrices, SizeLimitsConfig,
-    StorageInfo, StoragePrices, WorkchainDescription,
+    StdAddr, StorageInfo, StoragePrices, WorkchainDescription,
 };
 use everscale_types::num::Tokens;
 use everscale_types::prelude::*;
@@ -22,6 +22,7 @@ pub struct ParsedConfig {
     pub global_id: i32,
     pub global: GlobalVersion,
     pub workchains: HashMap<i32, WorkchainDescription>,
+    pub special_accounts: HashSet<HashBytes>,
     pub raw: BlockchainConfigParams,
     pub unpacked: UnpackedConfig,
 }
@@ -75,6 +76,11 @@ impl ParsedConfig {
             return Err(Error::CellUnderflow);
         };
 
+        let mut special_accounts = HashSet::default();
+        for addr in params.get_fundamental_addresses()?.keys() {
+            special_accounts.insert(addr?);
+        }
+
         Ok(Self {
             mc_gas_prices: mc_gas_prices_raw.parse::<GasLimitsPrices>()?,
             gas_prices: gas_prices_raw.parse::<GasLimitsPrices>()?,
@@ -88,6 +94,7 @@ impl ParsedConfig {
             },
             global,
             workchains,
+            special_accounts,
             raw: params,
             unpacked: UnpackedConfig {
                 latest_storage_prices,
@@ -99,6 +106,10 @@ impl ParsedConfig {
                 size_limits_config: Some(size_limits_raw),
             },
         })
+    }
+
+    pub fn is_special(&self, addr: &StdAddr) -> bool {
+        addr.is_masterchain() && self.special_accounts.contains(&addr.address)
     }
 
     pub fn fwd_prices(&self, is_masterchain: bool) -> &MsgForwardPrices {

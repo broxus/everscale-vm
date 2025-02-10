@@ -43,8 +43,7 @@ pub struct Executor<'a> {
     params: &'a ExecutorParams,
     config: &'a ParsedConfig,
     min_lt: u64,
-    // TODO: Always check the config instead?
-    is_special: bool,
+    override_special: Option<bool>,
 }
 
 impl<'a> Executor<'a> {
@@ -53,7 +52,7 @@ impl<'a> Executor<'a> {
             params,
             config,
             min_lt: 0,
-            is_special: false,
+            override_special: None,
         }
     }
 
@@ -66,13 +65,9 @@ impl<'a> Executor<'a> {
         self.min_lt = min_lt;
     }
 
-    pub fn special(mut self, is_special: bool) -> Self {
-        self.set_special(is_special);
+    pub fn override_special(mut self, is_special: bool) -> Self {
+        self.override_special = Some(is_special);
         self
-    }
-
-    pub fn set_special(&mut self, is_special: bool) {
-        self.is_special = is_special;
     }
 
     pub fn begin_ordinary<'s, M>(
@@ -87,7 +82,7 @@ impl<'a> Executor<'a> {
     {
         let msg_root = msg.load_message_root()?;
 
-        let mut exec = self.begin(address, state, self.is_special)?;
+        let mut exec = self.begin(address, state)?;
         let info = exec.run_ordinary_transaction(is_external, msg_root.clone())?;
 
         UncommitedTransaction::with_info(exec, state, Some(msg_root), info).map_err(TxError::Fatal)
@@ -99,18 +94,17 @@ impl<'a> Executor<'a> {
         kind: TickTock,
         state: &'s ShardAccount,
     ) -> TxResult<UncommitedTransaction<'a, 's>> {
-        let mut exec = self.begin(address, state, self.is_special)?;
+        let mut exec = self.begin(address, state)?;
         let info = exec.run_tick_tock_transaction(kind)?;
 
         UncommitedTransaction::with_info(exec, state, None, info).map_err(TxError::Fatal)
     }
 
-    fn begin(
-        &self,
-        address: &StdAddr,
-        state: &ShardAccount,
-        is_special: bool,
-    ) -> Result<ExecutorState<'a>> {
+    fn begin(&self, address: &StdAddr, state: &ShardAccount) -> Result<ExecutorState<'a>> {
+        let is_special = self
+            .override_special
+            .unwrap_or_else(|| self.config.is_special(address));
+
         let account = state.load_account()?;
 
         let acc_address;
