@@ -2436,6 +2436,7 @@ mod tests {
             r#"
             PUSHREF @{2b698ae42e5cbea6096608a76572ad2fabd5c706a701bedb6369799c0d175c0f}
             XLOAD
+            CTOS
             BLESS
             EXECUTE
             "#

@@ -363,7 +363,7 @@ impl ExecutorState<'_> {
 #[cfg(test)]
 mod tests {
     use everscale_asm_macros::tvmasm;
-    use everscale_types::models::{ExtInMsgInfo, IntMsgInfo, LibDescr, StdAddr};
+    use everscale_types::models::{ExtInMsgInfo, IntMsgInfo, LibDescr, SimpleLib, StdAddr};
     use everscale_types::num::{VarUint24, VarUint56};
 
     use super::*;
@@ -1558,7 +1558,138 @@ mod tests {
         Ok(())
     }
 
-    // TODO: Use libraries from message/account/params.
+    #[test]
+    fn internal_use_libraries() -> Result<()> {
+        init_tracing();
+        let mut params = make_default_params();
+        let config = make_default_config();
 
-    // TODO: Internal message to a `Frozen` account (should return `Skipped(BadState)`).
+        let state_lib_code = Boc::decode(tvmasm!("THROWIF 42 INT 0"))?;
+        let account_lib_code = Boc::decode(tvmasm!("THROWIF 43 INT -1"))?;
+        let msg_lib_code = Boc::decode(tvmasm!("THROWIFNOT 44"))?;
+
+        params.libraries.set(HashBytes::ZERO, LibDescr {
+            lib: state_lib_code.clone(),
+            publishers: {
+                let mut p = Dict::new();
+                p.set(HashBytes([0x00; 32]), ())?;
+                p
+            },
+        })?;
+
+        let msg_state_init = StateInit {
+            libraries: {
+                let mut p = Dict::new();
+                p.set(HashBytes([0x22; 32]), SimpleLib {
+                    public: false,
+                    root: msg_lib_code,
+                })?;
+                p
+            },
+            ..Default::default()
+        };
+        let addr = StdAddr::new(0, *CellBuilder::build_from(&msg_state_init)?.repr_hash());
+
+        let mut state = ExecutorState::new_uninit(&params, &config, &addr, OK_BALANCE);
+        state.state = AccountState::Active(StateInit {
+            code: Some(Boc::decode(tvmasm!(
+                r#"
+                ACCEPT
+                PUSHCONT {
+                    DUMPSTK
+                    XLOAD
+                    CTOS
+                    BLESS
+                    EXECUTE
+                }
+                // Execute state lib code
+                OVER
+                PUSHREF @{0000000000000000000000000000000000000000000000000000000000000000}
+                PUSH s2
+                EXECUTE
+                // Execute account lib code
+                PUSHREF @{1111111111111111111111111111111111111111111111111111111111111111}
+                PUSH s2
+                EXECUTE
+                // Execute msg lib code
+                PUSHREF @{2222222222222222222222222222222222222222222222222222222222222222}
+                ROT
+                EXECUTE
+                "#
+            ))?),
+            libraries: {
+                let mut p = Dict::new();
+                p.set(HashBytes([0x11; 32]), SimpleLib {
+                    public: false,
+                    root: account_lib_code,
+                })?;
+                p
+            },
+            ..Default::default()
+        });
+        state.orig_status = AccountStatus::Active;
+        state.end_status = AccountStatus::Active;
+
+        let msg = state.receive_in_msg(make_message(
+            IntMsgInfo {
+                src: addr.clone().into(),
+                dst: addr.clone().into(),
+                value: Tokens::new(1_000_000_000).into(),
+                ..Default::default()
+            },
+            Some(msg_state_init),
+            None,
+        ))?;
+
+        state.credit_phase(&msg)?;
+
+        let prev_balance = state.balance.clone();
+        let prev_state = state.state.clone();
+        let prev_total_fees = state.total_fees;
+        let prev_end_status = state.end_status;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(
+            compute_phase.original_balance,
+            CurrencyCollection::from(OK_BALANCE)
+        );
+        // Message must be accepted.
+        assert!(compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(prev_end_status, state.end_status);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // Fees must be paid.
+        let expected_gas_fee = Tokens::new(1315000);
+        assert_eq!(state.total_fees, prev_total_fees + expected_gas_fee);
+        assert_eq!(state.balance.other, prev_balance.other);
+        assert_eq!(state.balance.tokens, prev_balance.tokens - expected_gas_fee);
+
+        let ComputePhase::Executed(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected executed compute phase");
+        };
+
+        assert!(compute_phase.success);
+        assert!(!compute_phase.msg_state_used);
+        assert!(!compute_phase.account_activated);
+        assert_eq!(compute_phase.gas_fees, expected_gas_fee);
+        assert_eq!(compute_phase.gas_used, 1315);
+        assert_eq!(
+            compute_phase.gas_limit,
+            VarUint56::new(config.gas_prices.gas_limit)
+        );
+        assert_eq!(compute_phase.gas_credit, None);
+        assert_eq!(compute_phase.exit_code, 0);
+        assert_eq!(compute_phase.exit_arg, None);
+        assert_eq!(compute_phase.vm_steps, 39);
+
+        Ok(())
+    }
 }
