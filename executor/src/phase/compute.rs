@@ -50,6 +50,7 @@ impl<'a> TransactionInput<'a> {
 }
 
 /// Executed compute phase with additional info.
+#[derive(Debug)]
 pub struct ComputePhaseFull {
     /// Resulting comput phase.
     pub compute_phase: ComputePhase,
@@ -275,6 +276,7 @@ impl ExecutorState<'_> {
         let exit_code = !vm.run();
 
         // Parse VM state.
+        let orig_gas_credit = gas.credit;
         res.accepted = vm.gas.credit() == 0;
         debug_assert!(
             is_external || res.accepted,
@@ -283,7 +285,8 @@ impl ExecutorState<'_> {
 
         let success = res.accepted && vm.commited_state.is_some();
 
-        let gas_used = std::cmp::min(vm.gas.consumed(), vm.gas.limit());
+        let gas_limit = vm.gas.limit();
+        let gas_used = std::cmp::min(vm.gas.consumed(), gas_limit);
         let gas_fees = if res.accepted && !self.is_special {
             self.config
                 .gas_prices(is_masterchain)
@@ -315,8 +318,8 @@ impl ExecutorState<'_> {
             account_activated,
             gas_fees,
             gas_used: new_varuint56_truncate(gas_used),
-            gas_limit: new_varuint56_truncate(gas.limit),
-            gas_credit: (gas.credit != 0).then(|| new_varuint24_truncate(gas.credit)),
+            gas_limit: new_varuint56_truncate(gas_limit),
+            gas_credit: (orig_gas_credit != 0).then(|| new_varuint24_truncate(orig_gas_credit)),
             mode: 0,
             exit_code,
             exit_arg: if success {
@@ -355,4 +358,1207 @@ impl ExecutorState<'_> {
             }
         }))
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use everscale_asm_macros::tvmasm;
+    use everscale_types::models::{ExtInMsgInfo, IntMsgInfo, LibDescr, StdAddr};
+    use everscale_types::num::{VarUint24, VarUint56};
+
+    use super::*;
+    use crate::tests::{make_default_config, make_default_params, make_message};
+
+    const STUB_ADDR: StdAddr = StdAddr::new(0, HashBytes::ZERO);
+    const OK_BALANCE: Tokens = Tokens::new(1_000_000_000);
+
+    fn empty_ext_in_msg(addr: &StdAddr) -> Cell {
+        make_message(
+            ExtInMsgInfo {
+                dst: addr.clone().into(),
+                ..Default::default()
+            },
+            None,
+            None,
+        )
+    }
+
+    fn empty_int_msg(addr: &StdAddr, value: impl Into<CurrencyCollection>) -> Cell {
+        make_message(
+            IntMsgInfo {
+                src: addr.clone().into(),
+                dst: addr.clone().into(),
+                value: value.into(),
+                ..Default::default()
+            },
+            None,
+            None,
+        )
+    }
+
+    fn simple_state(code: &[u8]) -> StateInit {
+        StateInit {
+            split_depth: None,
+            special: None,
+            code: Some(Boc::decode(code).unwrap()),
+            data: None,
+            libraries: Dict::new(),
+        }
+    }
+
+    fn init_tracing() {
+        tracing_subscriber::fmt::fmt()
+            .with_env_filter("tycho_vm=trace")
+            .with_writer(tracing_subscriber::fmt::TestWriter::new)
+            .try_init()
+            .ok();
+    }
+
+    fn make_lib_ref(code: &DynCell) -> Cell {
+        let mut b = CellBuilder::new();
+        b.set_exotic(true);
+        b.store_u8(CellType::LibraryReference.to_byte()).unwrap();
+        b.store_u256(code.repr_hash()).unwrap();
+        b.build().unwrap()
+    }
+
+    #[test]
+    fn ext_in_run_no_accept() -> Result<()> {
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state = ExecutorState::new_active(
+            &params,
+            &config,
+            &STUB_ADDR,
+            OK_BALANCE,
+            Cell::empty_cell(),
+            tvmasm!("INT 123 NOP"),
+        );
+
+        let msg = state.receive_in_msg(empty_ext_in_msg(&state.address))?;
+
+        let prev_balance = state.balance.clone();
+        let prev_state = state.state.clone();
+        let prev_total_fees = state.total_fees;
+        let prev_end_status = state.end_status;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(prev_balance, compute_phase.original_balance);
+        // Message must not be accepted.
+        assert!(!compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(prev_end_status, state.end_status);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // No fees must be paid when message was not accepted.
+        assert_eq!(state.total_fees, prev_total_fees);
+        assert_eq!(state.balance, prev_balance);
+
+        let ComputePhase::Executed(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected executed compute phase");
+        };
+
+        assert!(!compute_phase.success);
+        assert!(!compute_phase.msg_state_used);
+        assert!(!compute_phase.account_activated);
+        assert_eq!(compute_phase.gas_fees, Tokens::ZERO);
+        assert_eq!(compute_phase.gas_used, VarUint56::new(0)); // only credit was used
+        assert_eq!(compute_phase.gas_limit, VarUint56::new(0)); // zero, for external messages before accept
+        assert_eq!(compute_phase.gas_credit, Some(VarUint24::new(10_000)));
+        assert_eq!(compute_phase.exit_code, 0);
+        assert_eq!(compute_phase.exit_arg, Some(123)); // top int is treated as exit arg if !success
+        assert_eq!(compute_phase.vm_steps, 3); // pushint, nop, implicit ret
+
+        Ok(())
+    }
+
+    #[test]
+    fn ext_in_run_uninit_no_accept() -> Result<()> {
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state = ExecutorState::new_uninit(&params, &config, &STUB_ADDR, OK_BALANCE);
+
+        let msg = state.receive_in_msg(empty_ext_in_msg(&state.address))?;
+
+        let prev_balance = state.balance.clone();
+        let prev_state = state.state.clone();
+        let prev_total_fees = state.total_fees;
+        let prev_end_status = state.end_status;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(prev_balance, compute_phase.original_balance);
+        // Message must not be accepted.
+        assert!(!compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(prev_end_status, state.end_status);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // No fees must be paid when message was not accepted.
+        assert_eq!(state.total_fees, prev_total_fees);
+        assert_eq!(state.balance, prev_balance);
+
+        let ComputePhase::Skipped(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected skipped compute phase");
+        };
+        assert_eq!(compute_phase.reason, ComputePhaseSkipReason::NoState);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ext_in_run_no_code_no_accept() -> Result<()> {
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state = ExecutorState::new_uninit(&params, &config, &STUB_ADDR, OK_BALANCE);
+        state.state = AccountState::Active(StateInit::default());
+        state.orig_status = AccountStatus::Active;
+        state.end_status = AccountStatus::Active;
+
+        let msg = state.receive_in_msg(empty_ext_in_msg(&state.address))?;
+
+        let prev_balance = state.balance.clone();
+        let prev_state = state.state.clone();
+        let prev_total_fees = state.total_fees;
+        let prev_end_status = state.end_status;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(prev_balance, compute_phase.original_balance);
+        // Message must not be accepted.
+        assert!(!compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(prev_end_status, state.end_status);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // No fees must be paid when message was not accepted.
+        assert_eq!(state.total_fees, prev_total_fees);
+        assert_eq!(state.balance, prev_balance);
+
+        let ComputePhase::Executed(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected executed compute phase");
+        };
+
+        assert!(!compute_phase.success);
+        assert!(!compute_phase.msg_state_used);
+        assert!(!compute_phase.account_activated);
+        assert_eq!(compute_phase.gas_fees, Tokens::ZERO);
+        assert_eq!(compute_phase.gas_used, VarUint56::new(0)); // only credit was used
+        assert_eq!(compute_phase.gas_limit, VarUint56::new(0)); // zero, for external messages before accept
+        assert_eq!(compute_phase.gas_credit, Some(VarUint24::new(10_000)));
+        assert_eq!(
+            compute_phase.exit_code,
+            tycho_vm::VmException::Fatal.as_exit_code()
+        );
+        assert_eq!(compute_phase.exit_arg, Some(-1)); // top int is treated as exit arg if !success
+        assert_eq!(compute_phase.vm_steps, 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ext_in_accept_no_commit() -> Result<()> {
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state = ExecutorState::new_active(
+            &params,
+            &config,
+            &STUB_ADDR,
+            OK_BALANCE,
+            Cell::empty_cell(),
+            tvmasm!("ACCEPT THROW 42"),
+        );
+
+        let msg = state.receive_in_msg(empty_ext_in_msg(&state.address))?;
+
+        let prev_balance = state.balance.clone();
+        let prev_state = state.state.clone();
+        let prev_total_fees = state.total_fees;
+        let prev_end_status = state.end_status;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(prev_balance, compute_phase.original_balance);
+        // Message must be accepted.
+        assert!(compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(prev_end_status, state.end_status);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // Fees must be paid.
+        let expected_gas_fee = Tokens::new(config.gas_prices.flat_gas_price as _);
+        assert_eq!(state.total_fees, prev_total_fees + expected_gas_fee);
+        assert_eq!(state.balance.other, prev_balance.other);
+        assert_eq!(state.balance.tokens, prev_balance.tokens - expected_gas_fee);
+
+        let ComputePhase::Executed(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected executed compute phase");
+        };
+
+        assert!(!compute_phase.success);
+        assert!(!compute_phase.msg_state_used);
+        assert!(!compute_phase.account_activated);
+        assert_eq!(compute_phase.gas_fees, expected_gas_fee);
+        assert_eq!(compute_phase.gas_used, (10 + 16) * 2 + 50); // two 16bit opcodes + exception
+        assert_eq!(compute_phase.gas_limit, VarUint56::new(999000));
+        assert_eq!(compute_phase.gas_credit, Some(VarUint24::new(10_000)));
+        assert_eq!(compute_phase.exit_code, 42);
+        assert_eq!(compute_phase.exit_arg, None);
+        assert_eq!(compute_phase.vm_steps, 2); // accept, throw
+
+        Ok(())
+    }
+
+    #[test]
+    fn ext_in_accept_invalid_commit() -> Result<()> {
+        init_tracing();
+        let params = make_default_params();
+        let config = make_default_config();
+
+        let mut state = ExecutorState::new_active(
+            &params,
+            &config,
+            &STUB_ADDR,
+            OK_BALANCE,
+            Cell::empty_cell(),
+            tvmasm!(
+                r#"
+                ACCEPT
+                NEWC
+                INT 1 STUR 8
+                INT 7 STUR 8
+                INT 816 STZEROES
+                TRUE ENDXC
+                POP c5
+                "#
+            ),
+        );
+
+        let msg = state.receive_in_msg(empty_ext_in_msg(&state.address))?;
+
+        let prev_balance = state.balance.clone();
+        let prev_state = state.state.clone();
+        let prev_total_fees = state.total_fees;
+        let prev_end_status = state.end_status;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(prev_balance, compute_phase.original_balance);
+        // Message must be accepted.
+        assert!(compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(prev_end_status, state.end_status);
+        // No (VALID) actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // Fees must be paid.
+        let expected_gas_fee = Tokens::new(config.gas_prices.flat_gas_price as _);
+        assert_eq!(state.total_fees, prev_total_fees + expected_gas_fee);
+        assert_eq!(state.balance.other, prev_balance.other);
+        assert_eq!(state.balance.tokens, prev_balance.tokens - expected_gas_fee);
+
+        let ComputePhase::Executed(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected executed compute phase");
+        };
+
+        assert!(!compute_phase.success);
+        assert!(!compute_phase.msg_state_used);
+        assert!(!compute_phase.account_activated);
+        assert_eq!(compute_phase.gas_fees, expected_gas_fee);
+        assert_eq!(compute_phase.gas_used, 783);
+        assert_eq!(compute_phase.gas_limit, VarUint56::new(999000));
+        assert_eq!(compute_phase.gas_credit, Some(VarUint24::new(10_000)));
+        assert_eq!(
+            compute_phase.exit_code,
+            tycho_vm::VmException::CellOverflow as i32
+        );
+        assert_eq!(compute_phase.exit_arg, None);
+        assert_eq!(compute_phase.vm_steps, 12); // accept, throw
+
+        Ok(())
+    }
+
+    #[test]
+    fn ext_in_accept_simple() -> Result<()> {
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state = ExecutorState::new_active(
+            &params,
+            &config,
+            &STUB_ADDR,
+            OK_BALANCE,
+            Cell::empty_cell(),
+            tvmasm!("ACCEPT NEWC INT 0xdeafbeaf STUR 32 ENDC POP c5"),
+        );
+
+        let msg = state.receive_in_msg(empty_ext_in_msg(&state.address))?;
+
+        let prev_balance = state.balance.clone();
+        let prev_state = state.state.clone();
+        let prev_total_fees = state.total_fees;
+        let prev_end_status = state.end_status;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(prev_balance, compute_phase.original_balance);
+        // Message must be accepted.
+        assert!(compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(prev_end_status, state.end_status);
+        // No actions must be produced.
+        assert_eq!(
+            compute_phase.actions,
+            CellBuilder::build_from(0xdeafbeafu32)?
+        );
+        // Fees must be paid.
+        let expected_gas_fee = Tokens::new(config.gas_prices.flat_gas_price as _);
+        assert_eq!(state.total_fees, prev_total_fees + expected_gas_fee);
+        assert_eq!(state.balance.other, prev_balance.other);
+        assert_eq!(state.balance.tokens, prev_balance.tokens - expected_gas_fee);
+
+        let ComputePhase::Executed(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected executed compute phase");
+        };
+
+        assert!(compute_phase.success);
+        assert!(!compute_phase.msg_state_used);
+        assert!(!compute_phase.account_activated);
+        assert_eq!(compute_phase.gas_fees, expected_gas_fee);
+        assert_eq!(compute_phase.gas_used, 650);
+        assert_eq!(compute_phase.gas_limit, VarUint56::new(999000));
+        assert_eq!(compute_phase.gas_credit, Some(VarUint24::new(10_000)));
+        assert_eq!(compute_phase.exit_code, 0);
+        assert_eq!(compute_phase.exit_arg, None);
+        assert_eq!(compute_phase.vm_steps, 7);
+
+        Ok(())
+    }
+
+    #[test]
+    fn internal_accept_simple() -> Result<()> {
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state = ExecutorState::new_active(
+            &params,
+            &config,
+            &STUB_ADDR,
+            OK_BALANCE,
+            Cell::empty_cell(),
+            tvmasm!("ACCEPT"),
+        );
+
+        let msg =
+            state.receive_in_msg(empty_int_msg(&state.address, Tokens::new(1_000_000_000)))?;
+
+        state.credit_phase(&msg)?;
+
+        let prev_balance = state.balance.clone();
+        let prev_state = state.state.clone();
+        let prev_total_fees = state.total_fees;
+        let prev_end_status = state.end_status;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(
+            compute_phase.original_balance,
+            CurrencyCollection::from(OK_BALANCE)
+        );
+        // Message must be accepted.
+        assert!(compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(prev_end_status, state.end_status);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // Fees must be paid.
+        let expected_gas_fee = Tokens::new(config.gas_prices.flat_gas_price as _);
+        assert_eq!(state.total_fees, prev_total_fees + expected_gas_fee);
+        assert_eq!(state.balance.other, prev_balance.other);
+        assert_eq!(state.balance.tokens, prev_balance.tokens - expected_gas_fee);
+
+        let ComputePhase::Executed(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected executed compute phase");
+        };
+
+        assert!(compute_phase.success);
+        assert!(!compute_phase.msg_state_used);
+        assert!(!compute_phase.account_activated);
+        assert_eq!(compute_phase.gas_fees, expected_gas_fee);
+        assert_eq!(compute_phase.gas_used, (10 + 16) + 5); // two 16bit opcodes + implicit ret
+        assert_eq!(
+            compute_phase.gas_limit,
+            VarUint56::new(config.gas_prices.gas_limit)
+        );
+        assert_eq!(compute_phase.gas_credit, None);
+        assert_eq!(compute_phase.exit_code, 0);
+        assert_eq!(compute_phase.exit_arg, None);
+        assert_eq!(compute_phase.vm_steps, 2); // accept, implicit ret
+
+        Ok(())
+    }
+
+    #[test]
+    fn internal_no_accept() -> Result<()> {
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state = ExecutorState::new_active(
+            &params,
+            &config,
+            &STUB_ADDR,
+            OK_BALANCE,
+            Cell::empty_cell(),
+            tvmasm!("NOP"),
+        );
+
+        let msg = state.receive_in_msg(empty_int_msg(&state.address, Tokens::new(1)))?;
+
+        state.credit_phase(&msg)?;
+
+        let prev_balance = state.balance.clone();
+        let prev_state = state.state.clone();
+        let prev_total_fees = state.total_fees;
+        let prev_end_status = state.end_status;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(
+            compute_phase.original_balance,
+            CurrencyCollection::from(OK_BALANCE)
+        );
+        // Message must not be accepted.
+        assert!(!compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(prev_end_status, state.end_status);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // No fees must be paid when message was not accepted.
+        assert_eq!(state.total_fees, prev_total_fees);
+        assert_eq!(state.balance, prev_balance);
+
+        let ComputePhase::Skipped(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected skipped compute phase");
+        };
+        assert_eq!(compute_phase.reason, ComputePhaseSkipReason::NoGas);
+
+        Ok(())
+    }
+
+    #[test]
+    fn internal_no_accept_empty_balance() -> Result<()> {
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state = ExecutorState::new_active(
+            &params,
+            &config,
+            &STUB_ADDR,
+            Tokens::ZERO,
+            Cell::empty_cell(),
+            tvmasm!("NOP"),
+        );
+
+        let msg = state.receive_in_msg(empty_int_msg(&state.address, Tokens::ZERO))?;
+
+        state.credit_phase(&msg)?;
+
+        let prev_balance = state.balance.clone();
+        let prev_state = state.state.clone();
+        let prev_total_fees = state.total_fees;
+        let prev_end_status = state.end_status;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(compute_phase.original_balance, CurrencyCollection::ZERO);
+        // Message must not be accepted.
+        assert!(!compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(prev_end_status, state.end_status);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // No fees must be paid when message was not accepted.
+        assert_eq!(state.total_fees, prev_total_fees);
+        assert_eq!(state.balance, prev_balance);
+
+        let ComputePhase::Skipped(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected skipped compute phase");
+        };
+        assert_eq!(compute_phase.reason, ComputePhaseSkipReason::NoGas);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ext_in_deploy_account() -> Result<()> {
+        let state_init = simple_state(tvmasm!("ACCEPT"));
+        let state_init_hash = *CellBuilder::build_from(&state_init)?.repr_hash();
+        let addr = StdAddr::new(0, state_init_hash);
+
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state = ExecutorState::new_uninit(&params, &config, &addr, OK_BALANCE);
+
+        let msg = state.receive_in_msg(make_message(
+            ExtInMsgInfo {
+                dst: addr.clone().into(),
+                ..Default::default()
+            },
+            Some(state_init.clone()),
+            None,
+        ))?;
+
+        let prev_balance = state.balance.clone();
+        let prev_total_fees = state.total_fees;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(
+            compute_phase.original_balance,
+            CurrencyCollection::from(OK_BALANCE - prev_total_fees)
+        );
+        // Message must be accepted.
+        assert!(compute_phase.accepted);
+        // State must change.
+        assert_eq!(state.state, AccountState::Active(state_init));
+        // Status must change.
+        assert_eq!(state.end_status, AccountStatus::Active);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // Fees must be paid.
+        let expected_gas_fee = Tokens::new(config.gas_prices.flat_gas_price as _);
+        assert_eq!(state.total_fees, prev_total_fees + expected_gas_fee);
+        assert_eq!(state.balance.other, prev_balance.other);
+        assert_eq!(state.balance.tokens, prev_balance.tokens - expected_gas_fee);
+
+        let ComputePhase::Executed(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected executed compute phase");
+        };
+
+        assert!(compute_phase.success);
+        assert!(compute_phase.msg_state_used);
+        assert!(compute_phase.account_activated);
+        assert_eq!(compute_phase.gas_fees, expected_gas_fee);
+        assert_eq!(compute_phase.gas_used, (10 + 16) + 5); // two 16bit opcodes + implicit ret
+        assert_eq!(compute_phase.gas_limit, 998884); // 1_000_000 - to_gas(fwd_fee)
+        assert_eq!(compute_phase.gas_credit, Some(VarUint24::new(10_000)));
+        assert_eq!(compute_phase.exit_code, 0);
+        assert_eq!(compute_phase.exit_arg, None);
+        assert_eq!(compute_phase.vm_steps, 2); // accept, implicit ret
+
+        Ok(())
+    }
+
+    #[test]
+    fn internal_deploy_account() -> Result<()> {
+        let state_init = simple_state(tvmasm!("ACCEPT"));
+        let state_init_hash = *CellBuilder::build_from(&state_init)?.repr_hash();
+        let addr = StdAddr::new(0, state_init_hash);
+
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state = ExecutorState::new_uninit(&params, &config, &addr, OK_BALANCE);
+
+        let msg = state.receive_in_msg(make_message(
+            IntMsgInfo {
+                src: addr.clone().into(),
+                dst: addr.clone().into(),
+                value: Tokens::new(1_000_000_000).into(),
+                ..Default::default()
+            },
+            Some(state_init.clone()),
+            None,
+        ))?;
+
+        state.credit_phase(&msg)?;
+
+        let prev_balance = state.balance.clone();
+        let prev_total_fees = state.total_fees;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(
+            compute_phase.original_balance,
+            CurrencyCollection::from(OK_BALANCE)
+        );
+        // Message must be accepted.
+        assert!(compute_phase.accepted);
+        // State must change.
+        assert_eq!(state.state, AccountState::Active(state_init));
+        // Status must change.
+        assert_eq!(state.end_status, AccountStatus::Active);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // Fees must be paid.
+        let expected_gas_fee = Tokens::new(config.gas_prices.flat_gas_price as _);
+        assert_eq!(state.total_fees, prev_total_fees + expected_gas_fee);
+        assert_eq!(state.balance.other, prev_balance.other);
+        assert_eq!(state.balance.tokens, prev_balance.tokens - expected_gas_fee);
+
+        let ComputePhase::Executed(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected executed compute phase");
+        };
+
+        assert!(compute_phase.success);
+        assert!(compute_phase.msg_state_used);
+        assert!(compute_phase.account_activated);
+        assert_eq!(compute_phase.gas_fees, expected_gas_fee);
+        assert_eq!(compute_phase.gas_used, (10 + 16) + 5); // two 16bit opcodes + implicit ret
+        assert_eq!(
+            compute_phase.gas_limit,
+            VarUint56::new(config.gas_prices.gas_limit)
+        );
+        assert_eq!(compute_phase.gas_credit, None);
+        assert_eq!(compute_phase.exit_code, 0);
+        assert_eq!(compute_phase.exit_arg, None);
+        assert_eq!(compute_phase.vm_steps, 2); // accept, implicit ret
+
+        Ok(())
+    }
+
+    #[test]
+    fn ext_in_unfreeze_account() -> Result<()> {
+        let state_init = simple_state(tvmasm!("ACCEPT"));
+        let state_init_hash = *CellBuilder::build_from(&state_init)?.repr_hash();
+
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state =
+            ExecutorState::new_frozen(&params, &config, &STUB_ADDR, OK_BALANCE, state_init_hash);
+
+        let msg = state.receive_in_msg(make_message(
+            ExtInMsgInfo {
+                dst: STUB_ADDR.into(),
+                ..Default::default()
+            },
+            Some(state_init.clone()),
+            None,
+        ))?;
+
+        let prev_balance = state.balance.clone();
+        let prev_total_fees = state.total_fees;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(
+            compute_phase.original_balance,
+            CurrencyCollection::from(OK_BALANCE - prev_total_fees)
+        );
+        // Message must be accepted.
+        assert!(compute_phase.accepted);
+        // State must change.
+        assert_eq!(state.state, AccountState::Active(state_init));
+        // Status must change.
+        assert_eq!(state.end_status, AccountStatus::Active);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // Fees must be paid.
+        let expected_gas_fee = Tokens::new(config.gas_prices.flat_gas_price as _);
+        assert_eq!(state.total_fees, prev_total_fees + expected_gas_fee);
+        assert_eq!(state.balance.other, prev_balance.other);
+        assert_eq!(state.balance.tokens, prev_balance.tokens - expected_gas_fee);
+
+        let ComputePhase::Executed(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected executed compute phase");
+        };
+
+        assert!(compute_phase.success);
+        assert!(compute_phase.msg_state_used);
+        assert!(compute_phase.account_activated);
+        assert_eq!(compute_phase.gas_fees, expected_gas_fee);
+        assert_eq!(compute_phase.gas_used, (10 + 16) + 5); // two 16bit opcodes + implicit ret
+        assert_eq!(compute_phase.gas_limit, 998884); // 1_000_000 - to_gas(fwd_fee)
+        assert_eq!(compute_phase.gas_credit, Some(VarUint24::new(10_000)));
+        assert_eq!(compute_phase.exit_code, 0);
+        assert_eq!(compute_phase.exit_arg, None);
+        assert_eq!(compute_phase.vm_steps, 2); // accept, implicit ret
+
+        Ok(())
+    }
+
+    #[test]
+    fn internal_unfreeze_account() -> Result<()> {
+        let state_init = simple_state(tvmasm!("ACCEPT"));
+        let state_init_hash = *CellBuilder::build_from(&state_init)?.repr_hash();
+
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state =
+            ExecutorState::new_frozen(&params, &config, &STUB_ADDR, Tokens::ZERO, state_init_hash);
+
+        let msg = state.receive_in_msg(make_message(
+            IntMsgInfo {
+                src: STUB_ADDR.into(),
+                dst: STUB_ADDR.into(),
+                value: Tokens::new(1_000_000_000).into(),
+                ..Default::default()
+            },
+            Some(state_init.clone()),
+            None,
+        ))?;
+
+        state.credit_phase(&msg)?;
+
+        let prev_balance = state.balance.clone();
+        let prev_total_fees = state.total_fees;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(compute_phase.original_balance, CurrencyCollection::ZERO);
+        // Message must be accepted.
+        assert!(compute_phase.accepted);
+        // State must change.
+        assert_eq!(state.state, AccountState::Active(state_init));
+        // Status must change to active.
+        assert_eq!(state.end_status, AccountStatus::Active);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // Fees must be paid.
+        let expected_gas_fee = Tokens::new(config.gas_prices.flat_gas_price as _);
+        assert_eq!(state.total_fees, prev_total_fees + expected_gas_fee);
+        assert_eq!(state.balance.other, prev_balance.other);
+        assert_eq!(state.balance.tokens, prev_balance.tokens - expected_gas_fee);
+
+        let ComputePhase::Executed(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected executed compute phase");
+        };
+
+        assert!(compute_phase.success);
+        assert!(compute_phase.msg_state_used);
+        assert!(compute_phase.account_activated);
+        assert_eq!(compute_phase.gas_fees, expected_gas_fee);
+        assert_eq!(compute_phase.gas_used, (10 + 16) + 5); // two 16bit opcodes + implicit ret
+        assert_eq!(
+            compute_phase.gas_limit,
+            VarUint56::new(config.gas_prices.gas_limit)
+        );
+        assert_eq!(compute_phase.gas_credit, None);
+        assert_eq!(compute_phase.exit_code, 0);
+        assert_eq!(compute_phase.exit_arg, None);
+        assert_eq!(compute_phase.vm_steps, 2); // accept, implicit ret
+
+        Ok(())
+    }
+
+    #[test]
+    fn ext_in_unfreeze_hash_mismatch() -> Result<()> {
+        let state_init = simple_state(tvmasm!("ACCEPT"));
+
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state =
+            ExecutorState::new_frozen(&params, &config, &STUB_ADDR, OK_BALANCE, HashBytes::ZERO);
+
+        let msg = state.receive_in_msg(make_message(
+            ExtInMsgInfo {
+                dst: STUB_ADDR.into(),
+                ..Default::default()
+            },
+            Some(state_init.clone()),
+            None,
+        ))?;
+
+        let prev_state = state.state.clone();
+        let prev_balance = state.balance.clone();
+        let prev_total_fees = state.total_fees;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(
+            compute_phase.original_balance,
+            CurrencyCollection::from(OK_BALANCE - prev_total_fees)
+        );
+        // Message must not be accepted.
+        assert!(!compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(state.end_status, AccountStatus::Frozen);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // Fees must not be paid.
+        assert_eq!(state.total_fees, prev_total_fees);
+        assert_eq!(state.balance, prev_balance);
+
+        let ComputePhase::Skipped(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected skipped compute phase");
+        };
+        assert_eq!(compute_phase.reason, ComputePhaseSkipReason::BadState);
+
+        Ok(())
+    }
+
+    #[test]
+    fn ext_in_deploy_hash_mismatch() -> Result<()> {
+        let state_init = simple_state(tvmasm!("ACCEPT"));
+
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state = ExecutorState::new_uninit(&params, &config, &STUB_ADDR, OK_BALANCE);
+
+        let msg = state.receive_in_msg(make_message(
+            ExtInMsgInfo {
+                dst: STUB_ADDR.into(),
+                ..Default::default()
+            },
+            Some(state_init.clone()),
+            None,
+        ))?;
+
+        let prev_state = state.state.clone();
+        let prev_balance = state.balance.clone();
+        let prev_total_fees = state.total_fees;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(
+            compute_phase.original_balance,
+            CurrencyCollection::from(OK_BALANCE - prev_total_fees)
+        );
+        // Message must not be accepted.
+        assert!(!compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(state.end_status, AccountStatus::Uninit);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // Fees must not be paid.
+        assert_eq!(state.total_fees, prev_total_fees);
+        assert_eq!(state.balance, prev_balance);
+
+        let ComputePhase::Skipped(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected skipped compute phase");
+        };
+        assert_eq!(compute_phase.reason, ComputePhaseSkipReason::BadState);
+
+        Ok(())
+    }
+
+    #[test]
+    fn internal_unfreeze_hash_mismatch() -> Result<()> {
+        let state_init = simple_state(tvmasm!("ACCEPT"));
+
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state =
+            ExecutorState::new_frozen(&params, &config, &STUB_ADDR, OK_BALANCE, HashBytes::ZERO);
+
+        let msg = state.receive_in_msg(make_message(
+            IntMsgInfo {
+                src: STUB_ADDR.into(),
+                dst: STUB_ADDR.into(),
+                value: Tokens::new(1_000_000_000).into(),
+                ..Default::default()
+            },
+            Some(state_init.clone()),
+            None,
+        ))?;
+
+        state.credit_phase(&msg)?;
+
+        let prev_state = state.state.clone();
+        let prev_balance = state.balance.clone();
+        let prev_total_fees = state.total_fees;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(
+            compute_phase.original_balance,
+            CurrencyCollection::from(OK_BALANCE - prev_total_fees)
+        );
+        // Message must not be accepted.
+        assert!(!compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(state.end_status, AccountStatus::Frozen);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // Fees must not be paid.
+        assert_eq!(state.total_fees, prev_total_fees);
+        assert_eq!(state.balance, prev_balance);
+
+        let ComputePhase::Skipped(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected skipped compute phase");
+        };
+        assert_eq!(compute_phase.reason, ComputePhaseSkipReason::BadState);
+
+        Ok(())
+    }
+
+    #[test]
+    fn internal_deploy_hash_mismatch() -> Result<()> {
+        let state_init = simple_state(tvmasm!("ACCEPT"));
+
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state = ExecutorState::new_uninit(&params, &config, &STUB_ADDR, OK_BALANCE);
+
+        let msg = state.receive_in_msg(make_message(
+            IntMsgInfo {
+                src: STUB_ADDR.into(),
+                dst: STUB_ADDR.into(),
+                value: Tokens::new(1_000_000_000).into(),
+                ..Default::default()
+            },
+            Some(state_init.clone()),
+            None,
+        ))?;
+
+        state.credit_phase(&msg)?;
+
+        let prev_state = state.state.clone();
+        let prev_balance = state.balance.clone();
+        let prev_total_fees = state.total_fees;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::Ordinary(&msg),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(
+            compute_phase.original_balance,
+            CurrencyCollection::from(OK_BALANCE - prev_total_fees)
+        );
+        // Message must not be accepted.
+        assert!(!compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(state.end_status, AccountStatus::Uninit);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // Fees must not be paid.
+        assert_eq!(state.total_fees, prev_total_fees);
+        assert_eq!(state.balance, prev_balance);
+
+        let ComputePhase::Skipped(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected skipped compute phase");
+        };
+        assert_eq!(compute_phase.reason, ComputePhaseSkipReason::BadState);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tick_special() -> Result<()> {
+        init_tracing();
+        let params = make_default_params();
+        let config = make_default_config();
+        let mut state = ExecutorState::new_active(
+            &params,
+            &config,
+            &STUB_ADDR,
+            OK_BALANCE,
+            Cell::empty_cell(),
+            tvmasm!("DROP THROWIF 42 ACCEPT"),
+        );
+
+        let prev_balance = state.balance.clone();
+        let prev_state = state.state.clone();
+        let prev_total_fees = state.total_fees;
+        let prev_end_status = state.end_status;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::TickTock(TickTock::Tick),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(
+            compute_phase.original_balance,
+            CurrencyCollection::from(OK_BALANCE)
+        );
+        // Message must be accepted.
+        assert!(compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(prev_end_status, state.end_status);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // Fees must be paid.
+        let expected_gas_fee = Tokens::new(config.gas_prices.flat_gas_price as _);
+        assert_eq!(state.total_fees, prev_total_fees + expected_gas_fee);
+        assert_eq!(state.balance.other, prev_balance.other);
+        assert_eq!(state.balance.tokens, prev_balance.tokens - expected_gas_fee);
+
+        let ComputePhase::Executed(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected executed compute phase");
+        };
+
+        assert!(compute_phase.success);
+        assert!(!compute_phase.msg_state_used);
+        assert!(!compute_phase.account_activated);
+        assert_eq!(compute_phase.gas_fees, expected_gas_fee);
+        assert_eq!(compute_phase.gas_used, 75);
+        assert_eq!(
+            compute_phase.gas_limit,
+            VarUint56::new(config.gas_prices.gas_limit)
+        );
+        assert_eq!(compute_phase.gas_credit, None);
+        assert_eq!(compute_phase.exit_code, 0);
+        assert_eq!(compute_phase.exit_arg, None);
+        assert_eq!(compute_phase.vm_steps, 4);
+
+        Ok(())
+    }
+
+    #[test]
+    fn code_as_library() -> Result<()> {
+        init_tracing();
+        let mut params = make_default_params();
+        let config = make_default_config();
+
+        let code = Boc::decode(tvmasm!("DROP THROWIF 42 ACCEPT"))?;
+        params.libraries.set(code.repr_hash(), LibDescr {
+            lib: code.clone(),
+            publishers: {
+                let mut p = Dict::new();
+                p.set(HashBytes::ZERO, ())?;
+                p
+            },
+        })?;
+
+        let mut state = ExecutorState::new_uninit(&params, &config, &STUB_ADDR, OK_BALANCE);
+        state.state = AccountState::Active(StateInit {
+            code: Some(make_lib_ref(code.as_ref())),
+            ..Default::default()
+        });
+        state.orig_status = AccountStatus::Active;
+        state.end_status = AccountStatus::Active;
+
+        let prev_balance = state.balance.clone();
+        let prev_state = state.state.clone();
+        let prev_total_fees = state.total_fees;
+        let prev_end_status = state.end_status;
+
+        let compute_phase = state.compute_phase(ComputePhaseContext {
+            input: TransactionInput::TickTock(TickTock::Tick),
+            storage_fee: Tokens::ZERO,
+        })?;
+
+        // Original balance must be correct.
+        assert_eq!(
+            compute_phase.original_balance,
+            CurrencyCollection::from(OK_BALANCE)
+        );
+        // Message must be accepted.
+        assert!(compute_phase.accepted);
+        // State must not change.
+        assert_eq!(state.state, prev_state);
+        // Status must not change.
+        assert_eq!(prev_end_status, state.end_status);
+        // No actions must be produced.
+        assert_eq!(compute_phase.actions, Cell::empty_cell());
+        // Fees must be paid.
+        let expected_gas_fee = Tokens::new(config.gas_prices.flat_gas_price as _);
+        assert_eq!(state.total_fees, prev_total_fees + expected_gas_fee);
+        assert_eq!(state.balance.other, prev_balance.other);
+        assert_eq!(state.balance.tokens, prev_balance.tokens - expected_gas_fee);
+
+        let ComputePhase::Executed(compute_phase) = compute_phase.compute_phase else {
+            panic!("expected executed compute phase");
+        };
+
+        assert!(compute_phase.success);
+        assert!(!compute_phase.msg_state_used);
+        assert!(!compute_phase.account_activated);
+        assert_eq!(compute_phase.gas_fees, expected_gas_fee);
+        assert_eq!(compute_phase.gas_used, 285);
+        assert_eq!(
+            compute_phase.gas_limit,
+            VarUint56::new(config.gas_prices.gas_limit)
+        );
+        assert_eq!(compute_phase.gas_credit, None);
+        assert_eq!(compute_phase.exit_code, 0);
+        assert_eq!(compute_phase.exit_arg, None);
+        assert_eq!(compute_phase.vm_steps, 5);
+
+        Ok(())
+    }
+
+    // TODO: Use libraries from message/account/params.
+
+    // TODO: Internal message to a `Frozen` account (should return `Skipped(BadState)`).
 }

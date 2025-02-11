@@ -31,9 +31,12 @@ syn = "2.0"
 thiserror = "2.0"
 tl-proto = "0.5.2"
 tracing = "0.1"
+tracing-subscriber = "0.3"
 tracing-test = "0.2"
 
 everscale-asm-macros = { git = "https://github.com/broxus/everscale-asm.git", rev = "799ae29a96ccd98db84882e7fe5fb20beba656a7" }
+
+tycho-vm = { path = "./vm" }
 
 [patch.crates-io]
 everscale-types = { git = "https://github.com/broxus/everscale-types.git", rev = "f0d46607c19c9657b90360b4bc5c229a56540ffa" }

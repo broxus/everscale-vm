@@ -14,7 +14,12 @@ everscale-types = { workspace = true, default-features = false, features = ["mod
 num-bigint = { workspace = true }
 thiserror = { workspace = true }
 
-tycho-vm = { path = "../vm" }
+tycho-vm = { workspace = true }
 
 [dev-dependencies]
+everscale-asm-macros = { workspace = true }
 everscale-types = { workspace = true, features = ["models", "base64"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+tycho-vm = { workspace = true, features = ["tracing"] }

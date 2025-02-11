@@ -224,6 +224,45 @@ impl<'a> ExecutorState<'a> {
         res.orig_status = AccountStatus::Uninit;
         res
     }
+
+    pub(crate) fn new_frozen(
+        params: &'a ExecutorParams,
+        config: &'a impl AsRef<ParsedConfig>,
+        address: &StdAddr,
+        balance: impl Into<CurrencyCollection>,
+        state_hash: HashBytes,
+    ) -> Self {
+        let mut res = Self::new_non_existent(params, config, address);
+        res.balance = balance.into();
+        res.state = AccountState::Frozen(state_hash);
+        res.orig_status = AccountStatus::Frozen;
+        res.end_status = AccountStatus::Frozen;
+        res
+    }
+
+    pub(crate) fn new_active(
+        params: &'a ExecutorParams,
+        config: &'a impl AsRef<ParsedConfig>,
+        address: &StdAddr,
+        balance: impl Into<CurrencyCollection>,
+        data: Cell,
+        code_boc: impl AsRef<[u8]>,
+    ) -> Self {
+        use everscale_types::models::StateInit;
+
+        let mut res = Self::new_non_existent(params, config, address);
+        res.balance = balance.into();
+        res.state = AccountState::Active(StateInit {
+            split_depth: None,
+            special: None,
+            code: Some(Boc::decode(code_boc).unwrap()),
+            data: Some(data),
+            libraries: Dict::new(),
+        });
+        res.orig_status = AccountStatus::Active;
+        res.end_status = AccountStatus::Active;
+        res
+    }
 }
 
 /// Executor configuration parameters.
