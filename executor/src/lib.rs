@@ -188,8 +188,8 @@ pub struct ExecutorState<'a> {
     pub cached_storage_stat: Option<OwnedExtStorageStat>,
 }
 
+#[cfg(test)]
 impl<'a> ExecutorState<'a> {
-    #[cfg(test)]
     pub(crate) fn new_non_existent(
         params: &'a ExecutorParams,
         config: &'a impl AsRef<ParsedConfig>,
@@ -213,7 +213,6 @@ impl<'a> ExecutorState<'a> {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn new_uninit(
         params: &'a ExecutorParams,
         config: &'a impl AsRef<ParsedConfig>,

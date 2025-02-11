@@ -133,6 +133,9 @@ impl ExecutorState<'_> {
         // Take message balance back from the account balance.
         self.balance.try_sub_assign(&msg_value)?;
 
+        // Take forwarding fee from the message balance.
+        msg_value.tokens -= fwd_fees;
+
         // Split forwarding fee.
         let msg_fees = prices.get_first_part(fwd_fees);
         fwd_fees -= msg_fees;
@@ -199,5 +202,185 @@ impl ExecutorState<'_> {
             msg_fees,
             fwd_fees,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use everscale_types::models::{IntMsgInfo, StdAddr};
+    use everscale_types::prelude::*;
+
+    use super::*;
+    use crate::tests::{make_default_config, make_default_params, make_message};
+
+    fn apply_cs((cell, range): &CellSliceParts) -> CellSlice<'_> {
+        range.apply_allow_special(cell)
+    }
+
+    #[test]
+    fn bounce_with_enough_funds() {
+        let mut params = make_default_params();
+        params.full_body_in_bounce = false;
+
+        let config = make_default_config();
+
+        let src_addr = StdAddr::new(0, HashBytes([0; 32]));
+        let dst_addr = StdAddr::new(0, HashBytes([1; 32]));
+
+        let gas_fees = Tokens::new(100);
+        let action_fine = Tokens::new(200);
+
+        let mut state =
+            ExecutorState::new_uninit(&params, &config, &dst_addr, Tokens::new(1_000_000_000));
+        state.balance.tokens -= gas_fees;
+        state.balance.tokens -= action_fine;
+        let prev_balance = state.balance.clone();
+        let prev_total_fees = state.total_fees;
+        let prev_start_lt = state.start_lt;
+
+        let received_msg = state
+            .receive_in_msg(make_message(
+                IntMsgInfo {
+                    src: src_addr.clone().into(),
+                    dst: dst_addr.clone().into(),
+                    value: Tokens::new(1_000_000_000).into(),
+                    bounce: true,
+                    created_lt: prev_start_lt + 1000,
+                    ..Default::default()
+                },
+                None,
+                None,
+            ))
+            .unwrap();
+        assert_eq!(state.start_lt, prev_start_lt + 1000 + 1);
+        assert_eq!(state.end_lt, prev_start_lt + 1000 + 2);
+
+        let bounce_phase = state
+            .bounce_phase(BouncePhaseContext {
+                gas_fees,
+                action_fine,
+                received_message: &received_msg,
+            })
+            .unwrap();
+
+        let BouncePhase::Executed(bounce_phase) = bounce_phase else {
+            panic!("expected bounce phase to execute")
+        };
+
+        // Only msg fees are collected during the transaction.
+        let full_fwd_fee = Tokens::new(config.fwd_prices.lump_price as _);
+        let collected_fees = config.fwd_prices.get_first_part(full_fwd_fee);
+        assert_eq!(state.total_fees, prev_total_fees + collected_fees);
+        assert_eq!(state.total_fees, prev_total_fees + bounce_phase.msg_fees);
+        assert_eq!(bounce_phase.fwd_fees, full_fwd_fee - collected_fees);
+
+        // There were no extra currencies in the inbound message.
+        assert_eq!(state.out_msgs.len(), 1);
+        let bounced_msg = state.out_msgs.last().unwrap().load().unwrap();
+        assert!(bounced_msg.init.is_none());
+        assert_eq!(bounced_msg.body.1.size_bits(), 32);
+        assert_eq!(apply_cs(&bounced_msg.body).load_u32().unwrap(), u32::MAX);
+
+        let MsgInfo::Int(bounced_msg_info) = bounced_msg.info else {
+            panic!("expected bounced internal message");
+        };
+        assert_eq!(state.balance.other, prev_balance.other);
+        assert!(bounced_msg_info.value.other.is_empty());
+        assert_eq!(
+            state.balance.tokens,
+            prev_balance.tokens - (received_msg.balance_remaining.tokens - gas_fees - action_fine)
+        );
+        assert_eq!(
+            bounced_msg_info.value.tokens,
+            received_msg.balance_remaining.tokens - gas_fees - action_fine - full_fwd_fee
+        );
+        assert!(bounced_msg_info.ihr_disabled);
+        assert!(!bounced_msg_info.bounce);
+        assert!(bounced_msg_info.bounced);
+        assert_eq!(bounced_msg_info.src, dst_addr.clone().into());
+        assert_eq!(bounced_msg_info.dst, src_addr.clone().into());
+        assert_eq!(bounced_msg_info.ihr_fee, Tokens::ZERO);
+        assert_eq!(bounced_msg_info.fwd_fee, bounce_phase.fwd_fees);
+        assert_eq!(bounced_msg_info.created_at, params.block_unixtime);
+        assert_eq!(bounced_msg_info.created_lt, prev_start_lt + 1000 + 2);
+
+        // Root cell is free and the bounced message has no child cells.
+        assert_eq!(bounce_phase.msg_size, StorageUsedShort {
+            bits: Default::default(),
+            cells: Default::default()
+        });
+
+        // End LT must increase.
+        assert_eq!(state.end_lt, prev_start_lt + 1000 + 3);
+    }
+
+    #[test]
+    fn bounce_with_no_funds() {
+        let mut params = make_default_params();
+        params.full_body_in_bounce = false;
+
+        let config = make_default_config();
+
+        let src_addr = StdAddr::new(0, HashBytes([0; 32]));
+        let dst_addr = StdAddr::new(0, HashBytes([1; 32]));
+
+        let mut state =
+            ExecutorState::new_uninit(&params, &config, &dst_addr, Tokens::new(1_000_000_001));
+        let prev_balance = state.balance.clone();
+        let prev_total_fees = state.total_fees;
+        let prev_start_lt = state.start_lt;
+
+        let received_msg = state
+            .receive_in_msg(make_message(
+                IntMsgInfo {
+                    src: src_addr.clone().into(),
+                    dst: dst_addr.clone().into(),
+                    value: Tokens::new(1).into(),
+                    bounce: true,
+                    created_lt: prev_start_lt + 1000,
+                    ..Default::default()
+                },
+                None,
+                None,
+            ))
+            .unwrap();
+        assert_eq!(state.start_lt, prev_start_lt + 1000 + 1);
+        assert_eq!(state.end_lt, prev_start_lt + 1000 + 2);
+
+        let bounce_phase = state
+            .bounce_phase(BouncePhaseContext {
+                gas_fees: Tokens::ZERO,
+                action_fine: Tokens::ZERO,
+                received_message: &received_msg,
+            })
+            .unwrap();
+
+        let BouncePhase::NoFunds(bounce_phase) = bounce_phase else {
+            panic!("expected bounce phase to execute")
+        };
+
+        // Balance must not change.
+        assert_eq!(state.balance.other, prev_balance.other);
+        assert_eq!(state.balance.tokens, prev_balance.tokens);
+        assert_eq!(state.total_fees, prev_total_fees);
+
+        // Required fees must be computed correctly.
+        let full_fwd_fee = Tokens::new(config.fwd_prices.lump_price as _);
+        assert_eq!(
+            bounce_phase.req_fwd_fees,
+            full_fwd_fee - received_msg.balance_remaining.tokens
+        );
+
+        // Root cell is free and the bounced message has no child cells.
+        assert_eq!(bounce_phase.msg_size, StorageUsedShort {
+            bits: Default::default(),
+            cells: Default::default()
+        });
+
+        // No messages must be produced.
+        assert_eq!(state.out_msgs.len(), 0);
+
+        // End LT must not change.
+        assert_eq!(state.end_lt, prev_start_lt + 1000 + 2);
     }
 }
