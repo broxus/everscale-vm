@@ -150,3 +150,111 @@ impl ExecutorState<'_> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use everscale_types::models::{
+        Account, AccountState, CurrencyCollection, ExtInMsgInfo, Lazy, OptionalAccount,
+        ShardAccount, StateInit, StdAddr, StorageInfo,
+    };
+
+    use super::*;
+    use crate::tests::{make_default_config, make_default_params, make_message};
+    use crate::Executor;
+
+    pub fn make_uninit_with_balance<T: Into<CurrencyCollection>>(
+        address: &StdAddr,
+        balance: T,
+    ) -> ShardAccount {
+        ShardAccount {
+            account: Lazy::new(&OptionalAccount(Some(Account {
+                address: address.clone().into(),
+                storage_stat: StorageInfo::default(),
+                last_trans_lt: 1001,
+                balance: balance.into(),
+                state: AccountState::Uninit,
+            })))
+            .unwrap(),
+            last_trans_hash: HashBytes([0x11; 32]),
+            last_trans_lt: 1000,
+        }
+    }
+
+    #[test]
+    fn ever_wallet_deploys() -> anyhow::Result<()> {
+        let config = make_default_config();
+        let params = make_default_params();
+
+        let code = Boc::decode(include_bytes!("../../res/ever_wallet_code.boc"))?;
+        let data = CellBuilder::build_from((HashBytes::ZERO, 0u64))?;
+
+        let state_init = StateInit {
+            split_depth: None,
+            special: None,
+            code: Some(code),
+            data: Some(data),
+            libraries: Dict::new(),
+        };
+        let address = StdAddr::new(0, *CellBuilder::build_from(&state_init)?.repr_hash());
+
+        let msg = make_message(
+            ExtInMsgInfo {
+                src: None,
+                dst: address.clone().into(),
+                import_fee: Tokens::ZERO,
+            },
+            Some(state_init),
+            Some({
+                let mut b = CellBuilder::new();
+                // just$1 Signature
+                b.store_bit_one()?;
+                b.store_u256(&HashBytes::ZERO)?;
+                b.store_u256(&HashBytes::ZERO)?;
+                // just$1 Pubkey
+                b.store_bit_one()?;
+                b.store_zeros(256)?;
+                // header_time:u64
+                b.store_u64((params.block_unixtime - 10) as u64 * 1000)?;
+                // header_expire:u32
+                b.store_u32(params.block_unixtime + 40)?;
+                // sendTransaction
+                b.store_u32(0x4cee646c)?;
+                // ...
+                b.store_reference({
+                    let mut b = CellBuilder::new();
+                    // dest:address
+                    address.store_into(&mut b, Cell::empty_context())?;
+                    // value:uint128
+                    b.store_u128(10000000)?;
+                    // bounce:false
+                    b.store_bit_zero()?;
+                    // mode:uint8
+                    b.store_u8(0b11)?;
+                    // payload:cell
+                    b.store_reference(Cell::empty_cell())?;
+                    //
+                    b.build()?
+                })?;
+                //
+                b
+            }),
+        );
+
+        let state = make_uninit_with_balance(&address, CurrencyCollection::new(1_000_000_000));
+
+        let output = Executor::new(&params, config.as_ref())
+            .begin_ordinary(&address, true, &msg, &state)?
+            .commit()?;
+
+        println!("SHARD_STATE: {:#?}", output.new_state);
+        let account = output.new_state.load_account()?;
+        println!("ACCOUNT: {:#?}", account);
+
+        let tx = output.transaction.load()?;
+        println!("TX: {tx:#?}");
+        let info = tx.load_info()?;
+        println!("INFO: {info:#?}");
+
+        Ok(())
+    }
+}
