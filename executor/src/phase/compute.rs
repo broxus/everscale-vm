@@ -276,7 +276,6 @@ impl ExecutorState<'_> {
         let exit_code = !vm.run();
 
         // Parse VM state.
-        let orig_gas_credit = gas.credit;
         res.accepted = vm.gas.credit() == 0;
         debug_assert!(
             is_external || res.accepted,
@@ -285,8 +284,7 @@ impl ExecutorState<'_> {
 
         let success = res.accepted && vm.commited_state.is_some();
 
-        let gas_limit = vm.gas.limit();
-        let gas_used = std::cmp::min(vm.gas.consumed(), gas_limit);
+        let gas_used = std::cmp::min(vm.gas.consumed(), vm.gas.limit());
         let gas_fees = if res.accepted && !self.is_special {
             self.config
                 .gas_prices(is_masterchain)
@@ -318,8 +316,10 @@ impl ExecutorState<'_> {
             account_activated,
             gas_fees,
             gas_used: new_varuint56_truncate(gas_used),
-            gas_limit: new_varuint56_truncate(gas_limit),
-            gas_credit: (orig_gas_credit != 0).then(|| new_varuint24_truncate(orig_gas_credit)),
+            // NOTE: Initial value is stored here (not `vm.gas.limit()`).
+            gas_limit: new_varuint56_truncate(gas.limit),
+            // NOTE: Initial value is stored here (not `vm.gas.credit()`).
+            gas_credit: (gas.credit != 0).then(|| new_varuint24_truncate(gas.credit)),
             mode: 0,
             exit_code,
             exit_arg: if success {
@@ -625,7 +625,7 @@ mod tests {
         assert!(!compute_phase.account_activated);
         assert_eq!(compute_phase.gas_fees, expected_gas_fee);
         assert_eq!(compute_phase.gas_used, (10 + 16) * 2 + 50); // two 16bit opcodes + exception
-        assert_eq!(compute_phase.gas_limit, VarUint56::new(999000));
+        assert_eq!(compute_phase.gas_limit, VarUint56::ZERO);
         assert_eq!(compute_phase.gas_credit, Some(VarUint24::new(10_000)));
         assert_eq!(compute_phase.exit_code, 42);
         assert_eq!(compute_phase.exit_arg, None);
@@ -696,7 +696,7 @@ mod tests {
         assert!(!compute_phase.account_activated);
         assert_eq!(compute_phase.gas_fees, expected_gas_fee);
         assert_eq!(compute_phase.gas_used, 783);
-        assert_eq!(compute_phase.gas_limit, VarUint56::new(999000));
+        assert_eq!(compute_phase.gas_limit, VarUint56::ZERO);
         assert_eq!(compute_phase.gas_credit, Some(VarUint24::new(10_000)));
         assert_eq!(
             compute_phase.exit_code,
@@ -761,7 +761,7 @@ mod tests {
         assert!(!compute_phase.account_activated);
         assert_eq!(compute_phase.gas_fees, expected_gas_fee);
         assert_eq!(compute_phase.gas_used, 650);
-        assert_eq!(compute_phase.gas_limit, VarUint56::new(999000));
+        assert_eq!(compute_phase.gas_limit, VarUint56::ZERO);
         assert_eq!(compute_phase.gas_credit, Some(VarUint24::new(10_000)));
         assert_eq!(compute_phase.exit_code, 0);
         assert_eq!(compute_phase.exit_arg, None);
@@ -994,7 +994,7 @@ mod tests {
         assert!(compute_phase.account_activated);
         assert_eq!(compute_phase.gas_fees, expected_gas_fee);
         assert_eq!(compute_phase.gas_used, (10 + 16) + 5); // two 16bit opcodes + implicit ret
-        assert_eq!(compute_phase.gas_limit, 998884); // 1_000_000 - to_gas(fwd_fee)
+        assert_eq!(compute_phase.gas_limit, VarUint56::ZERO);
         assert_eq!(compute_phase.gas_credit, Some(VarUint24::new(10_000)));
         assert_eq!(compute_phase.exit_code, 0);
         assert_eq!(compute_phase.exit_arg, None);
@@ -1129,7 +1129,7 @@ mod tests {
         assert!(compute_phase.account_activated);
         assert_eq!(compute_phase.gas_fees, expected_gas_fee);
         assert_eq!(compute_phase.gas_used, (10 + 16) + 5); // two 16bit opcodes + implicit ret
-        assert_eq!(compute_phase.gas_limit, 998884); // 1_000_000 - to_gas(fwd_fee)
+        assert_eq!(compute_phase.gas_limit, VarUint56::ZERO);
         assert_eq!(compute_phase.gas_credit, Some(VarUint24::new(10_000)));
         assert_eq!(compute_phase.exit_code, 0);
         assert_eq!(compute_phase.exit_arg, None);
