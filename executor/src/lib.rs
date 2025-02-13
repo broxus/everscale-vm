@@ -268,13 +268,24 @@ impl<'a> ExecutorState<'a> {
 /// Executor configuration parameters.
 #[derive(Default)]
 pub struct ExecutorParams {
+    /// Public libraries from the referenced masterchain state.
     pub libraries: Dict<HashBytes, LibDescr>,
+    /// Rand seed of the block.
     pub rand_seed: HashBytes,
+    /// Unix timestamp in seconds of the block.
     pub block_unixtime: u32,
+    /// Logical time of the block.
     pub block_lt: u64,
+    /// VM behaviour modifiers.
     pub vm_modifiers: tycho_vm::BehaviourModifiers,
-    pub allow_delete_frozen_accounts: bool,
-    pub full_body_in_bounce: bool,
+    /// Prevent [`Frozen`] accounts from being deleted
+    /// when their storage due is too high.
+    ///
+    /// [`Frozen`]: everscale_types::models::AccountState::Frozen
+    pub disable_delete_frozen_accounts: bool,
+    /// Attaches an original message body as an additional cell
+    /// to a bounced message body.
+    pub full_body_in_bounced: bool,
 }
 
 /// Executed transaction.
@@ -691,7 +702,7 @@ mod tests {
     pub fn make_default_params() -> ExecutorParams {
         ExecutorParams {
             block_unixtime: 1738799198,
-            full_body_in_bounce: false,
+            full_body_in_bounced: false,
             vm_modifiers: tycho_vm::BehaviourModifiers {
                 chksig_always_succeed: true,
                 ..Default::default()

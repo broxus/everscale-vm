@@ -52,7 +52,7 @@ impl ExecutorState<'_> {
         }
 
         // Compute additional full body cell.
-        let full_body = if self.params.full_body_in_bounce {
+        let full_body = if self.params.full_body_in_bounced {
             let (cell, range) = &ctx.received_message.body;
             Some(if range.is_full(cell.as_ref()) {
                 cell.clone()
@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn bounce_with_enough_funds() {
         let mut params = make_default_params();
-        params.full_body_in_bounce = false;
+        params.full_body_in_bounced = false;
 
         let config = make_default_config();
 
@@ -317,7 +317,7 @@ mod tests {
     #[test]
     fn bounce_with_no_funds() {
         let mut params = make_default_params();
-        params.full_body_in_bounce = false;
+        params.full_body_in_bounced = false;
 
         let config = make_default_config();
 

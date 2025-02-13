@@ -102,7 +102,7 @@ impl ExecutorState<'_> {
                 // Try to delete account.
                 AccountState::Uninit | AccountState::Frozen { .. }
                     if (matches!(&self.state, AccountState::Uninit)
-                        || self.params.allow_delete_frozen_accounts)
+                        || !self.params.disable_delete_frozen_accounts)
                         && fees_due.into_inner() > config.delete_due_limit as u128
                         && !self.balance.other.is_empty() =>
                 {

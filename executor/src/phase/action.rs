@@ -284,6 +284,7 @@ impl ExecutorState<'_> {
         action_ctx.action_phase.success = true;
 
         if action_ctx.delete_account {
+            debug_assert!(action_ctx.remaining_balance.is_zero());
             action_ctx.action_phase.status_change = AccountStatusChange::Deleted;
             self.end_status = AccountStatus::NotExists;
             self.cached_storage_stat = None;
@@ -317,6 +318,8 @@ impl ExecutorState<'_> {
             .union(SendMsgFlags::IGNORE_ERROR)
             .union(SendMsgFlags::BOUNCE_ON_ERROR)
             .bits();
+        const DELETE_MASK: SendMsgFlags =
+            SendMsgFlags::ALL_BALANCE.union(SendMsgFlags::DELETE_IF_EMPTY);
 
         // Check and apply mode flags.
         if mode.contains(SendMsgFlags::BOUNCE_ON_ERROR) {
@@ -620,9 +623,9 @@ impl ExecutorState<'_> {
         *ctx.action_phase.total_action_fees.get_or_insert_default() += fees_collected;
         *ctx.action_phase.total_fwd_fees.get_or_insert_default() += fwd_fee;
 
-        if mode.contains(SendMsgFlags::DELETE_IF_EMPTY) {
-            ctx.delete_account =
-                ctx.reserved_balance.tokens.is_zero() && ctx.reserved_balance.other.is_empty();
+        if mode.contains(DELETE_MASK) {
+            debug_assert!(ctx.remaining_balance.is_zero());
+            ctx.delete_account = ctx.reserved_balance.is_zero();
         }
 
         Ok(SendMsgResult::Sent)
