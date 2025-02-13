@@ -153,14 +153,19 @@ impl ExecutorState<'_> {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Result;
+    use everscale_asm_macros::tvmasm;
     use everscale_types::models::{
-        Account, AccountState, CurrencyCollection, ExtInMsgInfo, Lazy, OptionalAccount,
-        ShardAccount, StateInit, StdAddr, StorageInfo,
+        Account, AccountState, AccountStatusChange, CurrencyCollection, ExtInMsgInfo, IntMsgInfo,
+        Lazy, OptionalAccount, ShardAccount, StateInit, StdAddr, StorageInfo, StorageUsed,
     };
+    use everscale_types::num::VarUint56;
 
     use super::*;
     use crate::tests::{make_default_config, make_default_params, make_message};
     use crate::Executor;
+
+    const STUB_ADDR: StdAddr = StdAddr::new(0, HashBytes::ZERO);
 
     pub fn make_uninit_with_balance<T: Into<CurrencyCollection>>(
         address: &StdAddr,
@@ -181,7 +186,7 @@ mod tests {
     }
 
     #[test]
-    fn ever_wallet_deploys() -> anyhow::Result<()> {
+    fn ever_wallet_deploys() -> Result<()> {
         let config = make_default_config();
         let params = make_default_params();
 
@@ -254,6 +259,84 @@ mod tests {
         println!("TX: {tx:#?}");
         let info = tx.load_info()?;
         println!("INFO: {info:#?}");
+
+        Ok(())
+    }
+
+    #[test]
+    fn freeze_account() -> Result<()> {
+        let params = make_default_params();
+        let config = make_default_config();
+
+        let code = tvmasm!(
+            r#"
+            NEWC INT 123 STUR 32 ENDC
+            POP c4
+            ACCEPT
+            "#
+        );
+        let mut state = ExecutorState::new_active(
+            &params,
+            &config,
+            &STUB_ADDR,
+            Tokens::ZERO,
+            CellBuilder::build_from(u32::MIN)?,
+            code,
+        );
+        state.storage_stat = StorageInfo {
+            used: StorageUsed {
+                bits: VarUint56::new(128),
+                cells: VarUint56::new(1),
+                ..Default::default()
+            },
+            last_paid: params.block_unixtime - 1000,
+            due_payment: Some(Tokens::new(2 * config.gas_prices.freeze_due_limit as u128)),
+        };
+
+        let info = state.run_ordinary_transaction(
+            false,
+            make_message(
+                IntMsgInfo {
+                    src: STUB_ADDR.into(),
+                    dst: STUB_ADDR.into(),
+                    value: CurrencyCollection::new(1_000_000),
+                    bounce: true,
+                    ..Default::default()
+                },
+                None,
+                None,
+            ),
+        )?;
+
+        assert!(!info.aborted);
+        assert_eq!(
+            info.storage_phase.unwrap().status_change,
+            AccountStatusChange::Frozen
+        );
+
+        let ComputePhase::Executed(compute_phase) = info.compute_phase else {
+            panic!("expected an executed compute phase");
+        };
+        assert!(compute_phase.success);
+
+        let action_phase = info.action_phase.unwrap();
+        assert!(action_phase.success);
+        assert_eq!(action_phase.messages_created, 0);
+
+        assert_eq!(info.bounce_phase, None);
+
+        assert_eq!(state.orig_status, AccountStatus::Active);
+        assert_eq!(state.end_status, AccountStatus::Frozen);
+        assert_eq!(state.balance, CurrencyCollection::ZERO);
+
+        assert_eq!(
+            state.state,
+            AccountState::Active(StateInit {
+                code: Boc::decode(code).map(Some)?,
+                data: CellBuilder::build_from(123u32).map(Some)?,
+                ..Default::default()
+            })
+        );
 
         Ok(())
     }
